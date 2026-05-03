@@ -1,0 +1,12 @@
+{
+	"parent": "minecraft:block/cube",
+	"textures": {
+		"north": "colonylink:block/colony_link_redirector_body",
+		"east":  "colonylink:block/colony_link_redirector_body",
+		"south": "colonylink:block/colony_link_redirector_side",
+		"west":  "colonylink:block/colony_link_redirector_body",
+		"up":    "colonylink:block/colony_link_redirector_body",
+		"down":  "colonylink:block/colony_link_redirector_body",
+		"particle": "colonylink:block/colony_link_redirector_body"
+	}
+}

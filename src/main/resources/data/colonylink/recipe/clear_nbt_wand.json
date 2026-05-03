@@ -1,0 +1,5 @@
+{
+  "type": "colonylink:clear_nbt",
+  "category": "misc",
+  "target_item": "colonylink:colony_link_wand"
+}

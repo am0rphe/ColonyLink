@@ -1,0 +1,8 @@
+{
+  "variants": {
+    "facing=north": { "model": "colonylink:block/colony_link_redirector" },
+    "facing=south": { "model": "colonylink:block/colony_link_redirector", "y": 180 },
+    "facing=east": { "model": "colonylink:block/colony_link_redirector", "y": 90 },
+    "facing=west": { "model": "colonylink:block/colony_link_redirector", "y": 270 }
+  }
+}

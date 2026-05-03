@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "IFI",
+    "ASA",
+    "IFI"
+  ],
+  "key": {
+    "I": { "item": "minecraft:iron_ingot" },
+    "F": { "item": "ae2:fluix_crystal" },
+    "S": { "item": "ae2:singularity" },
+    "A": { "item": "domum_ornamentum:architectscutter" }
+  },
+  "result": {
+    "id": "colonylink:colony_link_redirector",
+    "count": 1
+  }
+}
