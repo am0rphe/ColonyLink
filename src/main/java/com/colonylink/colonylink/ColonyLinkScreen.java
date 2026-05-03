@@ -20,7 +20,8 @@ public class ColonyLinkScreen extends Screen
     private static final int SCROLLBAR_WIDTH = 6;
 
     private static final int GUI_WIDTH = 276;
-    private static final int GUI_HEIGHT = 290;
+    // Feature 1 : hauteur augmentée pour la ligne requête PNJ (+24px)
+    private static final int GUI_HEIGHT = 320;
 
     private boolean isDraggingScrollbar = false;
     private double dragStartY = 0;
@@ -32,6 +33,9 @@ public class ColonyLinkScreen extends Screen
     private int availableCpus = 0;
     private String redirectorState = "N/A";
 
+    // Feature 1 — requête prioritaire
+    private ColonyLinkPacket.BuilderRequest builderRequest = ColonyLinkPacket.BuilderRequest.NONE;
+
     public ColonyLinkScreen(ColonyLinkPacket packet)
     {
         super(Component.literal("Colony Link - Builder Resources"));
@@ -42,10 +46,13 @@ public class ColonyLinkScreen extends Screen
         this.workerStatus = packet.workerStatus();
         this.availableCpus = packet.availableCpus();
         this.redirectorState = packet.redirectorState();
+        this.builderRequest = packet.builderRequest() != null
+                ? packet.builderRequest() : ColonyLinkPacket.BuilderRequest.NONE;
     }
 
     public void updateEntries(List<ColonyLinkPacket.ResourceEntry> newEntries, String builderName,
-                              String buildingName, String workerStatus, int availableCpus, String redirectorState)
+                              String buildingName, String workerStatus, int availableCpus,
+                              String redirectorState, ColonyLinkPacket.BuilderRequest builderRequest)
     {
         this.entries = newEntries;
         this.builderName = builderName;
@@ -53,6 +60,7 @@ public class ColonyLinkScreen extends Screen
         this.workerStatus = workerStatus;
         this.availableCpus = availableCpus;
         this.redirectorState = redirectorState;
+        this.builderRequest = builderRequest != null ? builderRequest : ColonyLinkPacket.BuilderRequest.NONE;
         int maxOffset = Math.max(0, entries.size() - MAX_VISIBLE);
         if (scrollOffset > maxOffset) scrollOffset = maxOffset;
     }
@@ -71,13 +79,16 @@ public class ColonyLinkScreen extends Screen
         super.onClose();
     }
 
+    // ── Coordonnées GUI ───────────────────────────────────────────────────
+
     private int getGuiX() { return (this.width - GUI_WIDTH) / 2; }
     private int getGuiY() { return (this.height - GUI_HEIGHT) / 2; }
-    private int getGuiWidth() { return GUI_WIDTH; }
-    private int getGuiHeight() { return GUI_HEIGHT; }
+
+    /** Y de départ de la liste de ressources (après le panel info + panel requête PNJ). */
+    private int getListStartY() { return getGuiY() + 112; }
 
     private int getScrollbarX() { return getGuiX() + GUI_WIDTH - 16; }
-    private int getScrollbarTop() { return getGuiY() + 84; }
+    private int getScrollbarTop() { return getListStartY() + 1; }
     private int getScrollbarBottom() { return getScrollbarTop() + MAX_VISIBLE * ENTRY_HEIGHT; }
     private int getScrollbarHeight() { return getScrollbarBottom() - getScrollbarTop(); }
 
@@ -94,11 +105,7 @@ public class ColonyLinkScreen extends Screen
         return getScrollbarTop() + (getScrollbarHeight() - getThumbHeight()) * scrollOffset / maxOffset;
     }
 
-    @Override
-    public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick)
-    {
-        // No blur
-    }
+    // ── Couleurs boutons ──────────────────────────────────────────────────
 
     private int getButtonColor(ResourceStatus status)
     {
@@ -148,6 +155,19 @@ public class ColonyLinkScreen extends Screen
         };
     }
 
+    /** Texte du bouton de la requête prioritaire (légèrement différent : "Fulfill" pour AVAILABLE) */
+    private String getRequestButtonText(ResourceStatus status)
+    {
+        return switch (status)
+        {
+            case AVAILABLE  -> "Fulfill";
+            case CRAFTABLE  -> "Craft";
+            case NO_PATTERN -> "No Pattern";
+            case CRAFTING   -> "Crafting...";
+            case MISSING    -> "Missing";
+        };
+    }
+
     private boolean isButtonClickable(ResourceStatus status)
     {
         return status == ResourceStatus.CRAFTABLE
@@ -155,17 +175,20 @@ public class ColonyLinkScreen extends Screen
                 || status == ResourceStatus.MISSING;
     }
 
+    // ── Bounds boutons liste ──────────────────────────────────────────────
+
     private void getBtnBounds(int i, int[] out)
     {
         int x = getGuiX();
-        int y = getGuiY();
         int listWidth = GUI_WIDTH - 26;
-        int entryY = y + 83 + i * ENTRY_HEIGHT;
+        int entryY = getListStartY() + i * ENTRY_HEIGHT;
         out[0] = x + 7 + listWidth - 60;
         out[1] = entryY + 2;
         out[2] = 58;
         out[3] = 16;
     }
+
+    // ── Bounds boutons globaux ────────────────────────────────────────────
 
     private int getCraftAllBtnX() { return getGuiX() + 8; }
     private int getCraftAllBtnY() { return getGuiY() + GUI_HEIGHT - 22; }
@@ -176,6 +199,20 @@ public class ColonyLinkScreen extends Screen
     private int getSendAllBtnY() { return getGuiY() + GUI_HEIGHT - 22; }
     private int getSendAllBtnW() { return 120; }
     private int getSendAllBtnH() { return 16; }
+
+    // Feature 2 — bouton Restart (haut droite)
+    private int getRestartBtnX() { return getGuiX() + GUI_WIDTH - 60; }
+    private int getRestartBtnY() { return getGuiY() + 4; }
+    private int getRestartBtnW() { return 52; }
+    private int getRestartBtnH() { return 14; }
+
+    // Feature 1 — bouton Fulfill de la requête PNJ
+    private int getReqBtnX() { return getGuiX() + GUI_WIDTH - 76; }
+    private int getReqBtnY() { return getGuiY() + 92; }
+    private int getReqBtnW() { return 64; }
+    private int getReqBtnH() { return 16; }
+
+    // ── Helpers état ──────────────────────────────────────────────────────
 
     private boolean hasCraftableItems()
     {
@@ -200,6 +237,8 @@ public class ColonyLinkScreen extends Screen
         return 0xCCCCCC;
     }
 
+    // ── Dessin panel info ─────────────────────────────────────────────────
+
     private void drawInfoPanel(GuiGraphics graphics, int x, int y)
     {
         int panelH = 58;
@@ -217,6 +256,7 @@ public class ColonyLinkScreen extends Screen
         graphics.drawString(this.font, workerStatus,
                 x + 10 + this.font.width(statusLabel), y + 46, getWorkerStatusColor(), false);
 
+        // Bug 2 : CPUs disponibles (info dynamique)
         graphics.drawString(this.font, "§7CPUs: §f" + availableCpus, x + 10, y + 58, 0xFFFFFF, false);
 
         int redirectorColor = switch (redirectorState)
@@ -232,36 +272,131 @@ public class ColonyLinkScreen extends Screen
                 x + 100 + this.font.width(redirectorLabel), y + 58, redirectorColor, false);
     }
 
+    // ── Feature 1 : Dessin panel requête PNJ ─────────────────────────────
+
+    private void drawRequestPanel(GuiGraphics graphics, int x, int y, int mouseX, int mouseY)
+    {
+        // Panel : y+80 a y+110 (30px)
+        // Ligne 1 (y+80..y+90) : label "Priority Request:"
+        // Ligne 2 (y+90..y+110) : icone + nom + bouton
+        int panelY = y + 80;
+        int panelH = 30;
+        graphics.fill(x + 6, panelY, x + GUI_WIDTH - 6, panelY + panelH, 0xFF2E2E4A);
+        graphics.fill(x + 6, panelY, x + GUI_WIDTH - 6, panelY + 1, 0xFF6666AA);
+        graphics.fill(x + 6, panelY, x + 7, panelY + panelH, 0xFF6666AA);
+        graphics.fill(x + 6, panelY + panelH - 1, x + GUI_WIDTH - 6, panelY + panelH, 0xFF1A1A3A);
+        graphics.fill(x + GUI_WIDTH - 7, panelY, x + GUI_WIDTH - 6, panelY + panelH, 0xFF1A1A3A);
+        // Separateur entre les deux lignes
+        graphics.fill(x + 7, panelY + 11, x + GUI_WIDTH - 7, panelY + 12, 0xFF3A3A6A);
+
+        // Ligne 1 : label
+        graphics.drawString(this.font, "§9Priority Request:", x + 10, panelY + 3, 0xAAAAFF, false);
+
+        boolean hasRequest = builderRequest != null
+                && !builderRequest.stack().isEmpty()
+                && builderRequest.count() > 0;
+
+        if (!hasRequest)
+        {
+            graphics.drawString(this.font, "§8None", x + 10, panelY + 14, 0x666666, false);
+            return;
+        }
+
+        // Ligne 2 : icone (16x16, centree verticalement dans 18px)
+        int itemX = x + 10;
+        int itemY = panelY + 12;
+        graphics.renderItem(builderRequest.stack(), itemX, itemY);
+
+        // Nom + quantite (a droite de l'icone)
+        String reqText = builderRequest.count() + "x " + builderRequest.stack().getDisplayName().getString();
+        graphics.drawString(this.font, reqText, itemX + 18, panelY + 17, 0xFFFFFF, false);
+
+        // Bouton Fulfill/Craft/etc. aligne a droite, centre sur la ligne 2
+        int rbX = getReqBtnX();
+        int rbY = getReqBtnY();
+        int rbW = getReqBtnW();
+        int rbH = getReqBtnH();
+        ResourceStatus reqStatus = builderRequest.status();
+
+        boolean hovered = mouseX >= rbX && mouseX <= rbX + rbW
+                && mouseY >= rbY && mouseY <= rbY + rbH;
+
+        int btnBg = hovered && isButtonClickable(reqStatus)
+                ? getButtonHoverColor(reqStatus)
+                : getButtonColor(reqStatus);
+
+        graphics.fill(rbX, rbY, rbX + rbW, rbY + rbH, btnBg);
+        graphics.fill(rbX, rbY, rbX + rbW, rbY + 1, 0xFFFFFFFF);
+        graphics.fill(rbX, rbY, rbX + 1, rbY + rbH, 0xFFFFFFFF);
+        graphics.fill(rbX, rbY + rbH - 1, rbX + rbW, rbY + rbH, 0xFF373737);
+        graphics.fill(rbX + rbW - 1, rbY, rbX + rbW, rbY + rbH, 0xFF373737);
+        graphics.drawCenteredString(this.font, getRequestButtonText(reqStatus),
+                rbX + rbW / 2, rbY + 4, getButtonTextColor(reqStatus));
+    }
+
+    // ── Dessin bouton (helper réutilisable) ───────────────────────────────
+
+    private void drawButton(GuiGraphics graphics, int bx, int by, int bw, int bh,
+                            int bgColor, String label, int textColor)
+    {
+        graphics.fill(bx, by, bx + bw, by + bh, bgColor);
+        graphics.fill(bx, by, bx + bw, by + 1, 0xFFFFFFFF);
+        graphics.fill(bx, by, bx + 1, by + bh, 0xFFFFFFFF);
+        graphics.fill(bx, by + bh - 1, bx + bw, by + bh, 0xFF373737);
+        graphics.fill(bx + bw - 1, by, bx + bw, by + bh, 0xFF373737);
+        graphics.drawCenteredString(this.font, label, bx + bw / 2, by + 3, textColor);
+    }
+
+    // ── render() ─────────────────────────────────────────────────────────
+
+    @Override
+    public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick)
+    {
+        // Pas de blur
+    }
+
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick)
     {
         int x = getGuiX();
         int y = getGuiY();
-        int guiWidth = getGuiWidth();
-        int guiHeight = getGuiHeight();
 
         // Background
-        graphics.fill(x, y, x + guiWidth, y + guiHeight, 0xFF8B8B8B);
-        graphics.fill(x, y, x + guiWidth, y + 2, 0xFFFFFFFF);
-        graphics.fill(x, y, x + 2, y + guiHeight, 0xFFFFFFFF);
-        graphics.fill(x, y + guiHeight - 2, x + guiWidth, y + guiHeight, 0xFF373737);
-        graphics.fill(x + guiWidth - 2, y, x + guiWidth, y + guiHeight, 0xFF373737);
+        graphics.fill(x, y, x + GUI_WIDTH, y + GUI_HEIGHT, 0xFF8B8B8B);
+        graphics.fill(x, y, x + GUI_WIDTH, y + 2, 0xFFFFFFFF);
+        graphics.fill(x, y, x + 2, y + GUI_HEIGHT, 0xFFFFFFFF);
+        graphics.fill(x, y + GUI_HEIGHT - 2, x + GUI_WIDTH, y + GUI_HEIGHT, 0xFF373737);
+        graphics.fill(x + GUI_WIDTH - 2, y, x + GUI_WIDTH, y + GUI_HEIGHT, 0xFF373737);
 
         // Title bar
-        graphics.fill(x + 2, y + 2, x + guiWidth - 2, y + 22, 0xFF6B6B6B);
-        graphics.fill(x + 2, y + 2, x + guiWidth - 2, y + 4, 0xFF8B8B8B);
+        graphics.fill(x + 2, y + 2, x + GUI_WIDTH - 2, y + 22, 0xFF6B6B6B);
+        graphics.fill(x + 2, y + 2, x + GUI_WIDTH - 2, y + 4, 0xFF8B8B8B);
         graphics.drawString(this.font, this.title, x + 8, y + 7, 0x404040, false);
+
+        // Feature 2 — bouton Restart (haut droite)
+        int rbtnX = getRestartBtnX();
+        int rbtnY = getRestartBtnY();
+        int rbtnW = getRestartBtnW();
+        int rbtnH = getRestartBtnH();
+        boolean restartHovered = mouseX >= rbtnX && mouseX <= rbtnX + rbtnW
+                && mouseY >= rbtnY && mouseY <= rbtnY + rbtnH;
+        drawButton(graphics, rbtnX, rbtnY, rbtnW, rbtnH,
+                restartHovered ? 0xFF885500 : 0xFF553300,
+                "Restart", 0xFFAA44);
 
         // Info panel
         drawInfoPanel(graphics, x, y);
 
-        // List area
-        int listWidth = guiWidth - 26;
-        graphics.fill(x + 6, y + 82, x + guiWidth - 18, y + 82 + MAX_VISIBLE * ENTRY_HEIGHT, 0xFF373737);
-        graphics.fill(x + 6, y + 82, x + guiWidth - 18, y + 83, 0xFF8B8B8B);
-        graphics.fill(x + 6, y + 82, x + 7, y + 82 + MAX_VISIBLE * ENTRY_HEIGHT, 0xFF8B8B8B);
+        // Feature 1 — panel requête PNJ
+        drawRequestPanel(graphics, x, y, mouseX, mouseY);
 
-        int listY = y + 83;
+        // List area
+        int listWidth = GUI_WIDTH - 26;
+        int listStartY = getListStartY();
+        graphics.fill(x + 6, listStartY - 1, x + GUI_WIDTH - 18, listStartY - 1 + MAX_VISIBLE * ENTRY_HEIGHT + 1, 0xFF373737);
+        graphics.fill(x + 6, listStartY - 1, x + GUI_WIDTH - 18, listStartY, 0xFF8B8B8B);
+        graphics.fill(x + 6, listStartY - 1, x + 7, listStartY - 1 + MAX_VISIBLE * ENTRY_HEIGHT + 1, 0xFF8B8B8B);
+
         int visibleCount = Math.min(MAX_VISIBLE, entries.size() - scrollOffset);
 
         List<Component> pendingTooltip = null;
@@ -273,7 +408,7 @@ public class ColonyLinkScreen extends Screen
             ItemStack stack = entry.stack();
             ResourceStatus status = entry.status();
             int realCount = entry.realCount();
-            int entryY = listY + i * ENTRY_HEIGHT;
+            int entryY = listStartY + i * ENTRY_HEIGHT;
 
             int rowColor = (i % 2 == 0) ? 0xFF4A4A4A : 0xFF424242;
             graphics.fill(x + 7, entryY, x + 7 + listWidth, entryY + ENTRY_HEIGHT, rowColor);
@@ -292,7 +427,6 @@ public class ColonyLinkScreen extends Screen
             boolean hovered = mouseX >= btnX && mouseX <= btnX + btnW
                     && mouseY >= btnY && mouseY <= btnY + btnH;
 
-            // Tooltip au survol du bouton
             if (hovered && !entry.tooltipLines().isEmpty())
             {
                 List<Component> tooltipComponents = new ArrayList<>();
@@ -337,7 +471,7 @@ public class ColonyLinkScreen extends Screen
         }
 
         // Separator
-        graphics.fill(x + 6, y + guiHeight - 26, x + guiWidth - 6, y + guiHeight - 25, 0xFF555555);
+        graphics.fill(x + 6, y + GUI_HEIGHT - 26, x + GUI_WIDTH - 6, y + GUI_HEIGHT - 25, 0xFF555555);
 
         // Craft All
         int caX = getCraftAllBtnX();
@@ -345,7 +479,8 @@ public class ColonyLinkScreen extends Screen
         int caW = getCraftAllBtnW();
         int caH = getCraftAllBtnH();
 
-        boolean craftAllHovered = mouseX >= caX && mouseX <= caX + caW && mouseY >= caY && mouseY <= caY + caH;
+        boolean craftAllHovered = mouseX >= caX && mouseX <= caX + caW
+                && mouseY >= caY && mouseY <= caY + caH;
         boolean hasCraftable = hasCraftableItems();
 
         int craftAllBg = hasCraftable ? (craftAllHovered ? 0xFF007700 : 0xFF005500) : 0xFF333333;
@@ -357,13 +492,26 @@ public class ColonyLinkScreen extends Screen
         graphics.drawCenteredString(this.font, "Craft All",
                 caX + caW / 2, caY + 4, hasCraftable ? 0x00FF00 : 0x888888);
 
+        // Bug 2 : tooltip Craft All avec nb CPUs
+        if (craftAllHovered && hasCraftable)
+        {
+            List<Component> craftAllTooltip = new ArrayList<>();
+            craftAllTooltip.add(Component.literal("§aCraft All craftable items"));
+            craftAllTooltip.add(Component.literal("§7" + availableCpus + " CPU"
+                    + (availableCpus != 1 ? "s" : "") + " available"));
+            craftAllTooltip.add(Component.literal("§8" + availableCpus
+                    + " craft" + (availableCpus != 1 ? "s" : "") + " will run simultaneously"));
+            pendingTooltip = craftAllTooltip;
+        }
+
         // Send All
         int saX = getSendAllBtnX();
         int saY = getSendAllBtnY();
         int saW = getSendAllBtnW();
         int saH = getSendAllBtnH();
 
-        boolean sendAllHovered = mouseX >= saX && mouseX <= saX + saW && mouseY >= saY && mouseY <= saY + saH;
+        boolean sendAllHovered = mouseX >= saX && mouseX <= saX + saW
+                && mouseY >= saY && mouseY <= saY + saH;
         boolean hasAvailable = hasAvailableItems();
 
         int sendAllBg = hasAvailable ? (sendAllHovered ? 0xFF0066CC : 0xFF004488) : 0xFF333333;
@@ -375,24 +523,88 @@ public class ColonyLinkScreen extends Screen
         graphics.drawCenteredString(this.font, "Send All",
                 saX + saW / 2, saY + 4, hasAvailable ? 0x4488FF : 0x888888);
 
+        // Tooltip bouton Restart
+        if (mouseX >= getRestartBtnX() && mouseX <= getRestartBtnX() + getRestartBtnW()
+                && mouseY >= getRestartBtnY() && mouseY <= getRestartBtnY() + getRestartBtnH())
+        {
+            List<Component> restartTooltip = new ArrayList<>();
+            restartTooltip.add(Component.literal("§6Restart Builder"));
+            restartTooltip.add(Component.literal("§7Cancels current task and restarts the builder PNJ"));
+            pendingTooltip = restartTooltip;
+        }
+
         super.render(graphics, mouseX, mouseY, partialTick);
 
-        // Tooltip rendu en dernier pour passer au-dessus de tout
+        // Tooltip rendu en dernier
         if (pendingTooltip != null && !pendingTooltip.isEmpty())
             graphics.renderComponentTooltip(this.font, pendingTooltip, mouseX, mouseY);
     }
 
+    // ── mouseClicked() ────────────────────────────────────────────────────
+
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button)
     {
+        // Feature 2 — bouton Restart
+        int rbtnX = getRestartBtnX();
+        int rbtnY = getRestartBtnY();
+        int rbtnW = getRestartBtnW();
+        int rbtnH = getRestartBtnH();
+
+        if (mouseX >= rbtnX && mouseX <= rbtnX + rbtnW
+                && mouseY >= rbtnY && mouseY <= rbtnY + rbtnH)
+        {
+            PacketDistributor.sendToServer(new RestartBuilderPacket(builderPos));
+            return true;
+        }
+
+        // Feature 1 — bouton requête PNJ
+        boolean hasRequest = builderRequest != null
+                && !builderRequest.stack().isEmpty()
+                && builderRequest.count() > 0;
+
+        if (hasRequest)
+        {
+            int reqBtnX = getReqBtnX();
+            int reqBtnY = getReqBtnY();
+            int reqBtnW = getReqBtnW();
+            int reqBtnH = getReqBtnH();
+
+            if (mouseX >= reqBtnX && mouseX <= reqBtnX + reqBtnW
+                    && mouseY >= reqBtnY && mouseY <= reqBtnY + reqBtnH
+                    && isButtonClickable(builderRequest.status()))
+            {
+                switch (builderRequest.status())
+                {
+                    case AVAILABLE ->
+                            PacketDistributor.sendToServer(new SendToBuilderPacket(
+                                    builderRequest.stack(), builderPos, builderRequest.count()));
+                    case CRAFTABLE ->
+                            PacketDistributor.sendToServer(new CraftRequestPacket(
+                                    builderRequest.stack(), builderRequest.count(),
+                                    false, BlockPos.ZERO, ResourceStatus.CRAFTABLE));
+                    case MISSING ->
+                            PacketDistributor.sendToServer(new CraftRequestPacket(
+                                    builderRequest.stack(), builderRequest.count(),
+                                    true, builderRequest.redirectorPos(), ResourceStatus.MISSING));
+                    default -> {}
+                }
+                return true;
+            }
+        }
+
         // Craft All
         int caX = getCraftAllBtnX();
         int caY = getCraftAllBtnY();
         int caW = getCraftAllBtnW();
         int caH = getCraftAllBtnH();
 
-        if (mouseX >= caX && mouseX <= caX + caW && mouseY >= caY && mouseY <= caY + caH && hasCraftableItems())
+        if (mouseX >= caX && mouseX <= caX + caW && mouseY >= caY && mouseY <= caY + caH
+                && hasCraftableItems())
         {
+            List<ItemStack> toCraft = new ArrayList<>();
+            List<Integer> counts = new ArrayList<>();
+
             for (ColonyLinkPacket.ResourceEntry entry : entries)
             {
                 if (entry.status() == ResourceStatus.CRAFTABLE)
@@ -403,11 +615,8 @@ public class ColonyLinkScreen extends Screen
                                 entry.redirectorPos(), ResourceStatus.CRAFTABLE));
                     else
                     {
-                        List<ItemStack> toCraft = new ArrayList<>();
-                        List<Integer> counts = new ArrayList<>();
                         toCraft.add(entry.stack());
                         counts.add(entry.realCount());
-                        PacketDistributor.sendToServer(new CraftAllRequestPacket(toCraft, counts));
                     }
                 }
                 else if (entry.status() == ResourceStatus.MISSING)
@@ -417,6 +626,10 @@ public class ColonyLinkScreen extends Screen
                             entry.redirectorPos(), ResourceStatus.MISSING));
                 }
             }
+
+            if (!toCraft.isEmpty())
+                PacketDistributor.sendToServer(new CraftAllRequestPacket(toCraft, counts));
+
             return true;
         }
 
@@ -426,17 +639,19 @@ public class ColonyLinkScreen extends Screen
         int saW = getSendAllBtnW();
         int saH = getSendAllBtnH();
 
-        if (mouseX >= saX && mouseX <= saX + saW && mouseY >= saY && mouseY <= saY + saH && hasAvailableItems())
+        if (mouseX >= saX && mouseX <= saX + saW && mouseY >= saY && mouseY <= saY + saH
+                && hasAvailableItems())
         {
             for (ColonyLinkPacket.ResourceEntry entry : entries)
             {
                 if (entry.status() == ResourceStatus.AVAILABLE)
-                    PacketDistributor.sendToServer(new SendToBuilderPacket(entry.stack(), builderPos));
+                    PacketDistributor.sendToServer(new SendToBuilderPacket(
+                            entry.stack(), builderPos, entry.realCount()));
             }
             return true;
         }
 
-        // Boutons individuels
+        // Boutons individuels de la liste
         int visibleCount = Math.min(MAX_VISIBLE, entries.size() - scrollOffset);
         for (int i = 0; i < visibleCount; i++)
         {
@@ -449,7 +664,8 @@ public class ColonyLinkScreen extends Screen
             getBtnBounds(i, btn);
             int btnX = btn[0], btnY = btn[1], btnW = btn[2], btnH = btn[3];
 
-            if (mouseX >= btnX && mouseX <= btnX + btnW && mouseY >= btnY && mouseY <= btnY + btnH)
+            if (mouseX >= btnX && mouseX <= btnX + btnW
+                    && mouseY >= btnY && mouseY <= btnY + btnH)
             {
                 if (entry.status() == ResourceStatus.CRAFTABLE && entry.isDomum())
                     PacketDistributor.sendToServer(new CraftRequestPacket(
@@ -464,12 +680,13 @@ public class ColonyLinkScreen extends Screen
                             entry.stack(), entry.realCount(), true,
                             entry.redirectorPos(), ResourceStatus.MISSING));
                 else if (entry.status() == ResourceStatus.AVAILABLE)
-                    PacketDistributor.sendToServer(new SendToBuilderPacket(entry.stack(), builderPos));
+                    PacketDistributor.sendToServer(new SendToBuilderPacket(
+                            entry.stack(), builderPos, entry.realCount()));
                 return true;
             }
         }
 
-        // Scrollbar
+        // Scrollbar drag
         if (entries.size() > MAX_VISIBLE)
         {
             int sbX = getScrollbarX();

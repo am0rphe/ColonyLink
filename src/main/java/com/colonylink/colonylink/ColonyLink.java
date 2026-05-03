@@ -36,22 +36,25 @@ public class ColonyLink
     public static final Logger LOGGER = LogUtils.getLogger();
 
     public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems(MODID);
-    public static final DeferredRegister<CreativeModeTab> CREATIVE_MODE_TABS = DeferredRegister.create(Registries.CREATIVE_MODE_TAB, MODID);
+    public static final DeferredRegister<CreativeModeTab> CREATIVE_MODE_TABS =
+            DeferredRegister.create(Registries.CREATIVE_MODE_TAB, MODID);
 
     public static final DeferredItem<Item> COLONY_LINK_WAND = ITEMS.register("colony_link_wand",
             () -> new ColonyLinkWand(new Item.Properties().stacksTo(1)));
 
-    public static final DeferredHolder<CreativeModeTab, CreativeModeTab> COLONY_LINK_TAB = CREATIVE_MODE_TABS.register("colony_link_tab",
-            () -> CreativeModeTab.builder()
-                    .title(Component.translatable("itemGroup.colonylink"))
-                    .withTabsBefore(CreativeModeTabs.COMBAT)
-                    .icon(() -> COLONY_LINK_WAND.get().getDefaultInstance())
-                    .displayItems((parameters, output) -> {
-                        output.accept(COLONY_LINK_WAND.get());
-                        output.accept(ColonyLinkRegistry.REDIRECTOR_BLOCK_ITEM.get());
-                    }).build());
+    public static final DeferredHolder<CreativeModeTab, CreativeModeTab> COLONY_LINK_TAB =
+            CREATIVE_MODE_TABS.register("colony_link_tab",
+                    () -> CreativeModeTab.builder()
+                            .title(Component.translatable("itemGroup.colonylink"))
+                            .withTabsBefore(CreativeModeTabs.COMBAT)
+                            .icon(() -> COLONY_LINK_WAND.get().getDefaultInstance())
+                            .displayItems((parameters, output) -> {
+                                output.accept(COLONY_LINK_WAND.get());
+                                output.accept(ColonyLinkRegistry.REDIRECTOR_BLOCK_ITEM.get());
+                            }).build());
 
-    public static final ColonyLinkWandLinkableHandler LINKABLE_HANDLER = new ColonyLinkWandLinkableHandler();
+    public static final ColonyLinkWandLinkableHandler LINKABLE_HANDLER =
+            new ColonyLinkWandLinkableHandler();
 
     public ColonyLink(IEventBus modEventBus, ModContainer modContainer)
     {
@@ -108,16 +111,21 @@ public class ColonyLink
             redirector.updateState();
             switch (redirector.getState())
             {
-                case NO_CONTROLLER -> player.sendSystemMessage(Component.literal("§c[Redirector] Not adjacent to a ME Controller!"));
-                case NOT_LINKED -> player.sendSystemMessage(Component.literal("§e[Redirector] No inventory linked."));
-                case STANDBY -> player.sendSystemMessage(Component.literal("§6[Redirector] STANDBY - Target inventory is full!"));
+                case NO_CONTROLLER -> player.sendSystemMessage(
+                        Component.literal("§c[Redirector] Not adjacent to a ME Controller!"));
+                case NOT_LINKED -> player.sendSystemMessage(
+                        Component.literal("§e[Redirector] No inventory linked."));
+                case STANDBY -> player.sendSystemMessage(
+                        Component.literal("§6[Redirector] STANDBY - Target inventory is full!"));
                 case LINKED ->
                 {
                     player.sendSystemMessage(Component.literal("§a[Redirector] LINKED and operational!"));
                     if (redirector.getTargetInventoryPos() != null)
-                        player.sendSystemMessage(Component.literal("§7Target: " + redirector.getTargetInventoryPos().toShortString()));
+                        player.sendSystemMessage(Component.literal(
+                                "§7Target: " + redirector.getTargetInventoryPos().toShortString()));
                     if (redirector.getLinkedBuilderPos() != null)
-                        player.sendSystemMessage(Component.literal("§7Builder: " + redirector.getLinkedBuilderPos().toShortString()));
+                        player.sendSystemMessage(Component.literal(
+                                "§7Builder: " + redirector.getLinkedBuilderPos().toShortString()));
                 }
             }
             event.setCanceled(true);
@@ -172,6 +180,13 @@ public class ColonyLink
                 CraftAllRequestPacket.TYPE,
                 CraftAllRequestPacket.STREAM_CODEC,
                 CraftAllRequestPacket::handle
+        );
+
+        // Feature 2 — nouveau packet Restart
+        registrar.playToServer(
+                RestartBuilderPacket.TYPE,
+                RestartBuilderPacket.STREAM_CODEC,
+                RestartBuilderPacket::handle
         );
     }
 }

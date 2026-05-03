@@ -403,7 +403,8 @@ public class ColonyLinkWand extends Item
         }
 
         PacketDistributor.sendToPlayer((ServerPlayer) player, new ColonyLinkPacket(
-                entries, builderPos, builderName, buildingName, workerStatus, availableCpus, redirectorState));
+                entries, builderPos, builderName, buildingName, workerStatus, availableCpus, redirectorState,
+                ColonyLinkPacket.BuilderRequest.NONE));
         return true;
     }
 

@@ -9,7 +9,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
-public record SendToBuilderPacket(ItemStack stack, BlockPos builderPos) implements CustomPacketPayload
+public record SendToBuilderPacket(ItemStack stack, BlockPos builderPos, int realCount) implements CustomPacketPayload
 {
     public static final ResourceLocation ID = ResourceLocation.fromNamespaceAndPath(ColonyLink.MODID, "send_to_builder");
     public static final CustomPacketPayload.Type<SendToBuilderPacket> TYPE = new CustomPacketPayload.Type<>(ID);
@@ -18,10 +18,12 @@ public record SendToBuilderPacket(ItemStack stack, BlockPos builderPos) implemen
             (buf, packet) -> {
                 ItemStack.STREAM_CODEC.encode(buf, packet.stack());
                 buf.writeBlockPos(packet.builderPos());
+                buf.writeInt(packet.realCount());
             },
             buf -> new SendToBuilderPacket(
                     ItemStack.STREAM_CODEC.decode(buf),
-                    buf.readBlockPos()
+                    buf.readBlockPos(),
+                    buf.readInt()
             )
     );
 
@@ -35,7 +37,8 @@ public record SendToBuilderPacket(ItemStack stack, BlockPos builderPos) implemen
     {
         context.enqueueWork(() -> {
             if (context.player() instanceof ServerPlayer serverPlayer)
-                SendToBuilderHandler.handleSendToBuilder(serverPlayer, packet.stack(), packet.builderPos());
+                SendToBuilderHandler.handleSendToBuilder(
+                        serverPlayer, packet.stack(), packet.builderPos(), packet.realCount());
         });
     }
 }

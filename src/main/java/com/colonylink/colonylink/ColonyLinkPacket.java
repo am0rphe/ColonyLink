@@ -19,9 +19,13 @@ public record ColonyLinkPacket(
         String buildingName,
         String workerStatus,
         int availableCpus,
-        String redirectorState
+        String redirectorState,
+        BuilderRequest builderRequest
 ) implements CustomPacketPayload
 {
+    /**
+     * Représente une entrée de ressource dans la liste.
+     */
     public record ResourceEntry(
             ItemStack stack,
             ResourceStatus status,
@@ -31,11 +35,30 @@ public record ColonyLinkPacket(
             List<String> tooltipLines
     ) {}
 
-    public static final ResourceLocation ID = ResourceLocation.fromNamespaceAndPath(ColonyLink.MODID, "colony_link_packet");
-    public static final CustomPacketPayload.Type<ColonyLinkPacket> TYPE = new CustomPacketPayload.Type<>(ID);
+    /**
+     * Feature 1 — Requête prioritaire du builder PNJ.
+     * Peut être null si le builder n'a pas de requête active (non-quest).
+     */
+    public record BuilderRequest(
+            ItemStack stack,
+            int count,
+            ResourceStatus status,
+            BlockPos redirectorPos,
+            List<String> tooltipLines
+    )
+    {
+        public static BuilderRequest NONE = new BuilderRequest(
+                ItemStack.EMPTY, 0, ResourceStatus.NO_PATTERN, BlockPos.ZERO, List.of());
+    }
+
+    public static final ResourceLocation ID = ResourceLocation.fromNamespaceAndPath(
+            ColonyLink.MODID, "colony_link_packet");
+    public static final CustomPacketPayload.Type<ColonyLinkPacket> TYPE =
+            new CustomPacketPayload.Type<>(ID);
 
     public static final StreamCodec<RegistryFriendlyByteBuf, ColonyLinkPacket> STREAM_CODEC = StreamCodec.of(
             (buf, packet) -> {
+                // entries
                 buf.writeInt(packet.entries().size());
                 for (ResourceEntry entry : packet.entries())
                 {
@@ -48,12 +71,28 @@ public record ColonyLinkPacket(
                     for (String line : entry.tooltipLines())
                         buf.writeUtf(line);
                 }
+                // header
                 buf.writeBlockPos(packet.builderPos());
                 buf.writeUtf(packet.builderName());
                 buf.writeUtf(packet.buildingName());
                 buf.writeUtf(packet.workerStatus());
                 buf.writeInt(packet.availableCpus());
                 buf.writeUtf(packet.redirectorState());
+                // builder request — booleen hasRequest pour eviter ItemStack.EMPTY interdit par le codec
+                BuilderRequest req = packet.builderRequest() != null
+                        ? packet.builderRequest() : BuilderRequest.NONE;
+                boolean hasReq = !req.stack().isEmpty() && req.count() > 0;
+                buf.writeBoolean(hasReq);
+                if (hasReq)
+                {
+                    ItemStack.STREAM_CODEC.encode(buf, req.stack());
+                    buf.writeInt(req.count());
+                    buf.writeInt(req.status().ordinal());
+                    buf.writeBlockPos(req.redirectorPos());
+                    buf.writeInt(req.tooltipLines().size());
+                    for (String line : req.tooltipLines())
+                        buf.writeUtf(line);
+                }
             },
             buf -> {
                 int size = buf.readInt();
@@ -77,7 +116,28 @@ public record ColonyLinkPacket(
                 String workerStatus = buf.readUtf();
                 int availableCpus = buf.readInt();
                 String redirectorState = buf.readUtf();
-                return new ColonyLinkPacket(list, pos, builderName, buildingName, workerStatus, availableCpus, redirectorState);
+                // builder request
+                BuilderRequest req;
+                boolean hasReq = buf.readBoolean();
+                if (hasReq)
+                {
+                    ItemStack reqStack = ItemStack.STREAM_CODEC.decode(buf);
+                    int reqCount = buf.readInt();
+                    ResourceStatus reqStatus = ResourceStatus.values()[buf.readInt()];
+                    BlockPos reqRedirectorPos = buf.readBlockPos();
+                    int reqTooltipCount = buf.readInt();
+                    List<String> reqTooltipLines = new ArrayList<>();
+                    for (int t = 0; t < reqTooltipCount; t++)
+                        reqTooltipLines.add(buf.readUtf());
+                    req = new BuilderRequest(reqStack, reqCount, reqStatus, reqRedirectorPos, reqTooltipLines);
+                }
+                else
+                {
+                    req = BuilderRequest.NONE;
+                }
+
+                return new ColonyLinkPacket(list, pos, builderName, buildingName,
+                        workerStatus, availableCpus, redirectorState, req);
             }
     );
 
@@ -89,7 +149,8 @@ public record ColonyLinkPacket(
         context.enqueueWork(() -> {
             if (Minecraft.getInstance().screen instanceof ColonyLinkScreen screen)
                 screen.updateEntries(packet.entries(), packet.builderName(), packet.buildingName(),
-                        packet.workerStatus(), packet.availableCpus(), packet.redirectorState());
+                        packet.workerStatus(), packet.availableCpus(), packet.redirectorState(),
+                        packet.builderRequest());
             else
                 Minecraft.getInstance().setScreen(new ColonyLinkScreen(packet));
         });

@@ -12,10 +12,12 @@ import com.ldtteam.domumornamentum.client.model.data.MaterialTextureData;
 import com.minecolonies.api.colony.IColony;
 import com.minecolonies.api.colony.IColonyManager;
 import com.minecolonies.api.colony.buildings.IBuilding;
+import com.minecolonies.api.colony.requestsystem.request.IRequest;
+import com.minecolonies.api.colony.requestsystem.request.RequestState;
+import com.minecolonies.api.colony.requestsystem.requestable.IDeliverable;
 import com.minecolonies.core.colony.buildings.AbstractBuildingStructureBuilder;
 import com.minecolonies.core.colony.buildings.utils.BuildingBuilderResource;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -51,7 +53,7 @@ public class ColonyLinkServerTicker
     public static void onServerTick(ServerTickEvent.Pre event)
     {
         tickCounter++;
-        if (tickCounter < 40) return; // 2 secondes au lieu de 1
+        if (tickCounter < 40) return;
         tickCounter = 0;
 
         if (activeViewers.isEmpty()) return;
@@ -93,7 +95,7 @@ public class ColonyLinkServerTicker
 
             if (!(building instanceof AbstractBuildingStructureBuilder builderBuilding)) return;
 
-            // Infos builder + statut worker
+            // ── Infos builder + statut worker ────────────────────────────────
             String builderName = "N/A";
             String workerStatus = "IDLE";
             if (!builderBuilding.getAllAssignedCitizen().isEmpty())
@@ -107,7 +109,7 @@ public class ColonyLinkServerTicker
                     workerStatus = citizen.getJobStatus().name();
             }
 
-            // Infos work order
+            // ── Infos work order ─────────────────────────────────────────────
             String buildingName = "N/A";
             var workOrder = builderBuilding.getWorkOrder();
             if (workOrder != null)
@@ -117,15 +119,13 @@ public class ColonyLinkServerTicker
                     buildingName += " [" + workOrder.getStage().name() + "]";
             }
 
-            // CPUs AE2
+            // ── CPUs AE2 ─────────────────────────────────────────────────────
             ICraftingService craftingService = grid.getCraftingService();
             int availableCpus = 0;
             for (var cpu : craftingService.getCpus())
-            {
                 if (!cpu.isBusy()) availableCpus++;
-            }
 
-            // État redirector
+            // ── État redirector ───────────────────────────────────────────────
             String redirectorState = "N/A";
             BlockPos redirectorPos = getLinkedRedirectorPos(wandStack);
             if (redirectorPos != null)
@@ -135,16 +135,16 @@ public class ColonyLinkServerTicker
                     redirectorState = redirector.getState().name();
             }
 
-            // Ressources
+            // ── Ressources manquantes ─────────────────────────────────────────
+            IStorageService storageService = grid.getStorageService();
+            KeyCounter inventory = storageService.getCachedInventory();
+            BlockPos safeRedirectorPos = redirectorPos != null ? redirectorPos : BlockPos.ZERO;
+
             Map<String, BuildingBuilderResource> neededResources = builderBuilding.getNeededResources();
             List<ColonyLinkPacket.ResourceEntry> entries = new ArrayList<>();
 
             if (neededResources != null && !neededResources.isEmpty())
             {
-                IStorageService storageService = grid.getStorageService();
-                KeyCounter inventory = storageService.getCachedInventory();
-                BlockPos safeRedirectorPos = redirectorPos != null ? redirectorPos : BlockPos.ZERO;
-
                 for (BuildingBuilderResource resource : neededResources.values())
                 {
                     ItemStack stack = resource.getItemStack();
@@ -157,7 +157,6 @@ public class ColonyLinkServerTicker
                     ItemStack missingStack = stack.copy();
                     missingStack.setCount(Math.min(missing, 64));
 
-                    // Détection Domum Ornamentum
                     if (DomumCraftHandler.isDomumItem(stack))
                     {
                         DomumCraftHandler.DomumStatus domumStatus =
@@ -168,12 +167,12 @@ public class ColonyLinkServerTicker
                             List<String> tooltip = buildDomumTooltip(
                                     stack, domumStatus, inventory, craftingService, missing);
                             entries.add(new ColonyLinkPacket.ResourceEntry(
-                                    missingStack, domumStatus.status(), missing, true, safeRedirectorPos, tooltip));
+                                    missingStack, domumStatus.status(), missing,
+                                    true, safeRedirectorPos, tooltip));
                             continue;
                         }
                     }
 
-                    // Item standard AE2
                     AEItemKey aeKey = AEItemKey.of(stack);
                     ResourceStatus status;
                     long inStorage = inventory.get(aeKey);
@@ -193,12 +192,106 @@ public class ColonyLinkServerTicker
                 }
             }
 
+            // ── Feature 1 : Requête prioritaire du builder PNJ ───────────────
+            ColonyLinkPacket.BuilderRequest builderRequest =
+                    fetchBuilderRequest(builderBuilding, inventory, craftingService, safeRedirectorPos);
+
             PacketDistributor.sendToPlayer(player, new ColonyLinkPacket(
-                    entries, builderPos, builderName, buildingName, workerStatus, availableCpus, redirectorState));
+                    entries, builderPos, builderName, buildingName, workerStatus,
+                    availableCpus, redirectorState, builderRequest));
         });
 
         toRemove.forEach(activeViewers::remove);
     }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Feature 1 — Requête prioritaire du builder PNJ
+    // ────────────────────────────────────────────────────────────────────────
+
+    @SuppressWarnings("unchecked")
+    private static ColonyLinkPacket.BuilderRequest fetchBuilderRequest(
+            AbstractBuildingStructureBuilder builderBuilding,
+            KeyCounter inventory,
+            ICraftingService craftingService,
+            BlockPos safeRedirectorPos)
+    {
+        if (builderBuilding.getAllAssignedCitizen().isEmpty())
+            return ColonyLinkPacket.BuilderRequest.NONE;
+
+        var citizen = builderBuilding.getAllAssignedCitizen().iterator().next();
+
+        try
+        {
+            // API correcte : getOpenRequests(ICitizenData) sur le building
+            var requests = builderBuilding.getOpenRequests(citizen.getId());
+
+            if (requests == null || requests.isEmpty())
+                return ColonyLinkPacket.BuilderRequest.NONE;
+
+            for (IRequest<?> request : requests)
+            {
+                // Ignore les requêtes annulées ou overruled
+                if (request.getState() == RequestState.CANCELLED
+                        || request.getState() == RequestState.OVERRULED)
+                    continue;
+
+                // On ne veut que des IDeliverable (matériaux, outils, nourriture)
+                // et on ignore les quêtes (non-IDeliverable)
+                if (!(request.getRequest() instanceof IDeliverable deliverable))
+                    continue;
+
+                // Récupère le stack via getDisplayStacks() (liste d'alternatives)
+                // On prend le premier stack non vide
+                ItemStack reqStack = ItemStack.EMPTY;
+
+                List<ItemStack> displayStacks = request.getDisplayStacks();
+                if (displayStacks != null && !displayStacks.isEmpty())
+                {
+                    for (ItemStack s : displayStacks)
+                    {
+                        if (!s.isEmpty()) { reqStack = s; break; }
+                    }
+                }
+
+                if (reqStack.isEmpty()) continue;
+
+                int reqCount = deliverable.getCount();
+                if (reqCount <= 0) reqCount = 1;
+
+                // Calcule le statut ME
+                AEItemKey aeKey = AEItemKey.of(reqStack);
+                long inStorage = inventory.get(aeKey);
+                ResourceStatus status;
+
+                if (inStorage >= reqCount)
+                    status = ResourceStatus.AVAILABLE;
+                else if (craftingService.isRequesting(aeKey))
+                    status = ResourceStatus.CRAFTING;
+                else if (craftingService.isCraftable(aeKey))
+                    status = ResourceStatus.CRAFTABLE;
+                else
+                    status = ResourceStatus.NO_PATTERN;
+
+                List<String> tooltip = buildStandardTooltip(reqStack, status, reqCount, inStorage);
+
+                ItemStack displayStack = reqStack.copy();
+                displayStack.setCount(Math.min(reqCount, 64));
+
+                return new ColonyLinkPacket.BuilderRequest(
+                        displayStack, reqCount, status, safeRedirectorPos, tooltip);
+            }
+        }
+        catch (Exception e)
+        {
+            ColonyLink.LOGGER.debug("[ColonyLink] Could not fetch builder request: {}", e.getMessage());
+        }
+
+        return ColonyLinkPacket.BuilderRequest.NONE;
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Tooltip builders
+    // ────────────────────────────────────────────────────────────────────────
 
     private static List<String> buildDomumTooltip(ItemStack stack, DomumCraftHandler.DomumStatus domumStatus,
                                                   KeyCounter inventory, ICraftingService craftingService, int missing)
@@ -210,7 +303,6 @@ public class ColonyLinkServerTicker
         if (!(block instanceof IMateriallyTexturedBlock texturedBlock)) return lines;
 
         MaterialTextureData textureData = MaterialTextureData.readFromItemStack(stack);
-
         lines.add("§b[Domum Ornamentum] §7Components:");
 
         for (IMateriallyTexturedBlockComponent component : texturedBlock.getComponents())
@@ -289,6 +381,10 @@ public class ColonyLinkServerTicker
         return lines;
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // Helpers
+    // ────────────────────────────────────────────────────────────────────────
+
     private static BlockPos getLinkedRedirectorPos(ItemStack wandStack)
     {
         var data = wandStack.get(net.minecraft.core.component.DataComponents.CUSTOM_DATA);
@@ -304,10 +400,7 @@ public class ColonyLinkServerTicker
     private static ItemStack findWandInInventory(ServerPlayer player)
     {
         for (ItemStack stack : player.getInventory().items)
-        {
-            if (stack.getItem() instanceof ColonyLinkWand)
-                return stack;
-        }
+            if (stack.getItem() instanceof ColonyLinkWand) return stack;
         return null;
     }
 
@@ -315,14 +408,10 @@ public class ColonyLinkServerTicker
     {
         net.minecraft.core.GlobalPos linkedPos = ColonyLinkWandLinkableHandler.getLinkedPos(wandStack);
         if (linkedPos == null) return null;
-
         ServerLevel targetLevel = level.getServer().getLevel(linkedPos.dimension());
         if (targetLevel == null) return null;
-
-        var blockEntity = targetLevel.getBlockEntity(linkedPos.pos());
-        if (blockEntity instanceof IWirelessAccessPoint wap)
-            return wap;
-
+        var be = targetLevel.getBlockEntity(linkedPos.pos());
+        if (be instanceof IWirelessAccessPoint wap) return wap;
         return null;
     }
 }

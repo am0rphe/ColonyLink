@@ -18,7 +18,14 @@ import net.neoforged.neoforge.items.IItemHandler;
 
 public class SendToBuilderHandler
 {
-    public static void handleSendToBuilder(ServerPlayer player, ItemStack stack, BlockPos builderPos)
+    /**
+     * Bug 1 fix : envoie la totalité de la quantité manquante en une seule fois,
+     * en bouclant sur les extractions ME par tranches de 64 jusqu'à épuisement.
+     *
+     * @param realCount quantité totale réelle demandée (peut dépasser 64)
+     */
+    public static void handleSendToBuilder(ServerPlayer player, ItemStack stack,
+                                           BlockPos builderPos, int realCount)
     {
         ItemStack wandStack = findWandInInventory(player);
         if (wandStack == null || !ColonyLinkWandLinkableHandler.isLinked(wandStack))
@@ -29,7 +36,7 @@ public class SendToBuilderHandler
 
         ServerLevel level = player.serverLevel();
 
-        // Vérifie le redirector lié
+        // Récupère le redirector lié
         BlockPos redirectorPos = getLinkedRedirectorPos(wandStack);
         ColonyLinkRedirectorBlockEntity redirector = null;
         if (redirectorPos != null)
@@ -47,129 +54,134 @@ public class SendToBuilderHandler
             return;
         }
 
-        IItemHandler targetHandler = level.getCapability(Capabilities.ItemHandler.BLOCK, targetPos, null);
+        IItemHandler targetHandler = level.getCapability(
+                Capabilities.ItemHandler.BLOCK, targetPos, null);
         if (targetHandler == null)
         {
-            player.sendSystemMessage(Component.literal("§cTarget inventory not found at " + targetPos.toShortString()));
+            player.sendSystemMessage(Component.literal(
+                    "§cTarget inventory not found at " + targetPos.toShortString()));
             return;
         }
 
-        // 1. Cherche d'abord dans le buffer du redirector
-        boolean isDomum = DomumCraftHandler.isDomumItem(stack);
-        ItemStack extracted = ItemStack.EMPTY;
+        IWirelessAccessPoint wap = getWap(wandStack, level);
+        if (wap == null)
+        {
+            player.sendSystemMessage(Component.literal("§cCannot connect to AE2 network!"));
+            return;
+        }
 
-        if (redirector != null && isDomum)
+        IGrid grid = wap.getGrid();
+        if (grid == null)
+        {
+            player.sendSystemMessage(Component.literal("§cAE2 network is offline!"));
+            return;
+        }
+
+        if (redirector.getState() == ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY)
+        {
+            player.sendSystemMessage(Component.literal(
+                    "§6Redirector is in STANDBY - target inventory is full!"));
+            return;
+        }
+
+        IStorageService storageService = grid.getStorageService();
+        MEStorage inventory = storageService.getInventory();
+        IActionSource actionSource = IActionSource.ofPlayer(player,
+                (appeng.api.networking.security.IActionHost) wap);
+
+        boolean isDomum = DomumCraftHandler.isDomumItem(stack);
+        AEItemKey aeKey = AEItemKey.of(stack);
+
+        long totalInserted = 0;
+        int remaining = realCount;
+
+        // ── Étape 1 : puise dans le buffer DO si applicable ──────────────────
+        if (isDomum && redirector != null)
         {
             MaterialTextureData targetData = MaterialTextureData.readFromItemStack(stack);
             IItemHandler buffer = redirector.buffer;
 
-            for (int slot = 0; slot < buffer.getSlots(); slot++)
+            for (int slot = 0; slot < buffer.getSlots() && remaining > 0; slot++)
             {
                 ItemStack inSlot = buffer.getStackInSlot(slot);
                 if (inSlot.isEmpty()) continue;
                 if (inSlot.getItem() != stack.getItem()) continue;
 
                 MaterialTextureData slotData = MaterialTextureData.readFromItemStack(inSlot);
+                net.minecraft.world.item.component.BlockItemStateProperties slotBsp =
+                        inSlot.get(net.minecraft.core.component.DataComponents.BLOCK_STATE);
+                net.minecraft.world.item.component.BlockItemStateProperties targetBsp =
+                        stack.get(net.minecraft.core.component.DataComponents.BLOCK_STATE);
                 if (!slotData.equals(targetData)) continue;
+                if (!java.util.Objects.equals(slotBsp, targetBsp)) continue;
 
-                // Extrait ce qu'on peut
-                int toExtract = Math.min(inSlot.getCount(), stack.getCount());
+                int toExtract = Math.min(inSlot.getCount(), remaining);
                 ItemStack took = buffer.extractItem(slot, toExtract, false);
-                if (!took.isEmpty())
+                if (took.isEmpty()) continue;
+
+                ItemStack leftOver = insertIntoHandler(targetHandler, took);
+                long sent = took.getCount() - leftOver.getCount();
+                totalInserted += sent;
+                remaining -= (int) sent;
+
+                // Remet le trop-plein dans le buffer
+                if (!leftOver.isEmpty())
                 {
-                    extracted = took;
-                    break;
+                    for (int s2 = 0; s2 < buffer.getSlots() && !leftOver.isEmpty(); s2++)
+                        leftOver = buffer.insertItem(s2, leftOver, false);
+                    break; // cible pleine
                 }
             }
         }
 
-        // 2. Si pas trouvé dans le buffer, cherche dans le ME
-        if (extracted.isEmpty())
+        // ── Étape 2 : puise dans le ME pour le reste ─────────────────────────
+        while (remaining > 0)
         {
-            IWirelessAccessPoint wap = getWap(wandStack, level);
-            if (wap == null)
+            int batchSize = Math.min(remaining, 64);
+            long extracted = inventory.extract(aeKey, batchSize, Actionable.MODULATE, actionSource);
+
+            if (extracted <= 0) break; // plus rien en ME
+
+            ItemStack toInsert = aeKey.toStack((int) extracted);
+            ItemStack leftOver = insertIntoHandler(targetHandler, toInsert);
+            long sent = extracted - leftOver.getCount();
+            totalInserted += sent;
+            remaining -= (int) sent;
+
+            // Remet le trop-plein dans le ME
+            if (!leftOver.isEmpty())
             {
-                player.sendSystemMessage(Component.literal("§cCannot connect to AE2 network!"));
-                return;
-            }
-
-            IGrid grid = wap.getGrid();
-            if (grid == null)
-            {
-                player.sendSystemMessage(Component.literal("§cAE2 network is offline!"));
-                return;
-            }
-
-            if (redirector != null && redirector.getState() == ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY)
-            {
-                player.sendSystemMessage(Component.literal("§6Redirector is in STANDBY - target inventory is full!"));
-                return;
-            }
-
-            IStorageService storageService = grid.getStorageService();
-            MEStorage inventory = storageService.getInventory();
-            IActionSource actionSource = IActionSource.ofPlayer(player,
-                    (appeng.api.networking.security.IActionHost) wap);
-
-            AEItemKey aeKey = AEItemKey.of(stack);
-            long extractedCount = inventory.extract(aeKey, stack.getCount(), Actionable.MODULATE, actionSource);
-
-            if (extractedCount <= 0)
-            {
-                player.sendSystemMessage(Component.literal(
-                        "§cCould not extract " + stack.getDisplayName().getString() + " from ME or redirector buffer!"));
-                return;
-            }
-
-            extracted = stack.copy();
-            extracted.setCount((int) extractedCount);
-        }
-
-        // 3. Insère dans l'inventaire cible
-        ItemStack toInsert = extracted.copy();
-        long inserted = 0;
-
-        for (int i = 0; i < targetHandler.getSlots(); i++)
-        {
-            if (toInsert.isEmpty()) break;
-            ItemStack remainder = targetHandler.insertItem(i, toInsert, false);
-            inserted += toInsert.getCount() - remainder.getCount();
-            toInsert = remainder;
-        }
-
-        if (!toInsert.isEmpty())
-        {
-            // Remet le reste dans le buffer ou le ME
-            if (redirector != null && isDomum)
-            {
-                IItemHandler buffer = redirector.buffer;
-                for (int slot = 0; slot < buffer.getSlots() && !toInsert.isEmpty(); slot++)
-                    toInsert = buffer.insertItem(slot, toInsert, false);
-            }
-            else
-            {
-                IWirelessAccessPoint wap = getWap(wandStack, level);
-                if (wap != null && wap.getGrid() != null)
-                {
-                    IActionSource actionSource = IActionSource.ofPlayer(player,
-                            (appeng.api.networking.security.IActionHost) wap);
-                    AEItemKey aeKey = AEItemKey.of(toInsert);
-                    wap.getGrid().getStorageService().getInventory()
-                            .insert(aeKey, toInsert.getCount(), Actionable.MODULATE, actionSource);
-                }
-            }
-
-            if (redirector != null)
+                inventory.insert(aeKey, leftOver.getCount(), Actionable.MODULATE, actionSource);
                 redirector.setState(ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY);
+                break; // cible pleine
+            }
+        }
 
+        // ── Feedback ─────────────────────────────────────────────────────────
+        if (totalInserted > 0)
+        {
             player.sendSystemMessage(Component.literal(
-                    "§6Target inventory full! " + inserted + "x sent, " + toInsert.getCount() + "x returned."));
+                    "§a[ColonyLink] Sent " + totalInserted + "x "
+                            + stack.getDisplayName().getString() + " to builder!"));
+            if (remaining > 0)
+                player.sendSystemMessage(Component.literal(
+                        "§6[ColonyLink] Target inventory full — " + remaining + "x not sent."));
         }
         else
         {
             player.sendSystemMessage(Component.literal(
-                    "§aSent " + inserted + "x " + stack.getDisplayName().getString() + " to target inventory!"));
+                    "§c[ColonyLink] Could not send "
+                            + stack.getDisplayName().getString()
+                            + " — not enough in ME or inventory full!"));
         }
+    }
+
+    private static ItemStack insertIntoHandler(IItemHandler handler, ItemStack stack)
+    {
+        ItemStack remainder = stack.copy();
+        for (int slot = 0; slot < handler.getSlots() && !remainder.isEmpty(); slot++)
+            remainder = handler.insertItem(slot, remainder, false);
+        return remainder;
     }
 
     private static BlockPos getLinkedRedirectorPos(ItemStack wandStack)
@@ -178,16 +190,16 @@ public class SendToBuilderHandler
         if (data == null) return null;
         var tag = data.copyTag();
         if (!tag.contains("redirector_x")) return null;
-        return new BlockPos(tag.getInt("redirector_x"), tag.getInt("redirector_y"), tag.getInt("redirector_z"));
+        return new BlockPos(
+                tag.getInt("redirector_x"),
+                tag.getInt("redirector_y"),
+                tag.getInt("redirector_z"));
     }
 
     private static ItemStack findWandInInventory(ServerPlayer player)
     {
         for (ItemStack stack : player.getInventory().items)
-        {
-            if (stack.getItem() instanceof ColonyLinkWand)
-                return stack;
-        }
+            if (stack.getItem() instanceof ColonyLinkWand) return stack;
         return null;
     }
 
@@ -195,14 +207,10 @@ public class SendToBuilderHandler
     {
         net.minecraft.core.GlobalPos linkedPos = ColonyLinkWandLinkableHandler.getLinkedPos(wandStack);
         if (linkedPos == null) return null;
-
         ServerLevel targetLevel = level.getServer().getLevel(linkedPos.dimension());
         if (targetLevel == null) return null;
-
-        var blockEntity = targetLevel.getBlockEntity(linkedPos.pos());
-        if (blockEntity instanceof IWirelessAccessPoint wap)
-            return wap;
-
+        var be = targetLevel.getBlockEntity(linkedPos.pos());
+        if (be instanceof IWirelessAccessPoint wap) return wap;
         return null;
     }
 }

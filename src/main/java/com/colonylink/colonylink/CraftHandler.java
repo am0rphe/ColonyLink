@@ -24,14 +24,6 @@ import java.util.concurrent.TimeUnit;
 
 public class CraftHandler
 {
-    // Pool limité à 2 threads max pour éviter la saturation CPU
-    private static final ExecutorService CRAFT_EXECUTOR =
-            Executors.newFixedThreadPool(2, r -> {
-                Thread t = new Thread(r, "ColonyLink-Craft");
-                t.setDaemon(true);
-                return t;
-            });
-
     public static void handleCraftRequest(ServerPlayer player, ItemStack stack, int realCount)
     {
         handleCraftRequests(player, List.of(stack), List.of(realCount));
@@ -66,7 +58,26 @@ public class CraftHandler
         IActionSource actionSource = IActionSource.ofPlayer(player, wap);
         ICraftingSimulationRequester simulationRequester = () -> actionSource;
 
-        CRAFT_EXECUTOR.submit(() ->
+        // Bug 2 fix : compte les CPUs libres au moment du clic
+        int freeCpus = 0;
+        for (var cpu : craftingService.getCpus())
+            if (!cpu.isBusy()) freeCpus++;
+
+        // Au minimum 1 thread pour que ça marche même sans CPU AE2 dédié
+        int threadCount = Math.max(1, freeCpus);
+
+        // Pool dynamique à la taille exacte du besoin courant
+        ExecutorService craftExecutor = Executors.newFixedThreadPool(
+                Math.min(threadCount, stacks.size()),
+                r -> {
+                    Thread t = new Thread(r, "ColonyLink-Craft");
+                    t.setDaemon(true);
+                    return t;
+                });
+
+        final int freeCpusFinal = freeCpus;
+
+        craftExecutor.submit(() ->
         {
             int successCount = 0;
             int failCount = 0;
@@ -146,7 +157,8 @@ public class CraftHandler
                 {
                     if (finalSuccess > 0)
                         player.sendSystemMessage(Component.literal(
-                                "§aCraft started: " + finalRealCount + "x " + stacks.get(0).getDisplayName().getString()));
+                                "§aCraft started: " + finalRealCount + "x "
+                                        + stacks.get(0).getDisplayName().getString()));
                     else
                         player.sendSystemMessage(Component.literal(
                                 "§cCraft failed: " + stacks.get(0).getDisplayName().getString()));
@@ -154,10 +166,36 @@ public class CraftHandler
                 else
                 {
                     player.sendSystemMessage(Component.literal(
-                            "§aCraft All: " + finalSuccess + " started, " + finalFail + " failed."));
+                            "§aCraft All: " + finalSuccess + " started, " + finalFail + " failed."
+                                    + " (" + freeCpusFinal + " CPUs were available)"));
                 }
             });
         });
+
+        craftExecutor.shutdown();
+    }
+
+    /**
+     * Retourne le nombre de CPUs AE2 libres pour le réseau lié à la wand du joueur.
+     * Retourne -1 si le réseau est inaccessible.
+     */
+    public static int getFreeCpus(ServerPlayer player)
+    {
+        ItemStack wandStack = findWandInInventory(player);
+        if (wandStack == null || !ColonyLinkWandLinkableHandler.isLinked(wandStack))
+            return -1;
+
+        ServerLevel level = player.serverLevel();
+        IWirelessAccessPoint wap = getWap(wandStack, level);
+        if (wap == null) return -1;
+
+        IGrid grid = wap.getGrid();
+        if (grid == null) return -1;
+
+        int free = 0;
+        for (var cpu : grid.getCraftingService().getCpus())
+            if (!cpu.isBusy()) free++;
+        return free;
     }
 
     private static long getBatchSize(ICraftingService craftingService, AEItemKey aeKey)
@@ -174,33 +212,10 @@ public class CraftHandler
         return 1;
     }
 
-    private static ColonyLinkRedirectorBlockEntity getLinkedRedirector(ItemStack wandStack, ServerLevel level)
-    {
-        CustomData data = wandStack.get(DataComponents.CUSTOM_DATA);
-        if (data == null) return null;
-        var tag = data.copyTag();
-        if (!tag.contains("redirector_x")) return null;
-
-        BlockPos redirectorPos = new BlockPos(
-                tag.getInt("redirector_x"),
-                tag.getInt("redirector_y"),
-                tag.getInt("redirector_z")
-        );
-
-        var be = level.getBlockEntity(redirectorPos);
-        if (be instanceof ColonyLinkRedirectorBlockEntity redirector)
-            return redirector;
-
-        return null;
-    }
-
     private static ItemStack findWandInInventory(ServerPlayer player)
     {
         for (ItemStack stack : player.getInventory().items)
-        {
-            if (stack.getItem() instanceof ColonyLinkWand)
-                return stack;
-        }
+            if (stack.getItem() instanceof ColonyLinkWand) return stack;
         return null;
     }
 
@@ -208,14 +223,10 @@ public class CraftHandler
     {
         net.minecraft.core.GlobalPos linkedPos = ColonyLinkWandLinkableHandler.getLinkedPos(wandStack);
         if (linkedPos == null) return null;
-
         ServerLevel targetLevel = level.getServer().getLevel(linkedPos.dimension());
         if (targetLevel == null) return null;
-
-        var blockEntity = targetLevel.getBlockEntity(linkedPos.pos());
-        if (blockEntity instanceof IWirelessAccessPoint wap)
-            return wap;
-
+        var be = targetLevel.getBlockEntity(linkedPos.pos());
+        if (be instanceof IWirelessAccessPoint wap) return wap;
         return null;
     }
 }
