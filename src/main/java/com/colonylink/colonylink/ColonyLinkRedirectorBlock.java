@@ -1,6 +1,8 @@
 package com.colonylink.colonylink;
 
 import appeng.items.tools.NetworkToolItem;
+import net.minecraft.tags.ItemTags;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
@@ -29,8 +31,8 @@ public class ColonyLinkRedirectorBlock extends Block implements EntityBlock
     public ColonyLinkRedirectorBlock()
     {
         super(BlockBehaviour.Properties.of()
-                .strength(2.0f)
-                .destroyTime(2.0f));
+                .strength(0.5f)
+                .destroyTime(0.5f));
         this.registerDefaultState(this.stateDefinition.any().setValue(FACING, Direction.NORTH));
     }
 
@@ -111,7 +113,24 @@ public class ColonyLinkRedirectorBlock extends Block implements EntityBlock
             return;
         }
         if (!level.isClientSide())
+        {
+            var be = level.getBlockEntity(pos);
+            if (be instanceof ColonyLinkRedirectorBlockEntity redirector)
+            {
+                // Droppe le contenu du buffer
+                for (int slot = 0; slot < redirector.buffer.getSlots(); slot++)
+                {
+                    net.minecraft.world.item.ItemStack stack = redirector.buffer.getStackInSlot(slot);
+                    if (!stack.isEmpty())
+                        Block.popResource(level, pos, stack);
+                }
+                // Droppe la Warehouse Link Card si présente
+                net.minecraft.world.item.ItemStack card = redirector.warehouseCardSlot.getStackInSlot(0);
+                if (!card.isEmpty())
+                    Block.popResource(level, pos, card);
+            }
             level.updateNeighborsAt(pos, this);
+        }
         super.onRemove(state, level, pos, newState, movedByPiston);
     }
 
@@ -126,7 +145,7 @@ public class ColonyLinkRedirectorBlock extends Block implements EntityBlock
         ItemStack heldItem = player.getMainHandItem();
 
         // Wrench AE2 → show status ou casse
-        if (heldItem.getItem() instanceof NetworkToolItem)
+        if (isAe2Wrench(heldItem))
         {
             if (player.isShiftKeyDown())
             {
@@ -181,5 +200,22 @@ public class ColonyLinkRedirectorBlock extends Block implements EntityBlock
             }
             default -> {}
         }
+    }
+
+    /**
+     * Retourne true si l'item est un wrench AE2 (Network Tool, Certus Wrench, Fluix Wrench).
+     * Utilise le tag ae2:tools/wrench qui regroupe tous les wrenches AE2.
+     * Fallback sur instanceof NetworkToolItem si le tag n'existe pas.
+     */
+    private static boolean isAe2Wrench(net.minecraft.world.item.ItemStack stack)
+    {
+        if (stack.isEmpty()) return false;
+        // Tag AE2 qui couvre Network Tool + Certus Wrench + Fluix Wrench
+        var wrenchTag = net.minecraft.tags.TagKey.create(
+                net.minecraft.core.registries.Registries.ITEM,
+                ResourceLocation.fromNamespaceAndPath("ae2", "tools/wrench"));
+        if (stack.is(wrenchTag)) return true;
+        // Fallback Network Tool (au cas où le tag serait absent)
+        return stack.getItem() instanceof NetworkToolItem;
     }
 }

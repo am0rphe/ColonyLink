@@ -49,6 +49,76 @@ public class ColonyLinkServerTicker
         activeViewers.remove(playerUUID);
     }
 
+    /**
+     * Envoi immédiat d'un packet au joueur à l'ouverture du GUI,
+     * sans attendre le prochain cycle du ticker (40 ticks).
+     * Permet d'afficher instantanément le bouton Check Warehouse et le switch.
+     */
+    public static void sendImmediateUpdate(ServerPlayer player, BlockPos builderPos)
+    {
+        ItemStack wandStack = findWandInInventory(player);
+        if (wandStack == null || !ColonyLinkWandLinkableHandler.isLinked(wandStack)) return;
+
+        ServerLevel level = player.serverLevel();
+
+        IWirelessAccessPoint wap = getWap(wandStack, level);
+        if (wap == null) return;
+
+        IGrid grid = wap.getGrid();
+        if (grid == null) return;
+
+        // État redirector + warehouse card
+        String redirectorState = "N/A";
+        boolean hasWarehouseCard = false;
+        boolean warehousePriority = false;
+        BlockPos redirectorPos = getLinkedRedirectorPos(wandStack);
+        if (redirectorPos != null)
+        {
+            var be = level.getBlockEntity(redirectorPos);
+            if (be instanceof ColonyLinkRedirectorBlockEntity redirector)
+            {
+                appeng.api.networking.IGridNode rnode = redirector.getManagedGridNode().getNode();
+                if (rnode != null)
+                {
+                    ColonyLinkRedirectorBlockEntity.RedirectorState s = redirector.getState();
+                    redirectorState = switch (s)
+                    {
+                        case STANDBY    -> "STANDBY";
+                        case NOT_LINKED -> "NOT_LINKED";
+                        default         -> "LINKED";
+                    };
+                }
+                else
+                {
+                    redirectorState = "NOT_LINKED";
+                }
+                hasWarehouseCard = redirector.hasWarehouseCard();
+                warehousePriority = redirector.isWarehousePriority();
+            }
+        }
+
+        ICraftingService craftingService = grid.getCraftingService();
+        int availableCpus = 0;
+        for (var cpu : craftingService.getCpus())
+            if (!cpu.isBusy()) availableCpus++;
+
+        // Packet minimal : liste vide, infos builder vides — juste pour afficher
+        // immédiatement le bon état du redirector/warehouse card.
+        // Le ticker enverra les ressources complètes dans les 2 secondes suivantes.
+        PacketDistributor.sendToPlayer(player, new ColonyLinkPacket(
+                new java.util.ArrayList<>(),
+                builderPos,
+                "...",
+                "...",
+                "...",
+                availableCpus,
+                redirectorState,
+                ColonyLinkPacket.BuilderRequest.NONE,
+                hasWarehouseCard,
+                warehousePriority
+        ));
+    }
+
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Pre event)
     {
@@ -125,8 +195,10 @@ public class ColonyLinkServerTicker
             for (var cpu : craftingService.getCpus())
                 if (!cpu.isBusy()) availableCpus++;
 
-            // ── État redirector ───────────────────────────────────────────────
+            // ── État redirector + présence WarehouseLinkCard ──────────────────
             String redirectorState = "N/A";
+            boolean hasWarehouseCard = false;
+            boolean warehousePriority = false;
             BlockPos redirectorPos = getLinkedRedirectorPos(wandStack);
             if (redirectorPos != null)
             {
@@ -148,6 +220,10 @@ public class ColonyLinkServerTicker
                     {
                         redirectorState = "NOT_LINKED";
                     }
+                    // Présence de la WarehouseLinkCard pour le bouton côté client
+                    hasWarehouseCard = redirector.hasWarehouseCard();
+                    // État du switch priorité warehouse/AE2
+                    warehousePriority = redirector.isWarehousePriority();
                 }
             }
 
@@ -214,7 +290,7 @@ public class ColonyLinkServerTicker
 
             PacketDistributor.sendToPlayer(player, new ColonyLinkPacket(
                     entries, builderPos, builderName, buildingName, workerStatus,
-                    availableCpus, redirectorState, builderRequest));
+                    availableCpus, redirectorState, builderRequest, hasWarehouseCard, warehousePriority));
         });
 
         toRemove.forEach(activeViewers::remove);
@@ -238,7 +314,6 @@ public class ColonyLinkServerTicker
 
         try
         {
-            // API correcte : getOpenRequests(ICitizenData) sur le building
             var requests = builderBuilding.getOpenRequests(citizen.getId());
 
             if (requests == null || requests.isEmpty())
@@ -246,18 +321,13 @@ public class ColonyLinkServerTicker
 
             for (IRequest<?> request : requests)
             {
-                // Ignore les requêtes annulées ou overruled
                 if (request.getState() == RequestState.CANCELLED
                         || request.getState() == RequestState.OVERRULED)
                     continue;
 
-                // On ne veut que des IDeliverable (matériaux, outils, nourriture)
-                // et on ignore les quêtes (non-IDeliverable)
                 if (!(request.getRequest() instanceof IDeliverable deliverable))
                     continue;
 
-                // Récupère le stack via getDisplayStacks() (liste d'alternatives)
-                // On prend le premier stack non vide
                 ItemStack reqStack = ItemStack.EMPTY;
 
                 List<ItemStack> displayStacks = request.getDisplayStacks();
@@ -274,7 +344,6 @@ public class ColonyLinkServerTicker
                 int reqCount = deliverable.getCount();
                 if (reqCount <= 0) reqCount = 1;
 
-                // Calcule le statut ME
                 AEItemKey aeKey = AEItemKey.of(reqStack);
                 long inStorage = inventory.get(aeKey);
                 ResourceStatus status;

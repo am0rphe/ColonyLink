@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "IFI",
+    "WSW",
+    "IFI"
+  ],
+  "key": {
+    "I": { "item": "minecraft:iron_ingot" },
+    "F": { "item": "ae2:fluix_crystal" },
+    "S": { "item": "ae2:singularity" },
+    "W": { "item": "minecolonies:blockhutwarehouse" }
+  },
+  "result": {
+    "id": "colonylink:warehouse_link_card",
+    "count": 1
+  }
+}

@@ -43,6 +43,9 @@ public class ColonyLink
     public static final DeferredItem<Item> COLONY_LINK_WAND = ITEMS.register("colony_link_wand",
             () -> new ColonyLinkWand(new Item.Properties().stacksTo(1)));
 
+    public static final DeferredItem<Item> WAREHOUSE_LINK_CARD = ITEMS.register("warehouse_link_card",
+            () -> new WarehouseLinkCard());
+
     public static final DeferredHolder<CreativeModeTab, CreativeModeTab> COLONY_LINK_TAB =
             CREATIVE_MODE_TABS.register("colony_link_tab",
                     () -> CreativeModeTab.builder()
@@ -52,6 +55,7 @@ public class ColonyLink
                             .displayItems((parameters, output) -> {
                                 output.accept(COLONY_LINK_WAND.get());
                                 output.accept(ColonyLinkRegistry.REDIRECTOR_BLOCK_ITEM.get());
+                                output.accept(WAREHOUSE_LINK_CARD.get());
                             }).build());
 
     public static final ColonyLinkWandLinkableHandler LINKABLE_HANDLER =
@@ -63,8 +67,6 @@ public class ColonyLink
         modEventBus.addListener(this::registerPayloads);
         modEventBus.addListener(this::registerScreens);
 
-        // Enregistrement de la capability AE2 IN_WORLD_GRID_NODE_HOST
-        // DOIT être sur le modEventBus (pas NeoForge.EVENT_BUS)
         modEventBus.addListener(ColonyLinkRegistry::registerCapabilities);
 
         ITEMS.register(modEventBus);
@@ -99,8 +101,12 @@ public class ColonyLink
         var be = event.getLevel().getBlockEntity(pos);
         if (!(be instanceof ColonyLinkRedirectorBlockEntity redirector)) return;
 
-        // Wrench AE2 sneak + clic = casse instantané
-        if (heldItem.getItem() instanceof NetworkToolItem && player.isShiftKeyDown())
+        // Wrench AE2 sneak + clic = casse instantané (Network Tool + Certus + Fluix wrench)
+        var wrenchTag = net.minecraft.tags.TagKey.create(
+                net.minecraft.core.registries.Registries.ITEM,
+                net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("ae2", "tools/wrench"));
+        boolean isWrench = heldItem.is(wrenchTag) || heldItem.getItem() instanceof NetworkToolItem;
+        if (isWrench && player.isShiftKeyDown())
         {
             var blockState = event.getLevel().getBlockState(pos);
             Block.dropResources(blockState, event.getLevel(), pos, be, player, heldItem);
@@ -140,6 +146,12 @@ public class ColonyLink
                 ColonyLinkPacket::handle
         );
 
+        registrar.playToClient(
+                WarehouseResultPacket.TYPE,
+                WarehouseResultPacket.STREAM_CODEC,
+                WarehouseResultPacket::handle
+        );
+
         registrar.playToServer(
                 CraftRequestPacket.TYPE,
                 CraftRequestPacket.STREAM_CODEC,
@@ -168,6 +180,24 @@ public class ColonyLink
                 RestartBuilderPacket.TYPE,
                 RestartBuilderPacket.STREAM_CODEC,
                 RestartBuilderPacket::handle
+        );
+
+        registrar.playToServer(
+                WarehouseCheckPacket.TYPE,
+                WarehouseCheckPacket.STREAM_CODEC,
+                WarehouseCheckPacket::handle
+        );
+
+        registrar.playToServer(
+                WarehousePriorityPacket.TYPE,
+                WarehousePriorityPacket.STREAM_CODEC,
+                WarehousePriorityPacket::handle
+        );
+
+        registrar.playToServer(
+                WarehouseCraftPacket.TYPE,
+                WarehouseCraftPacket.STREAM_CODEC,
+                WarehouseCraftPacket::handle
         );
     }
 }

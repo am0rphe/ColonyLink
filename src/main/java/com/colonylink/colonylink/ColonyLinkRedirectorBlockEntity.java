@@ -48,12 +48,51 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
     // Etat AE2 synchronisé côté client via getUpdateTag/handleUpdateTag
     private boolean ae2ActiveClientCache = false;
 
+    /**
+     * Priorité d'extraction pour le Send.
+     * true  = Warehouse en premier, complément depuis ME si insuffisant
+     * false = AE2 en premier (comportement par défaut)
+     *
+     * Persisté en NBT. Réinitialisé à false si la WarehouseLinkCard est retirée.
+     * Synchronisé vers le client via getUpdateTag pour affichage du switch.
+     */
+    private boolean warehousePriority = false;
+
+    // Cache client de warehousePriority (lu côté client depuis handleUpdateTag)
+    private boolean warehousePriorityClientCache = false;
+
     public final ItemStackHandler buffer = new ItemStackHandler(BUFFER_SIZE)
     {
         @Override
         protected void onContentsChanged(int slot)
         {
             setChanged();
+        }
+    };
+
+    /**
+     * Slot unique pour la Warehouse Link Card.
+     * N'accepte que des WarehouseLinkCard items.
+     * Quand la carte est retirée, remet warehousePriority à false.
+     */
+    public final ItemStackHandler warehouseCardSlot = new ItemStackHandler(1)
+    {
+        @Override
+        public boolean isItemValid(int slot, ItemStack stack)
+        {
+            return stack.getItem() instanceof WarehouseLinkCard;
+        }
+
+        @Override
+        protected void onContentsChanged(int slot)
+        {
+            // Si la carte est retirée, remet la priorité à AE2 par défaut
+            if (warehouseCardSlot.getStackInSlot(0).isEmpty())
+                warehousePriority = false;
+
+            setChanged();
+            if (level != null)
+                level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
         }
     };
 
@@ -104,10 +143,39 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
         return new ColonyLinkRedirectorMenu(containerId, playerInventory, this);
     }
 
+    /**
+     * Retourne true si une WarehouseLinkCard est insérée dans le slot dédié.
+     */
+    public boolean hasWarehouseCard()
+    {
+        return !warehouseCardSlot.getStackInSlot(0).isEmpty();
+    }
+
+    /**
+     * Retourne l'état de priorité warehouse.
+     * Côté serveur : valeur réelle.
+     * Côté client  : cache synchronisé via getUpdateTag/handleUpdateTag.
+     */
+    public boolean isWarehousePriority()
+    {
+        if (level != null && !level.isClientSide())
+            return warehousePriority;
+        return warehousePriorityClientCache;
+    }
+
+    /**
+     * Toggle la priorité warehouse/AE2.
+     * Appelé par WarehousePriorityPacket côté serveur uniquement.
+     */
+    public void toggleWarehousePriority()
+    {
+        warehousePriority = !warehousePriority;
+        markDirtyAndUpdate();
+    }
+
     private void onGridStateChanged()
     {
         if (level == null) return;
-        // Synchronise l'état vers le client et notifie les câbles adjacents
         level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
         setChanged();
     }
@@ -118,11 +186,7 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
         super.onLoad();
         if (level != null && !level.isClientSide())
         {
-            // loadFromNBT doit être appelé avant create()
             gridNode.create(level, worldPosition);
-            // Notifie les voisins qu'un nouveau nœud est disponible
-            // Le délai d'un tick est nécessaire pour que le niveau
-            // soit complètement chargé avant la notification
             level.scheduleTick(worldPosition, getBlockState().getBlock(), 1);
         }
     }
@@ -144,8 +208,6 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
     @Override
     public @Nullable IGridNode getGridNode(Direction dir)
     {
-        // AE2 appelle cette méthode sur les blocs adjacents pour former des connexions.
-        // On expose le nœud sur toutes les faces (null = pas de connexion dans cette direction).
         return gridNode.getNode();
     }
 
@@ -199,11 +261,6 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
         craftingLinks.add(link);
     }
 
-    /**
-     * Tick statique appelé par ColonyLinkRedirectorBlock.getTicker().
-     * Déclenché 1 tick après onLoad pour notifier les voisins une fois
-     * que le niveau est complètement initialisé.
-     */
     public static <T extends BlockEntity> BlockEntityTicker<T> createTicker(
             Level level, BlockEntityType<T> serverType)
     {
@@ -221,16 +278,10 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
     {
         if (firstTickDone) return;
         firstTickDone = true;
-        // Notifie les 6 faces adjacentes pour que les câbles AE2 se connectent
         for (Direction dir : Direction.values())
             level.updateNeighborsAt(pos.relative(dir), level.getBlockState(pos.relative(dir)).getBlock());
     }
 
-    /**
-     * Vérifie si le nœud AE2 est actif.
-     * Côté serveur : lit directement le nœud.
-     * Côté client : utilise le cache synchronisé via getUpdateTag.
-     */
     public boolean isAe2Active()
     {
         if (level != null && !level.isClientSide())
@@ -318,6 +369,8 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
         boolean ae2Active = gridNode.getNode() != null && gridNode.getNode().isActive();
         tag.putBoolean("ae2_active", ae2Active);
         tag.putString("state", state.name());
+        tag.putBoolean("has_warehouse_card", hasWarehouseCard());
+        tag.putBoolean("warehouse_priority", warehousePriority);
         if (targetInventoryPos != null)
         {
             tag.putInt("target_x", targetInventoryPos.getX());
@@ -344,6 +397,8 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
             try { state = RedirectorState.valueOf(tag.getString("state")); }
             catch (Exception ignored) {}
         }
+        if (tag.contains("warehouse_priority"))
+            warehousePriorityClientCache = tag.getBoolean("warehouse_priority");
         if (tag.contains("target_x"))
             targetInventoryPos = new BlockPos(tag.getInt("target_x"), tag.getInt("target_y"), tag.getInt("target_z"));
         if (tag.contains("builder_x"))
@@ -358,6 +413,8 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
         super.saveAdditional(tag, provider);
         gridNode.saveToNBT(tag);
         tag.put("buffer", buffer.serializeNBT(provider));
+        tag.put("warehouse_card_slot", warehouseCardSlot.serializeNBT(provider));
+        tag.putBoolean("warehouse_priority", warehousePriority);
         if (targetInventoryPos != null)
         {
             tag.putInt("target_x", targetInventoryPos.getX());
@@ -380,6 +437,10 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
         gridNode.loadFromNBT(tag);
         if (tag.contains("buffer"))
             buffer.deserializeNBT(provider, tag.getCompound("buffer"));
+        if (tag.contains("warehouse_card_slot"))
+            warehouseCardSlot.deserializeNBT(provider, tag.getCompound("warehouse_card_slot"));
+        if (tag.contains("warehouse_priority"))
+            warehousePriority = tag.getBoolean("warehouse_priority");
         if (tag.contains("target_x"))
             targetInventoryPos = new BlockPos(tag.getInt("target_x"), tag.getInt("target_y"), tag.getInt("target_z"));
         if (tag.contains("builder_x"))

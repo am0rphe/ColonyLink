@@ -65,3 +65,10 @@ modId="guideme"
 type="required"
 versionRange="[21.1.15,)"
 ordering="AFTER"
+
+[[dependencies.${mod_id}]]
+modId="jade"
+type="optional"
+versionRange="[15.0.0,)"
+ordering="AFTER"
+side="CLIENT"

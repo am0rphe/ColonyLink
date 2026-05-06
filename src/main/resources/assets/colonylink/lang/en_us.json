@@ -3,5 +3,6 @@
   "item.colonylink.colony_link_wand.tooltip": "Right-click a Builder's Hut to queue autocrafting in AE2",
   "itemGroup.colonylink": "ColonyLink",
   "block.colonylink.colony_link_redirector": "Colony Link Redirector",
-  "block.colonylink.colony_link_redirector.tooltip": "Links a ME network to a colony inventory"
+  "block.colonylink.colony_link_redirector.tooltip": "Links a ME network to a colony inventory",
+  "item.colonylink.warehouse_link_card": "Warehouse Link Card"
 }

@@ -215,15 +215,25 @@ public class ColonyLinkWand extends Item
                 return net.minecraft.world.InteractionResult.FAIL;
             }
 
-            if (!redirector.isLinked())
+            // Récupère le dernier builder lié à la wand
+            BlockPos builderPosForRedirector = getLastBuilderPos(wandStack);
+            if (builderPosForRedirector == null)
             {
-                player.sendSystemMessage(Component.literal("§cRedirector has no inventory linked!"));
+                player.sendSystemMessage(Component.literal("§cNo Builder's Hut linked to this wand!"));
+                player.sendSystemMessage(Component.literal("§7Sneak + Right-click a Builder's Hut first."));
                 return net.minecraft.world.InteractionResult.FAIL;
             }
 
+            // Lie le redirector au builder (targetInventory = inventaire du builder's hut)
+            redirector.setTargetInventoryPos(builderPosForRedirector);
+            redirector.setLinkedBuilderPos(builderPosForRedirector);
+            redirector.updateState();
+
+            // Lie la wand au redirector
             setLinkedRedirectorPos(wandStack, pos);
+
             player.sendSystemMessage(Component.literal("§aWand linked to Colony Link Redirector!"));
-            player.sendSystemMessage(Component.literal("§7Crafting outputs will be sent to the redirector's inventory."));
+            player.sendSystemMessage(Component.literal("§7Builder at " + builderPosForRedirector.toShortString() + " → Redirector linked."));
             return net.minecraft.world.InteractionResult.SUCCESS;
         }
 
@@ -420,7 +430,7 @@ public class ColonyLinkWand extends Item
 
         PacketDistributor.sendToPlayer((ServerPlayer) player, new ColonyLinkPacket(
                 entries, builderPos, builderName, buildingName, workerStatus, availableCpus, redirectorState,
-                ColonyLinkPacket.BuilderRequest.NONE));
+                ColonyLinkPacket.BuilderRequest.NONE, false, false));
         return true;
     }
 

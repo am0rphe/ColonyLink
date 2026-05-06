@@ -20,7 +20,9 @@ public record ColonyLinkPacket(
         String workerStatus,
         int availableCpus,
         String redirectorState,
-        BuilderRequest builderRequest
+        BuilderRequest builderRequest,
+        boolean hasWarehouseCard,         // présence de la WarehouseLinkCard
+        boolean warehousePriority         // état du switch priorité Warehouse/AE2
 ) implements CustomPacketPayload
 {
     /**
@@ -37,7 +39,6 @@ public record ColonyLinkPacket(
 
     /**
      * Feature 1 — Requête prioritaire du builder PNJ.
-     * Peut être null si le builder n'a pas de requête active (non-quest).
      */
     public record BuilderRequest(
             ItemStack stack,
@@ -78,7 +79,7 @@ public record ColonyLinkPacket(
                 buf.writeUtf(packet.workerStatus());
                 buf.writeInt(packet.availableCpus());
                 buf.writeUtf(packet.redirectorState());
-                // builder request — booleen hasRequest pour eviter ItemStack.EMPTY interdit par le codec
+                // builder request
                 BuilderRequest req = packet.builderRequest() != null
                         ? packet.builderRequest() : BuilderRequest.NONE;
                 boolean hasReq = !req.stack().isEmpty() && req.count() > 0;
@@ -93,6 +94,9 @@ public record ColonyLinkPacket(
                     for (String line : req.tooltipLines())
                         buf.writeUtf(line);
                 }
+                // warehouse card + priority
+                buf.writeBoolean(packet.hasWarehouseCard());
+                buf.writeBoolean(packet.warehousePriority());
             },
             buf -> {
                 int size = buf.readInt();
@@ -135,9 +139,12 @@ public record ColonyLinkPacket(
                 {
                     req = BuilderRequest.NONE;
                 }
+                // warehouse card + priority
+                boolean hasWarehouseCard = buf.readBoolean();
+                boolean warehousePriority = buf.readBoolean();
 
                 return new ColonyLinkPacket(list, pos, builderName, buildingName,
-                        workerStatus, availableCpus, redirectorState, req);
+                        workerStatus, availableCpus, redirectorState, req, hasWarehouseCard, warehousePriority);
             }
     );
 
@@ -150,7 +157,7 @@ public record ColonyLinkPacket(
             if (Minecraft.getInstance().screen instanceof ColonyLinkScreen screen)
                 screen.updateEntries(packet.entries(), packet.builderName(), packet.buildingName(),
                         packet.workerStatus(), packet.availableCpus(), packet.redirectorState(),
-                        packet.builderRequest());
+                        packet.builderRequest(), packet.hasWarehouseCard(), packet.warehousePriority());
             else
                 Minecraft.getInstance().setScreen(new ColonyLinkScreen(packet));
         });

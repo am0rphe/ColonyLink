@@ -33,7 +33,11 @@ public record GuiStatePacket(boolean open, BlockPos builderPos) implements Custo
             if (context.player() instanceof ServerPlayer serverPlayer)
             {
                 if (packet.open())
+                {
                     ColonyLinkServerTicker.addViewer(serverPlayer.getUUID(), packet.builderPos());
+                    // Envoi immédiat du premier packet sans attendre le ticker (40 ticks)
+                    ColonyLinkServerTicker.sendImmediateUpdate(serverPlayer, packet.builderPos());
+                }
                 else
                     ColonyLinkServerTicker.removeViewer(serverPlayer.getUUID());
             }

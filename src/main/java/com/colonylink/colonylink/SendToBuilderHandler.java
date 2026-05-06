@@ -8,6 +8,10 @@ import appeng.api.networking.storage.IStorageService;
 import appeng.api.stacks.AEItemKey;
 import appeng.api.storage.MEStorage;
 import com.ldtteam.domumornamentum.client.model.data.MaterialTextureData;
+import com.minecolonies.api.colony.IColony;
+import com.minecolonies.api.colony.IColonyManager;
+import com.minecolonies.api.colony.buildings.IBuilding;
+import com.minecolonies.core.colony.buildings.workerbuildings.BuildingWareHouse;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
@@ -146,25 +150,40 @@ public class SendToBuilderHandler
             }
         }
 
-        // ── Étape 2 : puise dans le ME pour le reste ─────────────────────────
-        while (remaining > 0)
+        // ── Étape 2 : extraction selon la priorité configurée ─────────────────
+        boolean warehousePriority = redirector.hasWarehouseCard() && redirector.isWarehousePriority();
+
+        if (warehousePriority && !isDomum)
         {
-            int batchSize = Math.min(remaining, 64);
-            long extracted = inventory.extract(aeKey, batchSize, Actionable.MODULATE, actionSource);
-
-            if (extracted <= 0) break;
-
-            ItemStack toInsert = aeKey.toStack((int) extracted);
-            ItemStack leftOver = insertIntoHandler(targetHandler, toInsert);
-            long sent = extracted - leftOver.getCount();
-            totalInserted += sent;
-            remaining -= (int) sent;
-
-            if (!leftOver.isEmpty())
+            // Prio Warehouse : extrait d'abord des racks, complète depuis ME
+            remaining = extractFromWarehouseThenMe(
+                    level, stack, aeKey, remaining,
+                    inventory, actionSource,
+                    redirector, targetPos);
+            totalInserted = realCount - remaining;
+        }
+        else
+        {
+            // Prio AE2 (défaut) : comportement original
+            while (remaining > 0)
             {
-                inventory.insert(aeKey, leftOver.getCount(), Actionable.MODULATE, actionSource);
-                redirector.setState(ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY);
-                break;
+                int batchSize = Math.min(remaining, 64);
+                long extracted = inventory.extract(aeKey, batchSize, Actionable.MODULATE, actionSource);
+
+                if (extracted <= 0) break;
+
+                ItemStack toInsert = aeKey.toStack((int) extracted);
+                ItemStack leftOver = insertIntoHandler(targetHandler, toInsert);
+                long sent = extracted - leftOver.getCount();
+                totalInserted += sent;
+                remaining -= (int) sent;
+
+                if (!leftOver.isEmpty())
+                {
+                    inventory.insert(aeKey, leftOver.getCount(), Actionable.MODULATE, actionSource);
+                    redirector.setState(ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY);
+                    break;
+                }
             }
         }
 
@@ -186,6 +205,121 @@ public class SendToBuilderHandler
                             + " — not enough in ME or inventory full!"));
         }
     }
+
+    // ── Extraction Warehouse → ME ─────────────────────────────────────────────
+
+    /**
+     * Extraction prio Warehouse : parcourt les racks de la Warehouse de la colonie
+     * via l'API MineColonies (BuildingWareHouse.getContainers()),
+     * extrait ce qui est disponible, puis complète depuis le ME pour le reste.
+     *
+     * @return quantité encore non envoyée après extraction (0 si tout a été envoyé)
+     */
+    private static int extractFromWarehouseThenMe(
+            ServerLevel level,
+            ItemStack stack,
+            AEItemKey aeKey,
+            int remaining,
+            MEStorage inventory,
+            IActionSource actionSource,
+            ColonyLinkRedirectorBlockEntity redirector,
+            BlockPos targetPos)
+    {
+        IColony colony = IColonyManager.getInstance().getClosestColony(
+                level, redirector.getBlockPos());
+
+        if (colony != null)
+        {
+            for (IBuilding building : colony.getServerBuildingManager().getBuildings().values())
+            {
+                // BuildingWareHouse expose getContainerList() via son API interne
+                if (!(building instanceof BuildingWareHouse warehouse)) continue;
+
+                try
+                {
+                    // getContainers() retourne la liste des BlockPos des racks
+                    var containerList = warehouse.getContainers();
+                    if (containerList == null || containerList.isEmpty()) continue;
+
+                    for (BlockPos rackPos : containerList)
+                    {
+                        if (remaining <= 0) break;
+
+                        IItemHandler rackHandler = level.getCapability(
+                                Capabilities.ItemHandler.BLOCK, rackPos, null);
+                        if (rackHandler == null) continue;
+
+                        for (int slot = 0; slot < rackHandler.getSlots() && remaining > 0; slot++)
+                        {
+                            ItemStack inSlot = rackHandler.getStackInSlot(slot);
+                            if (inSlot.isEmpty()) continue;
+                            if (!ItemStack.isSameItemSameComponents(inSlot, stack)) continue;
+
+                            int toExtract = Math.min(inSlot.getCount(), remaining);
+                            ItemStack took = rackHandler.extractItem(slot, toExtract, false);
+                            if (took.isEmpty()) continue;
+
+                            IItemHandler targetHandler = level.getCapability(
+                                    Capabilities.ItemHandler.BLOCK, targetPos, null);
+                            if (targetHandler == null)
+                            {
+                                // Remet dans le rack si on ne peut plus insérer
+                                for (int s = 0; s < rackHandler.getSlots() && !took.isEmpty(); s++)
+                                    took = rackHandler.insertItem(s, took, false);
+                                return remaining;
+                            }
+
+                            ItemStack leftOver = insertIntoHandler(targetHandler, took);
+                            int sent = took.getCount() - leftOver.getCount();
+                            remaining -= sent;
+
+                            if (!leftOver.isEmpty())
+                            {
+                                // Inventaire cible plein — remet le surplus dans le rack
+                                for (int s2 = 0; s2 < rackHandler.getSlots() && !leftOver.isEmpty(); s2++)
+                                    leftOver = rackHandler.insertItem(s2, leftOver, false);
+                                redirector.setState(ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY);
+                                return remaining;
+                            }
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    ColonyLink.LOGGER.debug("[ColonyLink] Warehouse extraction error: {}", e.getMessage());
+                }
+                break; // une seule Warehouse traitée par colonie
+            }
+        }
+
+        // Complément depuis ME pour le reste
+        while (remaining > 0)
+        {
+            int batchSize = Math.min(remaining, 64);
+            long extracted = inventory.extract(aeKey, batchSize, Actionable.MODULATE, actionSource);
+            if (extracted <= 0) break;
+
+            IItemHandler targetHandler = level.getCapability(
+                    Capabilities.ItemHandler.BLOCK, targetPos, null);
+            if (targetHandler == null) break;
+
+            ItemStack toInsert = aeKey.toStack((int) extracted);
+            ItemStack leftOver = insertIntoHandler(targetHandler, toInsert);
+            int sent = (int) extracted - leftOver.getCount();
+            remaining -= sent;
+
+            if (!leftOver.isEmpty())
+            {
+                inventory.insert(aeKey, leftOver.getCount(), Actionable.MODULATE, actionSource);
+                redirector.setState(ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY);
+                break;
+            }
+        }
+
+        return remaining;
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static ItemStack insertIntoHandler(IItemHandler handler, ItemStack stack)
     {
