@@ -209,7 +209,7 @@ public class ColonyLinkWand extends Item
         var be = level.getBlockEntity(pos);
         if (be instanceof ColonyLinkRedirectorBlockEntity redirector)
         {
-            if (redirector.getState() == ColonyLinkRedirectorBlockEntity.RedirectorState.NO_CONTROLLER)
+            if (redirector.getManagedGridNode().getNode() == null)
             {
                 player.sendSystemMessage(Component.literal("§cRedirector is not adjacent to a ME Controller!"));
                 return net.minecraft.world.InteractionResult.FAIL;
@@ -361,7 +361,23 @@ public class ColonyLinkWand extends Item
         {
             var rbe = serverLevel.getBlockEntity(redirectorPos);
             if (rbe instanceof ColonyLinkRedirectorBlockEntity redirector)
-                redirectorState = redirector.getState().name();
+            {
+                appeng.api.networking.IGridNode rnode = redirector.getManagedGridNode().getNode();
+                if (rnode != null)
+                {
+                    ColonyLinkRedirectorBlockEntity.RedirectorState s = redirector.getState();
+                    if (s == ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY)
+                        redirectorState = "STANDBY";
+                    else if (s == ColonyLinkRedirectorBlockEntity.RedirectorState.NOT_LINKED)
+                        redirectorState = "NOT_LINKED";
+                    else
+                        redirectorState = "LINKED";
+                }
+                else
+                {
+                    redirectorState = "NOT_LINKED";
+                }
+            }
         }
 
         Map<String, BuildingBuilderResource> neededResources = builderBuilding.getNeededResources();

@@ -1,6 +1,7 @@
 package com.colonylink.colonylink;
 
 import appeng.api.config.Actionable;
+import appeng.api.networking.GridFlags;
 import appeng.api.networking.GridHelper;
 import appeng.api.networking.IGridNode;
 import appeng.api.networking.IGridNodeListener;
@@ -21,7 +22,10 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityTicker;
+import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.neoforged.neoforge.capabilities.Capabilities;
 import net.neoforged.neoforge.items.IItemHandler;
@@ -40,6 +44,9 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
     private BlockPos targetInventoryPos = null;
     private BlockPos linkedBuilderPos = null;
     private final Set<ICraftingLink> craftingLinks = new HashSet<>();
+
+    // Etat AE2 synchronisé côté client via getUpdateTag/handleUpdateTag
+    private boolean ae2ActiveClientCache = false;
 
     public final ItemStackHandler buffer = new ItemStackHandler(BUFFER_SIZE)
     {
@@ -75,6 +82,7 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
                 }
             })
             .setInWorldNode(true)
+            .setFlags(GridFlags.REQUIRE_CHANNEL)
             .setVisualRepresentation(ColonyLinkRegistry.REDIRECTOR_BLOCK_ITEM.get())
             .setIdlePowerUsage(1.0)
             .addService(ICraftingRequester.class, this);
@@ -98,8 +106,10 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
 
     private void onGridStateChanged()
     {
-        if (level != null)
-            level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+        if (level == null) return;
+        // Synchronise l'état vers le client et notifie les câbles adjacents
+        level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+        setChanged();
     }
 
     @Override
@@ -107,7 +117,21 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
     {
         super.onLoad();
         if (level != null && !level.isClientSide())
+        {
+            // loadFromNBT doit être appelé avant create()
             gridNode.create(level, worldPosition);
+            // Notifie les voisins qu'un nouveau nœud est disponible
+            // Le délai d'un tick est nécessaire pour que le niveau
+            // soit complètement chargé avant la notification
+            level.scheduleTick(worldPosition, getBlockState().getBlock(), 1);
+        }
+    }
+
+    @Override
+    public void onChunkUnloaded()
+    {
+        super.onChunkUnloaded();
+        gridNode.destroy();
     }
 
     @Override
@@ -120,6 +144,8 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
     @Override
     public @Nullable IGridNode getGridNode(Direction dir)
     {
+        // AE2 appelle cette méthode sur les blocs adjacents pour former des connexions.
+        // On expose le nœud sur toutes les faces (null = pas de connexion dans cette direction).
         return gridNode.getNode();
     }
 
@@ -173,22 +199,48 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
         craftingLinks.add(link);
     }
 
+    /**
+     * Tick statique appelé par ColonyLinkRedirectorBlock.getTicker().
+     * Déclenché 1 tick après onLoad pour notifier les voisins une fois
+     * que le niveau est complètement initialisé.
+     */
+    public static <T extends BlockEntity> BlockEntityTicker<T> createTicker(
+            Level level, BlockEntityType<T> serverType)
+    {
+        if (level.isClientSide()) return null;
+        return (lvl, pos, blockState, be) ->
+        {
+            if (be instanceof ColonyLinkRedirectorBlockEntity redirector)
+                redirector.onFirstTick(lvl, pos);
+        };
+    }
+
+    private boolean firstTickDone = false;
+
+    private void onFirstTick(Level level, BlockPos pos)
+    {
+        if (firstTickDone) return;
+        firstTickDone = true;
+        // Notifie les 6 faces adjacentes pour que les câbles AE2 se connectent
+        for (Direction dir : Direction.values())
+            level.updateNeighborsAt(pos.relative(dir), level.getBlockState(pos.relative(dir)).getBlock());
+    }
+
+    /**
+     * Vérifie si le nœud AE2 est actif.
+     * Côté serveur : lit directement le nœud.
+     * Côté client : utilise le cache synchronisé via getUpdateTag.
+     */
+    public boolean isAe2Active()
+    {
+        if (level != null && !level.isClientSide())
+            return gridNode.getNode() != null && gridNode.getNode().isActive();
+        return ae2ActiveClientCache;
+    }
+
     public boolean isAdjacentToController()
     {
-        // Priorité : vérifie si le nœud AE2 est actif et connecté
-        if (gridNode.getNode() != null && gridNode.getNode().isActive())
-            return true;
-
-        // Fallback physique
-        if (level == null) return false;
-        for (Direction dir : Direction.values())
-        {
-            BlockPos adjacent = worldPosition.relative(dir);
-            var be = level.getBlockEntity(adjacent);
-            if (be instanceof appeng.blockentity.networking.ControllerBlockEntity)
-                return true;
-        }
-        return false;
+        return isAe2Active();
     }
 
     public boolean isTargetInventoryFull()
@@ -256,6 +308,49 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
         if (level != null)
             level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
     }
+
+    // ── Synchronisation client ────────────────────────────────────────────────
+
+    @Override
+    public CompoundTag getUpdateTag(HolderLookup.Provider provider)
+    {
+        CompoundTag tag = super.getUpdateTag(provider);
+        boolean ae2Active = gridNode.getNode() != null && gridNode.getNode().isActive();
+        tag.putBoolean("ae2_active", ae2Active);
+        tag.putString("state", state.name());
+        if (targetInventoryPos != null)
+        {
+            tag.putInt("target_x", targetInventoryPos.getX());
+            tag.putInt("target_y", targetInventoryPos.getY());
+            tag.putInt("target_z", targetInventoryPos.getZ());
+        }
+        if (linkedBuilderPos != null)
+        {
+            tag.putInt("builder_x", linkedBuilderPos.getX());
+            tag.putInt("builder_y", linkedBuilderPos.getY());
+            tag.putInt("builder_z", linkedBuilderPos.getZ());
+        }
+        return tag;
+    }
+
+    @Override
+    public void handleUpdateTag(CompoundTag tag, HolderLookup.Provider provider)
+    {
+        super.handleUpdateTag(tag, provider);
+        if (tag.contains("ae2_active"))
+            ae2ActiveClientCache = tag.getBoolean("ae2_active");
+        if (tag.contains("state"))
+        {
+            try { state = RedirectorState.valueOf(tag.getString("state")); }
+            catch (Exception ignored) {}
+        }
+        if (tag.contains("target_x"))
+            targetInventoryPos = new BlockPos(tag.getInt("target_x"), tag.getInt("target_y"), tag.getInt("target_z"));
+        if (tag.contains("builder_x"))
+            linkedBuilderPos = new BlockPos(tag.getInt("builder_x"), tag.getInt("builder_y"), tag.getInt("builder_z"));
+    }
+
+    // ── NBT persistance ───────────────────────────────────────────────────────
 
     @Override
     protected void saveAdditional(CompoundTag tag, HolderLookup.Provider provider)

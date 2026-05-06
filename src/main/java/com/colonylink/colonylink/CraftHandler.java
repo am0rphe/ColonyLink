@@ -58,7 +58,7 @@ public class CraftHandler
         IActionSource actionSource = IActionSource.ofPlayer(player, wap);
         ICraftingSimulationRequester simulationRequester = () -> actionSource;
 
-        // Bug 2 fix : compte les CPUs libres au moment du clic
+        // Compte les CPUs libres au moment du clic
         int freeCpus = 0;
         for (var cpu : craftingService.getCpus())
             if (!cpu.isBusy()) freeCpus++;
@@ -161,7 +161,7 @@ public class CraftHandler
                                         + stacks.get(0).getDisplayName().getString()));
                     else
                         player.sendSystemMessage(Component.literal(
-                                "§cCraft failed: " + stacks.get(0).getDisplayName().getString()));
+                                "§cMissing primary ingredients: " + stacks.get(0).getDisplayName().getString()));
                 }
                 else
                 {

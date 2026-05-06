@@ -132,7 +132,23 @@ public class ColonyLinkServerTicker
             {
                 var be = level.getBlockEntity(redirectorPos);
                 if (be instanceof ColonyLinkRedirectorBlockEntity redirector)
-                    redirectorState = redirector.getState().name();
+                {
+                    appeng.api.networking.IGridNode rnode = redirector.getManagedGridNode().getNode();
+                    if (rnode != null)
+                    {
+                        ColonyLinkRedirectorBlockEntity.RedirectorState s = redirector.getState();
+                        if (s == ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY)
+                            redirectorState = "STANDBY";
+                        else if (s == ColonyLinkRedirectorBlockEntity.RedirectorState.NOT_LINKED)
+                            redirectorState = "NOT_LINKED";
+                        else
+                            redirectorState = "LINKED";
+                    }
+                    else
+                    {
+                        redirectorState = "NOT_LINKED";
+                    }
+                }
             }
 
             // ── Ressources manquantes ─────────────────────────────────────────

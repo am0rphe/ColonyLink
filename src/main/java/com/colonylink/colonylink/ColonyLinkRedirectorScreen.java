@@ -46,23 +46,10 @@ public class ColonyLinkRedirectorScreen extends AbstractContainerScreen<ColonyLi
         graphics.fill(x + 2, y + 2, x + imageWidth - 2, y + 16, 0xFF6B6B6B);
         graphics.fill(x + 2, y + 2, x + imageWidth - 2, y + 4, 0xFF8B8B8B);
 
-        // Ligne wand + statut redirector
+        // Infos redirector
         ColonyLinkRedirectorBlockEntity be = menu.getBlockEntity();
         if (be != null)
         {
-            // Statut redirector — droite
-            String stateStr = be.getState().name();
-            int stateColor = switch (be.getState())
-            {
-                case LINKED        -> 0x00FF00;
-                case STANDBY       -> 0xFF8800;
-                case NO_CONTROLLER -> 0xFF0000;
-                default            -> 0x888888;
-            };
-            String statusText = "Status: " + stateStr;
-            graphics.drawString(this.font, statusText,
-                    x + imageWidth - 8 - this.font.width(statusText), y + 6, stateColor, false);
-
             // Statut wand — gauche ligne 2
             boolean wandLinked = false;
             if (Minecraft.getInstance().player != null)

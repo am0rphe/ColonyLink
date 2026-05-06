@@ -19,6 +19,7 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.neoforged.neoforge.capabilities.RegisterCapabilitiesEvent;
 import net.neoforged.neoforge.client.event.RegisterMenuScreensEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
@@ -61,6 +62,10 @@ public class ColonyLink
         modEventBus.addListener(this::commonSetup);
         modEventBus.addListener(this::registerPayloads);
         modEventBus.addListener(this::registerScreens);
+
+        // Enregistrement de la capability AE2 IN_WORLD_GRID_NODE_HOST
+        // DOIT être sur le modEventBus (pas NeoForge.EVENT_BUS)
+        modEventBus.addListener(ColonyLinkRegistry::registerCapabilities);
 
         ITEMS.register(modEventBus);
         CREATIVE_MODE_TABS.register(modEventBus);
@@ -105,32 +110,9 @@ public class ColonyLink
             return;
         }
 
-        // Wand + clic droit = affiche statut
-        if (heldItem.getItem() instanceof ColonyLinkWand && !player.isShiftKeyDown())
-        {
-            redirector.updateState();
-            switch (redirector.getState())
-            {
-                case NO_CONTROLLER -> player.sendSystemMessage(
-                        Component.literal("§c[Redirector] Not adjacent to a ME Controller!"));
-                case NOT_LINKED -> player.sendSystemMessage(
-                        Component.literal("§e[Redirector] No inventory linked."));
-                case STANDBY -> player.sendSystemMessage(
-                        Component.literal("§6[Redirector] STANDBY - Target inventory is full!"));
-                case LINKED ->
-                {
-                    player.sendSystemMessage(Component.literal("§a[Redirector] LINKED and operational!"));
-                    if (redirector.getTargetInventoryPos() != null)
-                        player.sendSystemMessage(Component.literal(
-                                "§7Target: " + redirector.getTargetInventoryPos().toShortString()));
-                    if (redirector.getLinkedBuilderPos() != null)
-                        player.sendSystemMessage(Component.literal(
-                                "§7Builder: " + redirector.getLinkedBuilderPos().toShortString()));
-                }
-            }
-            event.setCanceled(true);
+        // Wand + sneak → délégué à ColonyLinkWand.useOn()
+        if (heldItem.getItem() instanceof ColonyLinkWand && player.isShiftKeyDown())
             return;
-        }
 
         // Main vide + clic droit = ouvre le GUI buffer
         if (heldItem.isEmpty())
@@ -182,7 +164,6 @@ public class ColonyLink
                 CraftAllRequestPacket::handle
         );
 
-        // Feature 2 — nouveau packet Restart
         registrar.playToServer(
                 RestartBuilderPacket.TYPE,
                 RestartBuilderPacket.STREAM_CODEC,

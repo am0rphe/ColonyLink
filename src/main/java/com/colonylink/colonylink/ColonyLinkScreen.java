@@ -261,14 +261,22 @@ public class ColonyLinkScreen extends Screen
 
         int redirectorColor = switch (redirectorState)
         {
-            case "LINKED"        -> 0x00FF00;
-            case "STANDBY"       -> 0xFF8800;
-            case "NO_CONTROLLER" -> 0xFF0000;
-            default              -> 0x888888;
+            case "LINKED"      -> 0x00FF00;
+            case "STANDBY"     -> 0xFF8800;
+            case "NOT_LINKED"  -> 0xAAAAAA;
+            default            -> 0x888888;
+        };
+        // Texte affiché : remap les noms internes vers des labels lisibles
+        String redirectorDisplay = switch (redirectorState)
+        {
+            case "LINKED"     -> "Linked";
+            case "STANDBY"    -> "Standby";
+            case "NOT_LINKED" -> "Not Linked";
+            default           -> redirectorState;
         };
         String redirectorLabel = "§7Redirector: ";
         graphics.drawString(this.font, redirectorLabel, x + 100, y + 58, 0xFFFFFF, false);
-        graphics.drawString(this.font, redirectorState,
+        graphics.drawString(this.font, redirectorDisplay,
                 x + 100 + this.font.width(redirectorLabel), y + 58, redirectorColor, false);
     }
 

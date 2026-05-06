@@ -18,12 +18,6 @@ import net.neoforged.neoforge.items.IItemHandler;
 
 public class SendToBuilderHandler
 {
-    /**
-     * Bug 1 fix : envoie la totalité de la quantité manquante en une seule fois,
-     * en bouclant sur les extractions ME par tranches de 64 jusqu'à épuisement.
-     *
-     * @param realCount quantité totale réelle demandée (peut dépasser 64)
-     */
     public static void handleSendToBuilder(ServerPlayer player, ItemStack stack,
                                            BlockPos builderPos, int realCount)
     {
@@ -36,18 +30,37 @@ public class SendToBuilderHandler
 
         ServerLevel level = player.serverLevel();
 
-        // Récupère le redirector lié
+        // Vérifie que la wand a un redirector lié
         BlockPos redirectorPos = getLinkedRedirectorPos(wandStack);
-        ColonyLinkRedirectorBlockEntity redirector = null;
-        if (redirectorPos != null)
+        if (redirectorPos == null)
         {
-            var be = level.getBlockEntity(redirectorPos);
-            if (be instanceof ColonyLinkRedirectorBlockEntity r)
-                redirector = r;
+            player.sendSystemMessage(Component.literal("§cNo Redirector linked to this wand!"));
+            player.sendSystemMessage(Component.literal("§7Sneak + Right-click a Colony Link Redirector with the wand."));
+            return;
+        }
+
+        // Récupère le redirector
+        ColonyLinkRedirectorBlockEntity redirector = null;
+        var be = level.getBlockEntity(redirectorPos);
+        if (be instanceof ColonyLinkRedirectorBlockEntity r)
+            redirector = r;
+
+        if (redirector == null)
+        {
+            player.sendSystemMessage(Component.literal("§cRedirector not found at stored position!"));
+            return;
+        }
+
+        // Vérifie que le redirector est actif sur le réseau AE2
+        var node = redirector.getManagedGridNode().getNode();
+        if (node == null || !node.isActive())
+        {
+            player.sendSystemMessage(Component.literal("§cRedirector is not connected to the AE2 network!"));
+            return;
         }
 
         // Vérifie l'inventaire cible
-        BlockPos targetPos = redirector != null ? redirector.getTargetInventoryPos() : null;
+        BlockPos targetPos = redirector.getTargetInventoryPos();
         if (targetPos == null)
         {
             player.sendSystemMessage(Component.literal("§cRedirector has no target inventory linked!"));
@@ -96,7 +109,7 @@ public class SendToBuilderHandler
         int remaining = realCount;
 
         // ── Étape 1 : puise dans le buffer DO si applicable ──────────────────
-        if (isDomum && redirector != null)
+        if (isDomum)
         {
             MaterialTextureData targetData = MaterialTextureData.readFromItemStack(stack);
             IItemHandler buffer = redirector.buffer;
@@ -124,12 +137,11 @@ public class SendToBuilderHandler
                 totalInserted += sent;
                 remaining -= (int) sent;
 
-                // Remet le trop-plein dans le buffer
                 if (!leftOver.isEmpty())
                 {
                     for (int s2 = 0; s2 < buffer.getSlots() && !leftOver.isEmpty(); s2++)
                         leftOver = buffer.insertItem(s2, leftOver, false);
-                    break; // cible pleine
+                    break;
                 }
             }
         }
@@ -140,7 +152,7 @@ public class SendToBuilderHandler
             int batchSize = Math.min(remaining, 64);
             long extracted = inventory.extract(aeKey, batchSize, Actionable.MODULATE, actionSource);
 
-            if (extracted <= 0) break; // plus rien en ME
+            if (extracted <= 0) break;
 
             ItemStack toInsert = aeKey.toStack((int) extracted);
             ItemStack leftOver = insertIntoHandler(targetHandler, toInsert);
@@ -148,12 +160,11 @@ public class SendToBuilderHandler
             totalInserted += sent;
             remaining -= (int) sent;
 
-            // Remet le trop-plein dans le ME
             if (!leftOver.isEmpty())
             {
                 inventory.insert(aeKey, leftOver.getCount(), Actionable.MODULATE, actionSource);
                 redirector.setState(ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY);
-                break; // cible pleine
+                break;
             }
         }
 
