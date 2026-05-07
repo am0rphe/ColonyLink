@@ -25,6 +25,7 @@ import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 
@@ -37,7 +38,7 @@ import java.util.UUID;
 public class ColonyLinkServerTicker
 {
     private static final Map<UUID, BlockPos> activeViewers = new HashMap<>();
-    private static int tickCounter = 0;
+    private static volatile int tickCounter = 0;
 
     public static void addViewer(UUID playerUUID, BlockPos builderPos)
     {
@@ -50,16 +51,66 @@ public class ColonyLinkServerTicker
     }
 
     /**
-     * Envoi immédiat d'un packet au joueur à l'ouverture du GUI,
+     * Nettoyage immédiat à la déconnexion du joueur.
+     * Évite les fuites mémoire si le joueur crashe sans fermer le GUI.
+     */
+    @SubscribeEvent
+    public static void onPlayerLogout(PlayerEvent.PlayerLoggedOutEvent event)
+    {
+        if (event.getEntity() instanceof ServerPlayer sp)
+            activeViewers.remove(sp.getUUID());
+    }
+
+    /**
+     * Envoi immédiat d'un packet complet au joueur à l'ouverture du GUI,
      * sans attendre le prochain cycle du ticker (40 ticks).
-     * Permet d'afficher instantanément le bouton Check Warehouse et le switch.
+     * Exécute la même logique complète que le ticker.
      */
     public static void sendImmediateUpdate(ServerPlayer player, BlockPos builderPos)
     {
+        sendFullUpdate(player, builderPos);
+    }
+
+    @SubscribeEvent
+    public static void onServerTick(ServerTickEvent.Pre event)
+    {
+        tickCounter++;
+        if (tickCounter < 40) return;
+        tickCounter = 0;
+
+        if (activeViewers.isEmpty()) return;
+
+        List<UUID> toRemove = new ArrayList<>();
+
+        activeViewers.forEach((uuid, builderPos) ->
+        {
+            ServerPlayer player = event.getServer().getPlayerList().getPlayer(uuid);
+            if (player == null)
+            {
+                toRemove.add(uuid);
+                return;
+            }
+            sendFullUpdate(player, builderPos);
+        });
+
+        toRemove.forEach(activeViewers::remove);
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Logique complète partagée — ticker + immediate update
+    // ────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Calcule l'état complet (ressources builder, statuts AE2, redirector, warehouse card)
+     * et envoie un ColonyLinkPacket complet au client.
+     * Appelé par sendImmediateUpdate() ET par le ticker toutes les 40 ticks.
+     */
+    private static void sendFullUpdate(ServerPlayer player, BlockPos builderPos)
+    {
+        ServerLevel level = player.serverLevel();
+
         ItemStack wandStack = findWandInInventory(player);
         if (wandStack == null || !ColonyLinkWandLinkableHandler.isLinked(wandStack)) return;
-
-        ServerLevel level = player.serverLevel();
 
         IWirelessAccessPoint wap = getWap(wandStack, level);
         if (wap == null) return;
@@ -67,7 +118,52 @@ public class ColonyLinkServerTicker
         IGrid grid = wap.getGrid();
         if (grid == null) return;
 
-        // État redirector + warehouse card
+        IColony colony = IColonyManager.getInstance().getClosestColony(level, builderPos);
+        if (colony == null) return;
+
+        IBuilding building = null;
+        for (IBuilding b : colony.getServerBuildingManager().getBuildings().values())
+        {
+            if (b.getPosition().equals(builderPos))
+            {
+                building = b;
+                break;
+            }
+        }
+
+        if (!(building instanceof AbstractBuildingStructureBuilder builderBuilding)) return;
+
+        // ── Infos builder + statut worker ────────────────────────────────────
+        String builderName = "N/A";
+        String workerStatus = "IDLE";
+        if (!builderBuilding.getAllAssignedCitizen().isEmpty())
+        {
+            var citizen = builderBuilding.getAllAssignedCitizen().iterator().next();
+            builderName = citizen.getName();
+            var visibleStatus = citizen.getStatus();
+            if (visibleStatus != null)
+                workerStatus = Component.translatable(visibleStatus.getTranslationKey()).getString();
+            else
+                workerStatus = citizen.getJobStatus().name();
+        }
+
+        // ── Infos work order ─────────────────────────────────────────────────
+        String buildingName = "N/A";
+        var workOrder = builderBuilding.getWorkOrder();
+        if (workOrder != null)
+        {
+            buildingName = workOrder.getDisplayName().getString();
+            if (workOrder.getStage() != null)
+                buildingName += " [" + workOrder.getStage().name() + "]";
+        }
+
+        // ── CPUs AE2 ─────────────────────────────────────────────────────────
+        ICraftingService craftingService = grid.getCraftingService();
+        int availableCpus = 0;
+        for (var cpu : craftingService.getCpus())
+            if (!cpu.isBusy()) availableCpus++;
+
+        // ── État redirector + présence WarehouseLinkCard ──────────────────────
         String redirectorState = "N/A";
         boolean hasWarehouseCard = false;
         boolean warehousePriority = false;
@@ -97,203 +193,70 @@ public class ColonyLinkServerTicker
             }
         }
 
-        ICraftingService craftingService = grid.getCraftingService();
-        int availableCpus = 0;
-        for (var cpu : craftingService.getCpus())
-            if (!cpu.isBusy()) availableCpus++;
+        // ── Ressources manquantes ─────────────────────────────────────────────
+        IStorageService storageService = grid.getStorageService();
+        KeyCounter inventory = storageService.getCachedInventory();
+        BlockPos safeRedirectorPos = redirectorPos != null ? redirectorPos : BlockPos.ZERO;
 
-        // Packet minimal : liste vide, infos builder vides — juste pour afficher
-        // immédiatement le bon état du redirector/warehouse card.
-        // Le ticker enverra les ressources complètes dans les 2 secondes suivantes.
-        PacketDistributor.sendToPlayer(player, new ColonyLinkPacket(
-                new java.util.ArrayList<>(),
-                builderPos,
-                "...",
-                "...",
-                "...",
-                availableCpus,
-                redirectorState,
-                ColonyLinkPacket.BuilderRequest.NONE,
-                hasWarehouseCard,
-                warehousePriority
-        ));
-    }
+        Map<String, BuildingBuilderResource> neededResources = builderBuilding.getNeededResources();
+        List<ColonyLinkPacket.ResourceEntry> entries = new ArrayList<>();
 
-    @SubscribeEvent
-    public static void onServerTick(ServerTickEvent.Pre event)
-    {
-        tickCounter++;
-        if (tickCounter < 40) return;
-        tickCounter = 0;
-
-        if (activeViewers.isEmpty()) return;
-
-        List<UUID> toRemove = new ArrayList<>();
-
-        activeViewers.forEach((uuid, builderPos) ->
+        if (neededResources != null && !neededResources.isEmpty())
         {
-            ServerPlayer player = event.getServer().getPlayerList().getPlayer(uuid);
-            if (player == null)
+            for (BuildingBuilderResource resource : neededResources.values())
             {
-                toRemove.add(uuid);
-                return;
-            }
+                ItemStack stack = resource.getItemStack();
+                int needed = resource.getAmount();
+                int available = resource.getAvailable();
+                int missing = needed - available;
 
-            ServerLevel level = player.serverLevel();
+                if (missing <= 0) continue;
 
-            ItemStack wandStack = findWandInInventory(player);
-            if (wandStack == null || !ColonyLinkWandLinkableHandler.isLinked(wandStack)) return;
+                ItemStack missingStack = stack.copy();
+                missingStack.setCount(Math.min(missing, 64));
 
-            IWirelessAccessPoint wap = getWap(wandStack, level);
-            if (wap == null) return;
-
-            IGrid grid = wap.getGrid();
-            if (grid == null) return;
-
-            IColony colony = IColonyManager.getInstance().getClosestColony(level, builderPos);
-            if (colony == null) return;
-
-            IBuilding building = null;
-            for (IBuilding b : colony.getServerBuildingManager().getBuildings().values())
-            {
-                if (b.getPosition().equals(builderPos))
+                if (DomumCraftHandler.isDomumItem(stack))
                 {
-                    building = b;
-                    break;
+                    DomumCraftHandler.DomumStatus domumStatus =
+                            DomumCraftHandler.computeStatus(stack, grid, missing, redirectorPos, level);
+
+                    if (domumStatus != null)
+                    {
+                        List<String> tooltip = buildDomumTooltip(
+                                stack, domumStatus, inventory, craftingService, missing);
+                        entries.add(new ColonyLinkPacket.ResourceEntry(
+                                missingStack, domumStatus.status(), missing,
+                                true, safeRedirectorPos, tooltip));
+                        continue;
+                    }
                 }
-            }
 
-            if (!(building instanceof AbstractBuildingStructureBuilder builderBuilding)) return;
+                AEItemKey aeKey = AEItemKey.of(stack);
+                ResourceStatus status;
+                long inStorage = inventory.get(aeKey);
 
-            // ── Infos builder + statut worker ────────────────────────────────
-            String builderName = "N/A";
-            String workerStatus = "IDLE";
-            if (!builderBuilding.getAllAssignedCitizen().isEmpty())
-            {
-                var citizen = builderBuilding.getAllAssignedCitizen().iterator().next();
-                builderName = citizen.getName();
-                var visibleStatus = citizen.getStatus();
-                if (visibleStatus != null)
-                    workerStatus = Component.translatable(visibleStatus.getTranslationKey()).getString();
+                if (inStorage >= missing)
+                    status = ResourceStatus.AVAILABLE;
+                else if (craftingService.isRequesting(aeKey))
+                    status = ResourceStatus.CRAFTING;
+                else if (craftingService.isCraftable(aeKey))
+                    status = ResourceStatus.CRAFTABLE;
                 else
-                    workerStatus = citizen.getJobStatus().name();
+                    status = ResourceStatus.NO_PATTERN;
+
+                List<String> tooltip = buildStandardTooltip(stack, status, missing, inStorage);
+                entries.add(new ColonyLinkPacket.ResourceEntry(
+                        missingStack, status, missing, false, safeRedirectorPos, tooltip));
             }
+        }
 
-            // ── Infos work order ─────────────────────────────────────────────
-            String buildingName = "N/A";
-            var workOrder = builderBuilding.getWorkOrder();
-            if (workOrder != null)
-            {
-                buildingName = workOrder.getDisplayName().getString();
-                if (workOrder.getStage() != null)
-                    buildingName += " [" + workOrder.getStage().name() + "]";
-            }
+        // ── Feature 1 : Requête prioritaire du builder PNJ ───────────────────
+        ColonyLinkPacket.BuilderRequest builderRequest =
+                fetchBuilderRequest(builderBuilding, inventory, craftingService, safeRedirectorPos);
 
-            // ── CPUs AE2 ─────────────────────────────────────────────────────
-            ICraftingService craftingService = grid.getCraftingService();
-            int availableCpus = 0;
-            for (var cpu : craftingService.getCpus())
-                if (!cpu.isBusy()) availableCpus++;
-
-            // ── État redirector + présence WarehouseLinkCard ──────────────────
-            String redirectorState = "N/A";
-            boolean hasWarehouseCard = false;
-            boolean warehousePriority = false;
-            BlockPos redirectorPos = getLinkedRedirectorPos(wandStack);
-            if (redirectorPos != null)
-            {
-                var be = level.getBlockEntity(redirectorPos);
-                if (be instanceof ColonyLinkRedirectorBlockEntity redirector)
-                {
-                    appeng.api.networking.IGridNode rnode = redirector.getManagedGridNode().getNode();
-                    if (rnode != null)
-                    {
-                        ColonyLinkRedirectorBlockEntity.RedirectorState s = redirector.getState();
-                        if (s == ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY)
-                            redirectorState = "STANDBY";
-                        else if (s == ColonyLinkRedirectorBlockEntity.RedirectorState.NOT_LINKED)
-                            redirectorState = "NOT_LINKED";
-                        else
-                            redirectorState = "LINKED";
-                    }
-                    else
-                    {
-                        redirectorState = "NOT_LINKED";
-                    }
-                    // Présence de la WarehouseLinkCard pour le bouton côté client
-                    hasWarehouseCard = redirector.hasWarehouseCard();
-                    // État du switch priorité warehouse/AE2
-                    warehousePriority = redirector.isWarehousePriority();
-                }
-            }
-
-            // ── Ressources manquantes ─────────────────────────────────────────
-            IStorageService storageService = grid.getStorageService();
-            KeyCounter inventory = storageService.getCachedInventory();
-            BlockPos safeRedirectorPos = redirectorPos != null ? redirectorPos : BlockPos.ZERO;
-
-            Map<String, BuildingBuilderResource> neededResources = builderBuilding.getNeededResources();
-            List<ColonyLinkPacket.ResourceEntry> entries = new ArrayList<>();
-
-            if (neededResources != null && !neededResources.isEmpty())
-            {
-                for (BuildingBuilderResource resource : neededResources.values())
-                {
-                    ItemStack stack = resource.getItemStack();
-                    int needed = resource.getAmount();
-                    int available = resource.getAvailable();
-                    int missing = needed - available;
-
-                    if (missing <= 0) continue;
-
-                    ItemStack missingStack = stack.copy();
-                    missingStack.setCount(Math.min(missing, 64));
-
-                    if (DomumCraftHandler.isDomumItem(stack))
-                    {
-                        DomumCraftHandler.DomumStatus domumStatus =
-                                DomumCraftHandler.computeStatus(stack, grid, missing, redirectorPos, level);
-
-                        if (domumStatus != null)
-                        {
-                            List<String> tooltip = buildDomumTooltip(
-                                    stack, domumStatus, inventory, craftingService, missing);
-                            entries.add(new ColonyLinkPacket.ResourceEntry(
-                                    missingStack, domumStatus.status(), missing,
-                                    true, safeRedirectorPos, tooltip));
-                            continue;
-                        }
-                    }
-
-                    AEItemKey aeKey = AEItemKey.of(stack);
-                    ResourceStatus status;
-                    long inStorage = inventory.get(aeKey);
-
-                    if (inStorage >= missing)
-                        status = ResourceStatus.AVAILABLE;
-                    else if (craftingService.isRequesting(aeKey))
-                        status = ResourceStatus.CRAFTING;
-                    else if (craftingService.isCraftable(aeKey))
-                        status = ResourceStatus.CRAFTABLE;
-                    else
-                        status = ResourceStatus.NO_PATTERN;
-
-                    List<String> tooltip = buildStandardTooltip(stack, status, missing, inStorage);
-                    entries.add(new ColonyLinkPacket.ResourceEntry(
-                            missingStack, status, missing, false, safeRedirectorPos, tooltip));
-                }
-            }
-
-            // ── Feature 1 : Requête prioritaire du builder PNJ ───────────────
-            ColonyLinkPacket.BuilderRequest builderRequest =
-                    fetchBuilderRequest(builderBuilding, inventory, craftingService, safeRedirectorPos);
-
-            PacketDistributor.sendToPlayer(player, new ColonyLinkPacket(
-                    entries, builderPos, builderName, buildingName, workerStatus,
-                    availableCpus, redirectorState, builderRequest, hasWarehouseCard, warehousePriority));
-        });
-
-        toRemove.forEach(activeViewers::remove);
+        PacketDistributor.sendToPlayer(player, new ColonyLinkPacket(
+                entries, builderPos, builderName, buildingName, workerStatus,
+                availableCpus, redirectorState, builderRequest, hasWarehouseCard, warehousePriority));
     }
 
     // ────────────────────────────────────────────────────────────────────────

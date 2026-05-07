@@ -202,11 +202,17 @@ public class ColonyLinkWand extends Item
 
         ItemStack wandStack = context.getItemInHand();
 
-        // Seul le SNEAK est actif sur les blocs
+        // Si le joueur clique sur le redirector SANS sneak, on consomme l'action (SUCCESS)
+        // pour empêcher NeoForge d'appeler ensuite useWithoutItem du bloc,
+        // qui ouvrirait le GUI buffer alors qu'on tient la wand.
+        var be = level.getBlockEntity(pos);
+        if (be instanceof ColonyLinkRedirectorBlockEntity && !player.isShiftKeyDown())
+            return net.minecraft.world.InteractionResult.SUCCESS;
+
+        // Seul le SNEAK est actif sur les autres blocs
         if (!player.isShiftKeyDown()) return net.minecraft.world.InteractionResult.PASS;
 
         // Sneak + clic sur Redirector → lie la wand
-        var be = level.getBlockEntity(pos);
         if (be instanceof ColonyLinkRedirectorBlockEntity redirector)
         {
             if (redirector.getManagedGridNode().getNode() == null)

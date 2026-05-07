@@ -8,15 +8,13 @@ import appeng.api.networking.crafting.ICraftingSimulationRequester;
 import appeng.api.networking.security.IActionSource;
 import appeng.api.implementations.blockentities.IWirelessAccessPoint;
 import appeng.api.stacks.AEItemKey;
-import net.minecraft.core.BlockPos;
-import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.component.CustomData;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -24,6 +22,18 @@ import java.util.concurrent.TimeUnit;
 
 public class CraftHandler
 {
+    /**
+     * Pool statique partagé pour tous les crafts.
+     * Évite la création/destruction de threads à chaque craft request.
+     * Daemon threads : ils ne bloquent pas l'arrêt du serveur.
+     */
+    private static final ExecutorService CRAFT_EXECUTOR = Executors.newCachedThreadPool(r ->
+    {
+        Thread t = new Thread(r, "ColonyLink-Craft");
+        t.setDaemon(true);
+        return t;
+    });
+
     public static void handleCraftRequest(ServerPlayer player, ItemStack stack, int realCount)
     {
         handleCraftRequests(player, List.of(stack), List.of(realCount));
@@ -63,21 +73,9 @@ public class CraftHandler
         for (var cpu : craftingService.getCpus())
             if (!cpu.isBusy()) freeCpus++;
 
-        // Au minimum 1 thread pour que ça marche même sans CPU AE2 dédié
-        int threadCount = Math.max(1, freeCpus);
-
-        // Pool dynamique à la taille exacte du besoin courant
-        ExecutorService craftExecutor = Executors.newFixedThreadPool(
-                Math.min(threadCount, stacks.size()),
-                r -> {
-                    Thread t = new Thread(r, "ColonyLink-Craft");
-                    t.setDaemon(true);
-                    return t;
-                });
-
         final int freeCpusFinal = freeCpus;
 
-        craftExecutor.submit(() ->
+        CRAFT_EXECUTOR.submit(() ->
         {
             int successCount = 0;
             int failCount = 0;
@@ -118,26 +116,18 @@ public class CraftHandler
                         continue;
                     }
 
-                    final boolean[] success = {false};
-                    final Object lock = new Object();
+                    // CompletableFuture remplace lock.wait() — pas de risque de deadlock
+                    CompletableFuture<Boolean> submitFuture = new CompletableFuture<>();
 
                     level.getServer().execute(() ->
                     {
-                        synchronized (lock)
-                        {
-                            var result = craftingService.submitJob(plan, null, null, false, actionSource);
-                            if (result.successful())
-                                success[0] = true;
-                            lock.notifyAll();
-                        }
+                        var result = craftingService.submitJob(plan, null, null, false, actionSource);
+                        submitFuture.complete(result.successful());
                     });
 
-                    synchronized (lock)
-                    {
-                        lock.wait(5000);
-                    }
+                    boolean success = submitFuture.get(5, TimeUnit.SECONDS);
 
-                    if (success[0]) successCount++;
+                    if (success) successCount++;
                     else failCount++;
                 }
                 catch (Exception e)
@@ -171,8 +161,6 @@ public class CraftHandler
                 }
             });
         });
-
-        craftExecutor.shutdown();
     }
 
     /**

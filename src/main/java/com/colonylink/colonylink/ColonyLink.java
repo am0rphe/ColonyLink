@@ -1,10 +1,8 @@
 package com.colonylink.colonylink;
 
 import appeng.api.features.GridLinkables;
-import appeng.items.tools.NetworkToolItem;
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.CreativeModeTab;
@@ -38,7 +36,7 @@ public class ColonyLink
 
     public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems(MODID);
     public static final DeferredRegister<CreativeModeTab> CREATIVE_MODE_TABS =
-            DeferredRegister.create(Registries.CREATIVE_MODE_TAB, MODID);
+            DeferredRegister.create(net.minecraft.core.registries.Registries.CREATIVE_MODE_TAB, MODID);
 
     public static final DeferredItem<Item> COLONY_LINK_WAND = ITEMS.register("colony_link_wand",
             () -> new ColonyLinkWand(new Item.Properties().stacksTo(1)));
@@ -101,27 +99,51 @@ public class ColonyLink
         var be = event.getLevel().getBlockEntity(pos);
         if (!(be instanceof ColonyLinkRedirectorBlockEntity redirector)) return;
 
-        // Wrench AE2 sneak + clic = casse instantané (Network Tool + Certus + Fluix wrench)
+        // ── Tout wrench (tag c:tools/wrench) : sneak → casse, clic simple → infos ──
+        // Le tag générique couvre AE2, Create, Mekanism, et tous les mods conformes.
+        // setCanceled(true) empêche le useOn() natif du wrench de s'exécuter.
         var wrenchTag = net.minecraft.tags.TagKey.create(
                 net.minecraft.core.registries.Registries.ITEM,
-                net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("ae2", "tools/wrench"));
-        boolean isWrench = heldItem.is(wrenchTag) || heldItem.getItem() instanceof NetworkToolItem;
-        if (isWrench && player.isShiftKeyDown())
+                net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("c", "tools/wrench"));
+        if (heldItem.is(wrenchTag))
         {
-            var blockState = event.getLevel().getBlockState(pos);
-            Block.dropResources(blockState, event.getLevel(), pos, be, player, heldItem);
-            event.getLevel().removeBlock(pos, false);
-            player.sendSystemMessage(Component.literal("§aColony Link Redirector removed!"));
             event.setCanceled(true);
+            if (player.isShiftKeyDown())
+            {
+                var blockState = event.getLevel().getBlockState(pos);
+                Block.dropResources(blockState, event.getLevel(), pos, be, player, heldItem);
+                event.getLevel().removeBlock(pos, false);
+                player.sendSystemMessage(Component.literal("§aColony Link Redirector removed!"));
+            }
+            else
+            {
+                redirector.updateState();
+                player.sendSystemMessage(Component.literal(
+                        "§7[Redirector] AE2: " + (redirector.isAe2Active() ? "§aLinked" : "§cUnlinked")));
+                switch (redirector.getState())
+                {
+                    case NOT_LINKED -> player.sendSystemMessage(
+                            Component.literal("§e[Redirector] No builder linked."));
+                    case STANDBY -> player.sendSystemMessage(
+                            Component.literal("§6[Redirector] STANDBY - Target inventory is full!"));
+                    case LINKED ->
+                    {
+                        player.sendSystemMessage(Component.literal("§a[Redirector] LINKED and operational!"));
+                        if (redirector.getTargetInventoryPos() != null)
+                            player.sendSystemMessage(Component.literal(
+                                    "§7Target: " + redirector.getTargetInventoryPos().toShortString()));
+                        if (redirector.getLinkedBuilderPos() != null)
+                            player.sendSystemMessage(Component.literal(
+                                    "§7Builder: " + redirector.getLinkedBuilderPos().toShortString()));
+                    }
+                    default -> {}
+                }
+            }
             return;
         }
 
-        // Wand + sneak → délégué à ColonyLinkWand.useOn()
-        if (heldItem.getItem() instanceof ColonyLinkWand && player.isShiftKeyDown())
-            return;
-
-        // Main vide + clic droit = ouvre le GUI buffer
-        if (heldItem.isEmpty())
+        // ── Tout autre item (main vide ou non) → ouvre le GUI buffer ─────────────
+        if (!player.isShiftKeyDown())
         {
             player.openMenu(redirector, buf -> buf.writeBlockPos(pos));
             event.setCanceled(true);

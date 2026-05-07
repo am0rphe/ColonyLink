@@ -1,7 +1,5 @@
 package com.colonylink.colonylink;
 
-import appeng.items.tools.NetworkToolItem;
-import net.minecraft.tags.ItemTags;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -134,38 +132,33 @@ public class ColonyLinkRedirectorBlock extends Block implements EntityBlock
         super.onRemove(state, level, pos, newState, movedByPiston);
     }
 
+
+
     @Override
     public InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hit)
     {
+        ItemStack held = player.getMainHandItem();
+
+        // Wand → PASS côté client et serveur, useOn() de la wand gère déjà tout
+        if (held.getItem() instanceof ColonyLinkWand)
+            return InteractionResult.PASS;
+
+        // Wrench (c:tools/wrench) → bloquer l'ouverture GUI des deux côtés
+        // Le check doit être AVANT isClientSide() pour que le client ne tente
+        // pas d'ouvrir le GUI de son côté
+        var wrenchTag = net.minecraft.tags.TagKey.create(
+                net.minecraft.core.registries.Registries.ITEM,
+                net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("c", "tools/wrench"));
+        if (held.is(wrenchTag))
+            return InteractionResult.SUCCESS;
+
         if (level.isClientSide()) return InteractionResult.PASS;
 
         var be = level.getBlockEntity(pos);
         if (!(be instanceof ColonyLinkRedirectorBlockEntity redirector)) return InteractionResult.PASS;
 
-        ItemStack heldItem = player.getMainHandItem();
-
-        // Wrench AE2 → show status ou casse
-        if (isAe2Wrench(heldItem))
-        {
-            if (player.isShiftKeyDown())
-            {
-                Block.dropResources(state, level, pos, be, player, heldItem);
-                level.removeBlock(pos, false);
-                player.sendSystemMessage(Component.literal("§aColony Link Redirector removed!"));
-            }
-            else
-            {
-                showStatus(player, redirector);
-            }
-            return InteractionResult.SUCCESS;
-        }
-
-        // Wand + sneak → délégué à ColonyLinkWand.useOn()
-        if (heldItem.getItem() instanceof ColonyLinkWand)
-            return InteractionResult.PASS;
-
-        // Main vide → ouvre le GUI buffer
-        if (heldItem.isEmpty() && !player.isShiftKeyDown())
+        // Tout autre cas → ouvre le GUI buffer
+        if (!player.isShiftKeyDown())
         {
             player.openMenu(redirector, buf -> buf.writeBlockPos(pos));
             return InteractionResult.SUCCESS;
@@ -174,48 +167,5 @@ public class ColonyLinkRedirectorBlock extends Block implements EntityBlock
         return InteractionResult.PASS;
     }
 
-    private void showStatus(Player player, ColonyLinkRedirectorBlockEntity redirector)
-    {
-        redirector.updateState();
 
-        boolean ae2Active = redirector.isAe2Active();
-        player.sendSystemMessage(Component.literal(
-                "§7[Redirector] AE2: " + (ae2Active ? "§aLinked" : "§cUnlinked")));
-
-        switch (redirector.getState())
-        {
-            case NOT_LINKED -> player.sendSystemMessage(
-                    Component.literal("§e[Redirector] No builder linked. Sneak + right-click with the Wand."));
-            case STANDBY -> player.sendSystemMessage(
-                    Component.literal("§6[Redirector] STANDBY - Target inventory is full!"));
-            case LINKED ->
-            {
-                player.sendSystemMessage(Component.literal("§a[Redirector] LINKED and operational!"));
-                if (redirector.getTargetInventoryPos() != null)
-                    player.sendSystemMessage(Component.literal(
-                            "§7Target: " + redirector.getTargetInventoryPos().toShortString()));
-                if (redirector.getLinkedBuilderPos() != null)
-                    player.sendSystemMessage(Component.literal(
-                            "§7Builder: " + redirector.getLinkedBuilderPos().toShortString()));
-            }
-            default -> {}
-        }
-    }
-
-    /**
-     * Retourne true si l'item est un wrench AE2 (Network Tool, Certus Wrench, Fluix Wrench).
-     * Utilise le tag ae2:tools/wrench qui regroupe tous les wrenches AE2.
-     * Fallback sur instanceof NetworkToolItem si le tag n'existe pas.
-     */
-    private static boolean isAe2Wrench(net.minecraft.world.item.ItemStack stack)
-    {
-        if (stack.isEmpty()) return false;
-        // Tag AE2 qui couvre Network Tool + Certus Wrench + Fluix Wrench
-        var wrenchTag = net.minecraft.tags.TagKey.create(
-                net.minecraft.core.registries.Registries.ITEM,
-                ResourceLocation.fromNamespaceAndPath("ae2", "tools/wrench"));
-        if (stack.is(wrenchTag)) return true;
-        // Fallback Network Tool (au cas où le tag serait absent)
-        return stack.getItem() instanceof NetworkToolItem;
-    }
 }

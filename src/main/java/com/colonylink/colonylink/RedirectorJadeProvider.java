@@ -50,6 +50,10 @@ public class RedirectorJadeProvider implements
     {
         if (!(accessor.getBlockEntity() instanceof ColonyLinkRedirectorBlockEntity be)) return;
 
+        // Recalcule le state à la volée pour garantir la cohérence avec isAe2Active().
+        // be.getState() peut être désynchronisé (valeur NBT ancienne) si updateState()
+        // n'a pas encore été rappelé depuis le dernier chargement du chunk.
+        be.updateState();
         data.putString(KEY_STATE, be.getState().name());
         data.putBoolean(KEY_AE2_ACTIVE, be.isAe2Active());
         data.putBoolean(KEY_HAS_CARD, be.hasWarehouseCard());
