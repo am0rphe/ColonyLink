@@ -17,6 +17,10 @@ import com.minecolonies.api.colony.IColony;
 import com.minecolonies.api.colony.IColonyManager;
 import com.minecolonies.api.colony.buildings.IBuilding;
 import com.minecolonies.core.colony.buildings.workerbuildings.BuildingWareHouse;
+import com.refinedmods.refinedstorage.api.network.Network;
+import com.refinedmods.refinedstorage.api.network.storage.StorageNetworkComponent;
+import com.refinedmods.refinedstorage.api.storage.Actor;
+import com.refinedmods.refinedstorage.common.support.resource.ItemResource;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
@@ -42,11 +46,16 @@ import java.util.concurrent.TimeUnit;
  *   3. Les injecte dans le réseau ME
  *   4. Lance le craft AE2 normalement
  *
- * Cas Domum Ornamentum :
+ * Cas RS2 :
+ *   1. Extrait directement l'item ou ses composants depuis les racks warehouse
+ *   2. Les injecte dans le réseau RS2 via StorageNetworkComponent
+ *   3. Pour les items standards : lance le craft RS2 via AutocraftingNetworkComponent
+ *   4. Pour les items Domum : insère les composants extraits dans le buffer redirector
+ *
+ * Cas Domum Ornamentum (AE2 + RS2) :
  *   1. Identifie les composants texture du bloc DO
  *   2. Extrait ces composants depuis les racks warehouse
- *   3. Insère les composants dans le ME (pour que DomumCraftHandler puisse les extraire)
- *   4. Appelle DomumCraftHandler.handleDomumCraft() qui fait le craft virtuel
+ *   3. Insère dans ME ou RS2 puis craft virtuel DO
  */
 public class WarehouseCraftHandler
 {
@@ -57,34 +66,19 @@ public class WarehouseCraftHandler
             boolean isDomum,
             BlockPos redirectorPos)
     {
-        ItemStack wandStack = findWandInInventory(player);
-        if (wandStack == null || !ColonyLinkWandLinkableHandler.isLinked(wandStack))
-        {
-            player.sendSystemMessage(Component.literal("§cWand not linked!"));
-            return;
-        }
-
         ServerLevel level = player.serverLevel();
 
-        IWirelessAccessPoint wap = getWap(wandStack, level);
-        if (wap == null)
+        // ── Détection wand AE2 ou RS2 ─────────────────────────────────────────
+        ItemStack wandStack = findWandInInventory(player);
+        boolean isRS = wandStack != null && wandStack.getItem() instanceof ColonyLinkWandRS;
+
+        if (wandStack == null)
         {
-            player.sendSystemMessage(Component.literal("§cCannot connect to AE2 network!"));
+            player.sendSystemMessage(Component.literal("§cWand not found!"));
             return;
         }
 
-        IGrid grid = wap.getGrid();
-        if (grid == null)
-        {
-            player.sendSystemMessage(Component.literal("§cAE2 network is offline!"));
-            return;
-        }
-
-        IStorageService storageService = grid.getStorageService();
-        IActionSource actionSource = IActionSource.ofPlayer(player,
-                (appeng.api.networking.security.IActionHost) wap);
-
-        // Trouve la Warehouse de la colonie
+        // ── Trouve la Warehouse de la colonie ─────────────────────────────────
         IColony colony = IColonyManager.getInstance().getClosestColony(level, redirectorPos);
         if (colony == null)
         {
@@ -99,12 +93,281 @@ public class WarehouseCraftHandler
             return;
         }
 
-        if (isDomum)
-            handleDomumFromWarehouse(player, level, stack, realCount, redirectorPos,
-                    grid, storageService, actionSource, warehouse, wandStack);
+        // ── Route vers le handler approprié ──────────────────────────────────
+        if (isRS)
+        {
+            if (!ColonyLinkWandRSLinkableHandler.isLinked(wandStack))
+            {
+                player.sendSystemMessage(Component.literal("§cRS2 Wand not linked!"));
+                return;
+            }
+            Network network = ColonyLinkWandRSLinkableHandler.getNetwork(wandStack, level);
+            if (network == null)
+            {
+                player.sendSystemMessage(Component.literal("§cCannot connect to RS2 network!"));
+                return;
+            }
+            StorageNetworkComponent storage = network.getComponent(StorageNetworkComponent.class);
+            if (storage == null)
+            {
+                player.sendSystemMessage(Component.literal("§cRS2 network has no storage!"));
+                return;
+            }
+
+            if (isDomum)
+                handleDomumFromWarehouseRS(player, level, stack, realCount, redirectorPos,
+                        network, storage, warehouse);
+            else
+                handleRS2FromWarehouse(player, level, stack, realCount,
+                        network, storage, warehouse);
+        }
         else
-            handleAe2FromWarehouse(player, level, stack, realCount,
-                    grid, storageService, actionSource, warehouse);
+        {
+            if (!ColonyLinkWandLinkableHandler.isLinked(wandStack))
+            {
+                player.sendSystemMessage(Component.literal("§cWand not linked!"));
+                return;
+            }
+            IWirelessAccessPoint wap = getWap(wandStack, level);
+            if (wap == null)
+            {
+                player.sendSystemMessage(Component.literal("§cCannot connect to AE2 network!"));
+                return;
+            }
+            IGrid grid = wap.getGrid();
+            if (grid == null)
+            {
+                player.sendSystemMessage(Component.literal("§cAE2 network is offline!"));
+                return;
+            }
+            IStorageService storageService = grid.getStorageService();
+            IActionSource actionSource = IActionSource.ofPlayer(player,
+                    (appeng.api.networking.security.IActionHost) wap);
+
+            if (isDomum)
+                handleDomumFromWarehouse(player, level, stack, realCount, redirectorPos,
+                        grid, storageService, actionSource, warehouse, wandStack);
+            else
+                handleAe2FromWarehouse(player, level, stack, realCount,
+                        grid, storageService, actionSource, warehouse);
+        }
+    }
+
+    // ── Cas RS2 standard ──────────────────────────────────────────────────────
+
+    private static void handleRS2FromWarehouse(
+            ServerPlayer player,
+            ServerLevel level,
+            ItemStack stack,
+            int realCount,
+            Network network,
+            StorageNetworkComponent storage,
+            BuildingWareHouse warehouse)
+    {
+        ItemResource rsKey = ItemResource.ofItemStack(stack);
+
+        // Vérifie d'abord si l'item est directement en warehouse
+        long directInWarehouse = countItemInWarehouse(level, warehouse, stack);
+        if (directInWarehouse > 0)
+        {
+            int toExtract = (int) Math.min(directInWarehouse, realCount);
+            long extracted = extractFromWarehouseRacks(level, warehouse, stack, toExtract);
+            if (extracted > 0)
+            {
+                // Insère dans RS2
+                long remaining = extracted;
+                long inserted = storage.insert(rsKey, remaining, com.refinedmods.refinedstorage.api.core.Action.EXECUTE, Actor.EMPTY);
+                if (inserted > 0)
+                    player.sendSystemMessage(Component.literal(
+                            "§a[ColonyLink RS] Transferred " + inserted + "x "
+                                    + stack.getDisplayName().getString()
+                                    + " from Warehouse → RS2 (ready to Send)"));
+                else
+                    player.sendSystemMessage(Component.literal("§c[ColonyLink RS] RS2 insertion failed!"));
+            }
+            return;
+        }
+
+        // Tente craft RS2 : extrait composants WH → RS2 → craft
+        var autocrafting = network.getComponent(
+                com.refinedmods.refinedstorage.api.network.autocrafting.AutocraftingNetworkComponent.class);
+        if (autocrafting == null || !autocrafting.getOutputs().contains(rsKey))
+        {
+            player.sendSystemMessage(Component.literal(
+                    "§c[ColonyLink RS] No RS2 pattern and item not found in Warehouse!"));
+            return;
+        }
+
+        // Pour RS2, ensureTask gère lui-même les composants — on insère juste ce qu'on a en WH
+        long extracted = extractFromWarehouseRacks(level, warehouse, stack, realCount);
+        if (extracted > 0)
+        {
+            storage.insert(rsKey, extracted, com.refinedmods.refinedstorage.api.core.Action.EXECUTE, Actor.EMPTY);
+            player.sendSystemMessage(Component.literal(
+                    "§7[WH→RS2] " + extracted + "x " + stack.getDisplayName().getString()));
+        }
+
+        var result = autocrafting.ensureTask(rsKey, realCount, Actor.EMPTY,
+                com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken.NONE);
+        switch (result)
+        {
+            case TASK_CREATED, TASK_ALREADY_RUNNING ->
+                    player.sendSystemMessage(Component.literal(
+                            "§a[ColonyLink RS] Craft started: " + realCount + "x "
+                                    + stack.getDisplayName().getString()
+                                    + " (components from Warehouse)"));
+            case MISSING_RESOURCES ->
+                    player.sendSystemMessage(Component.literal(
+                            "§c[ColonyLink RS] Craft failed — missing resources even after WH injection!"));
+        }
+    }
+
+    // ── Cas Domum RS2 ─────────────────────────────────────────────────────────
+
+    private static void handleDomumFromWarehouseRS(
+            ServerPlayer player,
+            ServerLevel level,
+            ItemStack domumStack,
+            int realCount,
+            BlockPos redirectorPos,
+            Network network,
+            StorageNetworkComponent storage,
+            BuildingWareHouse warehouse)
+    {
+        // Cas 1 : l'item DO final est directement en warehouse → buffer redirector
+        long directFound = countDomumInWarehouse(level, warehouse, domumStack);
+        if (directFound > 0)
+        {
+            int toExtract = (int) Math.min(directFound, realCount);
+            long extracted = extractDomumFromWarehouseRacks(level, warehouse, domumStack, toExtract);
+            if (extracted > 0)
+            {
+                var redirectorBe = level.getBlockEntity(redirectorPos);
+                IItemHandler buffer = null;
+                if (redirectorBe instanceof ColonyLinkRedirectorBlockEntityRS redirectorRS)
+                    buffer = redirectorRS.buffer;
+                else if (redirectorBe instanceof ColonyLinkRedirectorBlockEntity redirectorAE2)
+                    buffer = redirectorAE2.buffer;
+
+                if (buffer == null)
+                {
+                    player.sendSystemMessage(Component.literal("§c[ColonyLink RS] Redirector not found!"));
+                    return;
+                }
+
+                ItemStack toInsert = domumStack.copyWithCount((int) extracted);
+                for (int slot = 0; slot < buffer.getSlots() && !toInsert.isEmpty(); slot++)
+                    toInsert = buffer.insertItem(slot, toInsert, false);
+
+                if (toInsert.isEmpty())
+                    player.sendSystemMessage(Component.literal(
+                            "§a[ColonyLink RS] Sent " + extracted + "x "
+                                    + domumStack.getDisplayName().getString()
+                                    + " from Warehouse → Redirector buffer!"));
+                else
+                    player.sendSystemMessage(Component.literal(
+                            "§6[ColonyLink RS] Buffer partially full — " + toInsert.getCount() + "x not inserted."));
+                return;
+            }
+        }
+
+        // Cas 2 : item DO pas en warehouse → extrait composants WH → buffer redirector
+        Item item = domumStack.getItem();
+        if (!(item instanceof BlockItem blockItem)) return;
+        Block block = blockItem.getBlock();
+        if (!(block instanceof IMateriallyTexturedBlock texturedBlock)) return;
+
+        MaterialTextureData textureData = MaterialTextureData.readFromItemStack(domumStack);
+
+        // Collecte les composants extraits
+        List<ItemStack> extractedComponents = new ArrayList<>();
+        boolean allOk = true;
+
+        for (IMateriallyTexturedBlockComponent component : texturedBlock.getComponents())
+        {
+            Block materialBlock = textureData.getTexturedComponents().get(component.getId());
+            if (materialBlock == null)
+            {
+                if (!component.isOptional())
+                {
+                    player.sendSystemMessage(Component.literal(
+                            "§c[ColonyLink RS] Missing material for component: " + component.getId()));
+                    allOk = false;
+                    break;
+                }
+                continue;
+            }
+
+            ItemStack materialStack = new ItemStack(materialBlock, realCount);
+
+            // Vérifie ce qui est déjà dans RS2
+            ItemResource rsMatKey = ItemResource.ofItemStack(materialStack);
+            long inRS2 = storage.get(rsMatKey);
+            long stillNeeded = Math.max(0, realCount - inRS2);
+
+            if (stillNeeded > 0)
+            {
+                long extracted = extractFromWarehouseRacks(
+                        level, warehouse, materialStack, (int) Math.min(stillNeeded, Integer.MAX_VALUE));
+                if (extracted > 0)
+                {
+                    // Insère dans RS2 pour que le craft DO puisse l'utiliser
+                    storage.insert(rsMatKey, extracted, com.refinedmods.refinedstorage.api.core.Action.EXECUTE, Actor.EMPTY);
+                    extractedComponents.add(materialStack.copyWithCount((int) extracted));
+                    player.sendSystemMessage(Component.literal(
+                            "§7[WH→RS2] " + extracted + "x " + materialStack.getDisplayName().getString()));
+                }
+            }
+        }
+
+        if (!allOk) return;
+
+        // Insère le résultat DO dans le buffer redirector via extraction RS2
+        // (même logique que DomumCraftHandler mais côté RS2)
+        var redirectorBe = level.getBlockEntity(redirectorPos);
+        IItemHandler buffer = null;
+        if (redirectorBe instanceof ColonyLinkRedirectorBlockEntityRS redirectorRS)
+            buffer = redirectorRS.buffer;
+        else if (redirectorBe instanceof ColonyLinkRedirectorBlockEntity redirectorAE2)
+            buffer = redirectorAE2.buffer;
+
+        if (buffer == null)
+        {
+            player.sendSystemMessage(Component.literal("§c[ColonyLink RS] Redirector not found!"));
+            return;
+        }
+
+        // Construit le MaterialTextureData et insère dans le buffer
+        com.ldtteam.domumornamentum.client.model.data.MaterialTextureData.Builder builder =
+                com.ldtteam.domumornamentum.client.model.data.MaterialTextureData.builder();
+        for (IMateriallyTexturedBlockComponent component : texturedBlock.getComponents())
+        {
+            Block materialBlock = textureData.getTexturedComponents().get(component.getId());
+            if (materialBlock != null)
+                builder.setComponent(component.getId(), materialBlock);
+        }
+
+        ItemStack result = domumStack.copy();
+        result.setCount(realCount);
+        builder.writeToItemStack(result);
+
+        ItemStack remainder = result.copy();
+        for (int slot = 0; slot < buffer.getSlots() && !remainder.isEmpty(); slot++)
+            remainder = buffer.insertItem(slot, remainder, false);
+
+        if (remainder.isEmpty())
+            player.sendSystemMessage(Component.literal(
+                    "§a[ColonyLink RS] Crafted " + realCount + "x "
+                            + domumStack.getDisplayName().getString()
+                            + " from Warehouse components → buffer!"));
+        else
+        {
+            // Remboursement RS2
+            for (ItemStack comp : extractedComponents)
+                storage.insert(ItemResource.ofItemStack(comp), comp.getCount(),
+                        com.refinedmods.refinedstorage.api.core.Action.EXECUTE, Actor.EMPTY);
+            player.sendSystemMessage(Component.literal("§c[ColonyLink RS] Buffer full — DO craft cancelled."));
+        }
     }
 
     // ── Cas AE2 ──────────────────────────────────────────────────────────────
@@ -124,11 +387,9 @@ public class WarehouseCraftHandler
 
         if (!craftingService.isCraftable(aeKey))
         {
-            // Pas de pattern AE2 — tente extraction directe depuis warehouse
             long extracted = extractFromWarehouseRacks(level, warehouse, stack, realCount);
             if (extracted > 0)
             {
-                // Insère dans le ME pour que le redirector puisse le router vers le builder
                 long inserted = storageService.getInventory().insert(
                         aeKey, extracted, Actionable.MODULATE, actionSource);
                 if (inserted > 0)
@@ -145,8 +406,6 @@ public class WarehouseCraftHandler
             return;
         }
 
-        // Si l'item est directement disponible en warehouse en quantité suffisante,
-        // on l'extrait et l'injecte dans le ME — pas besoin de craft AE2
         long directInWarehouse = countItemInWarehouse(level, warehouse, stack);
         if (directInWarehouse >= realCount)
         {
@@ -166,7 +425,6 @@ public class WarehouseCraftHandler
             return;
         }
 
-        // Calcule le batch size du pattern
         long batchOutput = 1;
         var patterns = craftingService.getCraftingFor(aeKey);
         if (patterns != null && !patterns.isEmpty())
@@ -185,16 +443,14 @@ public class WarehouseCraftHandler
         long batchesNeeded = (long) Math.ceil((double) realCount / batchOutput);
         long totalToCraft = batchesNeeded * batchOutput;
 
-        // Résout les composants manquants dans le ME et extrait depuis warehouse
         List<ItemStack> injected = new ArrayList<>();
 
-        if (!patterns.isEmpty())
+        if (patterns != null && !patterns.isEmpty())
         {
             var pattern = patterns.iterator().next();
             for (var input : pattern.getInputs())
             {
                 if (input == null) continue;
-
                 ItemStack inputStack = null;
                 long inputNeeded = 0;
                 for (var possible : input.getPossibleInputs())
@@ -209,20 +465,15 @@ public class WarehouseCraftHandler
                 if (inputStack == null || inputStack.isEmpty()) continue;
 
                 AEItemKey inputAeKey = AEItemKey.of(inputStack);
-                // Utilise simulate pour savoir ce qui est disponible dans le ME (sans cache périmé)
                 long inMe = storageService.getInventory().extract(
                         inputAeKey, inputNeeded, Actionable.SIMULATE, actionSource);
                 long stillNeeded = inputNeeded - inMe;
-
                 if (stillNeeded <= 0) continue;
 
-                // Extrait depuis les racks warehouse
                 long extracted = extractFromWarehouseRacks(
                         level, warehouse, inputStack, (int) Math.min(stillNeeded, Integer.MAX_VALUE));
-
                 if (extracted > 0)
                 {
-                    // Injecte dans le ME
                     long inserted = storageService.getInventory().insert(
                             inputAeKey, extracted, Actionable.MODULATE, actionSource);
                     if (inserted > 0)
@@ -235,8 +486,6 @@ public class WarehouseCraftHandler
             }
         }
 
-        // Lance le craft AE2 dans un thread séparé (même pattern que CraftHandler)
-        // pour éviter de bloquer le thread serveur avec lock.wait()
         ICraftingSimulationRequester simulationRequester = () -> actionSource;
         final List<ItemStack> injectedFinal = injected;
 
@@ -251,7 +500,6 @@ public class WarehouseCraftHandler
             {
                 Future<ICraftingPlan> future = craftingService.beginCraftingCalculation(
                         level, simulationRequester, aeKey, totalToCraft, CalculationStrategy.CRAFT_LESS);
-
                 ICraftingPlan plan = future.get(10, TimeUnit.SECONDS);
                 if (plan == null)
                 {
@@ -261,7 +509,6 @@ public class WarehouseCraftHandler
                     });
                     return;
                 }
-
                 level.getServer().execute(() -> {
                     var result = craftingService.submitJob(plan, null, null, false, actionSource);
                     if (result.successful())
@@ -285,11 +532,10 @@ public class WarehouseCraftHandler
                 });
             }
         });
-
         executor.shutdown();
     }
 
-    // ── Cas Domum Ornamentum ──────────────────────────────────────────────────
+    // ── Cas Domum AE2 ────────────────────────────────────────────────────────
 
     private static void handleDomumFromWarehouse(
             ServerPlayer player,
@@ -303,8 +549,6 @@ public class WarehouseCraftHandler
             BuildingWareHouse warehouse,
             ItemStack wandStack)
     {
-        // ── Cas 1 : l'item DO final est directement en warehouse ──────────────
-        // On l'extrait directement depuis les racks et l'insère dans le buffer redirector
         long directFound = countDomumInWarehouse(level, warehouse, domumStack);
         if (directFound > 0)
         {
@@ -312,19 +556,16 @@ public class WarehouseCraftHandler
             long extracted = extractDomumFromWarehouseRacks(level, warehouse, domumStack, toExtract);
             if (extracted > 0)
             {
-                // Insère dans le buffer du redirector
                 var redirectorBe = level.getBlockEntity(redirectorPos);
                 if (!(redirectorBe instanceof ColonyLinkRedirectorBlockEntity redirector))
                 {
                     player.sendSystemMessage(Component.literal("§c[ColonyLink] Redirector not found!"));
                     return;
                 }
-
                 ItemStack toInsert = domumStack.copyWithCount((int) extracted);
                 net.neoforged.neoforge.items.IItemHandler buffer = redirector.buffer;
                 for (int slot = 0; slot < buffer.getSlots() && !toInsert.isEmpty(); slot++)
                     toInsert = buffer.insertItem(slot, toInsert, false);
-
                 if (toInsert.isEmpty())
                     player.sendSystemMessage(Component.literal(
                             "§a[ColonyLink] Sent " + extracted + "x "
@@ -337,7 +578,6 @@ public class WarehouseCraftHandler
             }
         }
 
-        // ── Cas 2 : l'item DO n'est pas en warehouse → extrait composants WH → injecte ME ──
         Item item = domumStack.getItem();
         if (!(item instanceof BlockItem blockItem)) return;
         Block block = blockItem.getBlock();
@@ -363,18 +603,13 @@ public class WarehouseCraftHandler
 
             ItemStack materialStack = new ItemStack(materialBlock, realCount);
             AEItemKey aeKey = AEItemKey.of(materialStack);
-
-            // Vérifie ce qui est déjà dans le ME (inventaire live, pas cache)
             long inMe = storageService.getInventory().extract(
                     aeKey, realCount, appeng.api.config.Actionable.SIMULATE, actionSource);
             long stillNeeded = realCount - inMe;
-
             if (stillNeeded <= 0) continue;
 
-            // Extrait depuis les racks warehouse
             long extracted = extractFromWarehouseRacks(
                     level, warehouse, materialStack, (int) Math.min(stillNeeded, Integer.MAX_VALUE));
-
             if (extracted > 0)
             {
                 long inserted = storageService.getInventory().insert(
@@ -388,12 +623,11 @@ public class WarehouseCraftHandler
             }
         }
 
-        // Délègue au DomumCraftHandler qui extrait depuis ME → buffer redirector
-        // À ce stade, les composants sont dans le ME (live), le handler les extraira correctement
         DomumCraftHandler.handleDomumCraft(player, domumStack, realCount, redirectorPos);
     }
 
-    /** Compte les items standards en warehouse (comparaison par Item type). */
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
     private static long countItemInWarehouse(
             ServerLevel level, BuildingWareHouse warehouse, ItemStack stack)
     {
@@ -417,13 +651,10 @@ public class WarehouseCraftHandler
             }
         }
         catch (Exception e)
-        {
-            ColonyLink.LOGGER.debug("[ColonyLink] countItemInWarehouse error: {}", e.getMessage());
-        }
+        { ColonyLink.LOGGER.debug("[ColonyLink] countItemInWarehouse error: {}", e.getMessage()); }
         return count;
     }
 
-    /** Compte les items DO finaux identiques en warehouse (comparaison NBT exacte). */
     private static long countDomumInWarehouse(
             ServerLevel level, BuildingWareHouse warehouse, ItemStack domumStack)
     {
@@ -447,13 +678,10 @@ public class WarehouseCraftHandler
             }
         }
         catch (Exception e)
-        {
-            ColonyLink.LOGGER.debug("[ColonyLink] countDomumInWarehouse error: {}", e.getMessage());
-        }
+        { ColonyLink.LOGGER.debug("[ColonyLink] countDomumInWarehouse error: {}", e.getMessage()); }
         return count;
     }
 
-    /** Extrait des items DO finaux depuis les racks warehouse (comparaison NBT exacte). */
     private static long extractDomumFromWarehouseRacks(
             ServerLevel level, BuildingWareHouse warehouse, ItemStack domumStack, int needed)
     {
@@ -472,8 +700,7 @@ public class WarehouseCraftHandler
                 for (int slot = 0; slot < rackHandler.getSlots() && remaining > 0; slot++)
                 {
                     ItemStack inSlot = rackHandler.getStackInSlot(slot);
-                    if (inSlot.isEmpty()) continue;
-                    if (!ItemStack.isSameItemSameComponents(inSlot, domumStack)) continue;
+                    if (inSlot.isEmpty() || !ItemStack.isSameItemSameComponents(inSlot, domumStack)) continue;
                     int toExtract = Math.min(inSlot.getCount(), remaining);
                     ItemStack took = rackHandler.extractItem(slot, toExtract, false);
                     if (took.isEmpty()) continue;
@@ -483,18 +710,10 @@ public class WarehouseCraftHandler
             }
         }
         catch (Exception e)
-        {
-            ColonyLink.LOGGER.debug("[ColonyLink] extractDomumFromWarehouseRacks error: {}", e.getMessage());
-        }
+        { ColonyLink.LOGGER.debug("[ColonyLink] extractDomumFromWarehouseRacks error: {}", e.getMessage()); }
         return totalExtracted;
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    /**
-     * Extrait jusqu'à `needed` items du type `stack` depuis les racks de la warehouse.
-     * @return quantité réellement extraite
-     */
     static long extractFromWarehouseRacks(
             ServerLevel level,
             BuildingWareHouse warehouse,
@@ -503,40 +722,30 @@ public class WarehouseCraftHandler
     {
         long totalExtracted = 0;
         int remaining = needed;
-
         try
         {
             var containerList = warehouse.getContainers();
             if (containerList == null) return 0;
-
             for (BlockPos rackPos : containerList)
             {
                 if (remaining <= 0) break;
-
                 IItemHandler rackHandler = level.getCapability(
                         Capabilities.ItemHandler.BLOCK, rackPos, null);
                 if (rackHandler == null) continue;
-
                 for (int slot = 0; slot < rackHandler.getSlots() && remaining > 0; slot++)
                 {
                     ItemStack inSlot = rackHandler.getStackInSlot(slot);
-                    if (inSlot.isEmpty()) continue;
-                    if (!ItemStack.isSameItem(inSlot, stack)) continue;
-
+                    if (inSlot.isEmpty() || !ItemStack.isSameItem(inSlot, stack)) continue;
                     int toExtract = Math.min(inSlot.getCount(), remaining);
                     ItemStack took = rackHandler.extractItem(slot, toExtract, false);
                     if (took.isEmpty()) continue;
-
                     totalExtracted += took.getCount();
                     remaining -= took.getCount();
                 }
             }
         }
         catch (Exception e)
-        {
-            ColonyLink.LOGGER.debug("[ColonyLink] Warehouse rack extraction error: {}", e.getMessage());
-        }
-
+        { ColonyLink.LOGGER.debug("[ColonyLink] Warehouse rack extraction error: {}", e.getMessage()); }
         return totalExtracted;
     }
 
@@ -555,14 +764,18 @@ public class WarehouseCraftHandler
     private static BuildingWareHouse findWarehouse(IColony colony)
     {
         for (IBuilding building : colony.getServerBuildingManager().getBuildings().values())
-        {
             if (building instanceof BuildingWareHouse wh) return wh;
-        }
         return null;
     }
 
+    /**
+     * Cherche d'abord la wand RS2, puis la wand AE2.
+     * La wand RS2 est prioritaire car l'utilisateur est en mode RS2.
+     */
     private static ItemStack findWandInInventory(ServerPlayer player)
     {
+        for (ItemStack stack : player.getInventory().items)
+            if (stack.getItem() instanceof ColonyLinkWandRS) return stack;
         for (ItemStack stack : player.getInventory().items)
             if (stack.getItem() instanceof ColonyLinkWand) return stack;
         return null;

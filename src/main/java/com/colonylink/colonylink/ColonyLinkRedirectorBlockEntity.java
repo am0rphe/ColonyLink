@@ -37,6 +37,12 @@ import java.util.Set;
 
 public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInWorldGridNodeHost, ICraftingRequester, MenuProvider
 {
+    /** Lu depuis la config. Nécessite de replacer le Redirector pour prendre effet. */
+    public static int BUFFER_ROWS() { return ColonyLinkConfig.REDIRECTOR_BUFFER_ROWS.get(); }
+    public static int BUFFER_COLS() { return ColonyLinkConfig.REDIRECTOR_BUFFER_COLS.get(); }
+    public static int BUFFER_SIZE() { return BUFFER_ROWS() * BUFFER_COLS(); }
+
+    // Constantes statiques conservées pour compatibilité avec ColonyLinkRedirectorMenu
     public static final int BUFFER_ROWS = 10;
     public static final int BUFFER_COLS = 12;
     public static final int BUFFER_SIZE = BUFFER_ROWS * BUFFER_COLS;
@@ -61,7 +67,7 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
     // Cache client de warehousePriority (lu côté client depuis handleUpdateTag)
     private boolean warehousePriorityClientCache = false;
 
-    public final ItemStackHandler buffer = new ItemStackHandler(BUFFER_SIZE)
+    public final ItemStackHandler buffer = new ItemStackHandler(BUFFER_SIZE())
     {
         @Override
         protected void onContentsChanged(int slot)

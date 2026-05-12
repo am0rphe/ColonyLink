@@ -18,16 +18,27 @@ public record ColonyLinkPacket(
         String builderName,
         String buildingName,
         String workerStatus,
+        // v1.1.3 — Raison IDLE (faim, maladie, pas de maison, etc.) — vide si non IDLE
+        String workerIdleReason,
         int availableCpus,
         String redirectorState,
         BuilderRequest builderRequest,
-        boolean hasWarehouseCard,         // présence de la WarehouseLinkCard
-        boolean warehousePriority         // état du switch priorité Warehouse/AE2
+        boolean hasWarehouseCard,
+        boolean warehousePriority,
+        List<BuilderTabMeta> tabMetas,
+        int activeTabIndex,
+        long rfStored,
+        long rfMax,
+        boolean isRS
 ) implements CustomPacketPayload
 {
-    /**
-     * Représente une entrée de ressource dans la liste.
-     */
+    public record BuilderTabMeta(
+            BlockPos builderPos,
+            String builderName,
+            String buildingLabel,
+            boolean hasRedirector
+    ) {}
+
     public record ResourceEntry(
             ItemStack stack,
             ResourceStatus status,
@@ -37,9 +48,6 @@ public record ColonyLinkPacket(
             List<String> tooltipLines
     ) {}
 
-    /**
-     * Feature 1 — Requête prioritaire du builder PNJ.
-     */
     public record BuilderRequest(
             ItemStack stack,
             int count,
@@ -59,7 +67,6 @@ public record ColonyLinkPacket(
 
     public static final StreamCodec<RegistryFriendlyByteBuf, ColonyLinkPacket> STREAM_CODEC = StreamCodec.of(
             (buf, packet) -> {
-                // entries
                 buf.writeInt(packet.entries().size());
                 for (ResourceEntry entry : packet.entries())
                 {
@@ -69,17 +76,15 @@ public record ColonyLinkPacket(
                     buf.writeBoolean(entry.isDomum());
                     buf.writeBlockPos(entry.redirectorPos());
                     buf.writeInt(entry.tooltipLines().size());
-                    for (String line : entry.tooltipLines())
-                        buf.writeUtf(line);
+                    for (String line : entry.tooltipLines()) buf.writeUtf(line);
                 }
-                // header
                 buf.writeBlockPos(packet.builderPos());
                 buf.writeUtf(packet.builderName());
                 buf.writeUtf(packet.buildingName());
                 buf.writeUtf(packet.workerStatus());
+                buf.writeUtf(packet.workerIdleReason());
                 buf.writeInt(packet.availableCpus());
                 buf.writeUtf(packet.redirectorState());
-                // builder request
                 BuilderRequest req = packet.builderRequest() != null
                         ? packet.builderRequest() : BuilderRequest.NONE;
                 boolean hasReq = !req.stack().isEmpty() && req.count() > 0;
@@ -91,12 +96,23 @@ public record ColonyLinkPacket(
                     buf.writeInt(req.status().ordinal());
                     buf.writeBlockPos(req.redirectorPos());
                     buf.writeInt(req.tooltipLines().size());
-                    for (String line : req.tooltipLines())
-                        buf.writeUtf(line);
+                    for (String line : req.tooltipLines()) buf.writeUtf(line);
                 }
-                // warehouse card + priority
                 buf.writeBoolean(packet.hasWarehouseCard());
                 buf.writeBoolean(packet.warehousePriority());
+                List<BuilderTabMeta> metas = packet.tabMetas() != null ? packet.tabMetas() : List.of();
+                buf.writeInt(metas.size());
+                for (BuilderTabMeta meta : metas)
+                {
+                    buf.writeBlockPos(meta.builderPos());
+                    buf.writeUtf(meta.builderName());
+                    buf.writeUtf(meta.buildingLabel());
+                    buf.writeBoolean(meta.hasRedirector());
+                }
+                buf.writeInt(packet.activeTabIndex());
+                buf.writeLong(packet.rfStored());
+                buf.writeLong(packet.rfMax());
+                buf.writeBoolean(packet.isRS());
             },
             buf -> {
                 int size = buf.readInt();
@@ -110,41 +126,51 @@ public record ColonyLinkPacket(
                     BlockPos redirectorPos = buf.readBlockPos();
                     int tooltipCount = buf.readInt();
                     List<String> tooltipLines = new ArrayList<>();
-                    for (int t = 0; t < tooltipCount; t++)
-                        tooltipLines.add(buf.readUtf());
+                    for (int t = 0; t < tooltipCount; t++) tooltipLines.add(buf.readUtf());
                     list.add(new ResourceEntry(stack, status, realCount, isDomum, redirectorPos, tooltipLines));
                 }
-                BlockPos pos = buf.readBlockPos();
-                String builderName = buf.readUtf();
+                BlockPos pos        = buf.readBlockPos();
+                String builderName  = buf.readUtf();
                 String buildingName = buf.readUtf();
                 String workerStatus = buf.readUtf();
-                int availableCpus = buf.readInt();
+                String workerIdleReason = buf.readUtf();
+                int availableCpus   = buf.readInt();
                 String redirectorState = buf.readUtf();
-                // builder request
                 BuilderRequest req;
                 boolean hasReq = buf.readBoolean();
                 if (hasReq)
                 {
-                    ItemStack reqStack = ItemStack.STREAM_CODEC.decode(buf);
-                    int reqCount = buf.readInt();
-                    ResourceStatus reqStatus = ResourceStatus.values()[buf.readInt()];
-                    BlockPos reqRedirectorPos = buf.readBlockPos();
-                    int reqTooltipCount = buf.readInt();
-                    List<String> reqTooltipLines = new ArrayList<>();
-                    for (int t = 0; t < reqTooltipCount; t++)
-                        reqTooltipLines.add(buf.readUtf());
-                    req = new BuilderRequest(reqStack, reqCount, reqStatus, reqRedirectorPos, reqTooltipLines);
+                    ItemStack reqStack   = ItemStack.STREAM_CODEC.decode(buf);
+                    int reqCount         = buf.readInt();
+                    ResourceStatus reqSt = ResourceStatus.values()[buf.readInt()];
+                    BlockPos reqRPos     = buf.readBlockPos();
+                    int reqTtCount       = buf.readInt();
+                    List<String> reqTt   = new ArrayList<>();
+                    for (int t = 0; t < reqTtCount; t++) reqTt.add(buf.readUtf());
+                    req = new BuilderRequest(reqStack, reqCount, reqSt, reqRPos, reqTt);
                 }
-                else
+                else req = BuilderRequest.NONE;
+
+                boolean hasWCard = buf.readBoolean();
+                boolean whPrio   = buf.readBoolean();
+                int metaCount    = buf.readInt();
+                List<BuilderTabMeta> metas = new ArrayList<>();
+                for (int i = 0; i < metaCount; i++)
                 {
-                    req = BuilderRequest.NONE;
+                    BlockPos bPos  = buf.readBlockPos();
+                    String bName   = buf.readUtf();
+                    String bLabel  = buf.readUtf();
+                    boolean hasR   = buf.readBoolean();
+                    metas.add(new BuilderTabMeta(bPos, bName, bLabel, hasR));
                 }
-                // warehouse card + priority
-                boolean hasWarehouseCard = buf.readBoolean();
-                boolean warehousePriority = buf.readBoolean();
+                int activeTabIndex = buf.readInt();
+                long rfStored      = buf.readLong();
+                long rfMax         = buf.readLong();
+                boolean isRS       = buf.readBoolean();
 
                 return new ColonyLinkPacket(list, pos, builderName, buildingName,
-                        workerStatus, availableCpus, redirectorState, req, hasWarehouseCard, warehousePriority);
+                        workerStatus, workerIdleReason, availableCpus, redirectorState, req,
+                        hasWCard, whPrio, metas, activeTabIndex, rfStored, rfMax, isRS);
             }
     );
 
@@ -153,11 +179,14 @@ public record ColonyLinkPacket(
 
     public static void handle(ColonyLinkPacket packet, IPayloadContext context)
     {
-        context.enqueueWork(() -> {
+        context.enqueueWork(() ->
+        {
+            // v1.1.3 : met à jour le cache RF client sans toucher au NBT de l'item
+            // → pas de ClientboundContainerSetSlotPacket → pas de pop visuel hotbar
+            ClientRFCache.update(packet.rfStored(), packet.rfMax());
+
             if (Minecraft.getInstance().screen instanceof ColonyLinkScreen screen)
-                screen.updateEntries(packet.entries(), packet.builderName(), packet.buildingName(),
-                        packet.workerStatus(), packet.availableCpus(), packet.redirectorState(),
-                        packet.builderRequest(), packet.hasWarehouseCard(), packet.warehousePriority());
+                screen.updateFromPacket(packet);
             else
                 Minecraft.getInstance().setScreen(new ColonyLinkScreen(packet));
         });

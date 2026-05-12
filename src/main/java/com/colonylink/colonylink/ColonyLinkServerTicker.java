@@ -6,10 +6,15 @@ import appeng.api.networking.crafting.ICraftingService;
 import appeng.api.networking.storage.IStorageService;
 import appeng.api.stacks.AEItemKey;
 import appeng.api.stacks.KeyCounter;
+import com.refinedmods.refinedstorage.api.network.Network;
+import com.refinedmods.refinedstorage.api.network.autocrafting.AutocraftingNetworkComponent;
+import com.refinedmods.refinedstorage.api.network.storage.StorageNetworkComponent;
+import com.refinedmods.refinedstorage.common.support.resource.ItemResource;
 import com.ldtteam.domumornamentum.block.IMateriallyTexturedBlock;
 import com.ldtteam.domumornamentum.block.IMateriallyTexturedBlockComponent;
 import com.ldtteam.domumornamentum.client.model.data.MaterialTextureData;
 import com.minecolonies.api.colony.IColony;
+import com.minecolonies.api.colony.permissions.Action;
 import com.minecolonies.api.colony.IColonyManager;
 import com.minecolonies.api.colony.buildings.IBuilding;
 import com.minecolonies.api.colony.requestsystem.request.IRequest;
@@ -30,87 +35,158 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class ColonyLinkServerTicker
 {
-    private static final Map<UUID, BlockPos> activeViewers = new HashMap<>();
-    private static volatile int tickCounter = 0;
+    /**
+     * ViewerState — commun AE2 et RS2.
+     * colonyId = -1 → non encore résolu (lazy cache).
+     */
+    private record ViewerState(BlockPos builderPos, int activeTabIndex, int colonyId) {}
 
-    public static void addViewer(UUID playerUUID, BlockPos builderPos)
-    {
-        activeViewers.put(playerUUID, builderPos);
-    }
+    // ── Maps viewers AE2 et RS2 séparées ─────────────────────────────────────
+    private static final Map<UUID, ViewerState> activeViewers   = new ConcurrentHashMap<>();
+    private static final Map<UUID, ViewerState> activeViewersRS = new ConcurrentHashMap<>();
+
+    private static final java.util.concurrent.atomic.AtomicInteger tickCounter
+            = new java.util.concurrent.atomic.AtomicInteger(0);
+
+    private static int getTickerInterval()
+    { return ColonyLinkConfig.TICKER_INTERVAL_TICKS.get(); }
+
+    // ── AE2 viewer management ─────────────────────────────────────────────────
+
+    public static void addViewer(UUID playerUUID, BlockPos builderPos, int activeTabIndex)
+    { activeViewers.put(playerUUID, new ViewerState(builderPos, activeTabIndex, -1)); }
 
     public static void removeViewer(UUID playerUUID)
-    {
-        activeViewers.remove(playerUUID);
-    }
+    { activeViewers.remove(playerUUID); }
 
-    /**
-     * Nettoyage immédiat à la déconnexion du joueur.
-     * Évite les fuites mémoire si le joueur crashe sans fermer le GUI.
-     */
+    // ── RS2 viewer management ─────────────────────────────────────────────────
+
+    public static void addViewerRS(UUID playerUUID, BlockPos builderPos, int activeTabIndex)
+    { activeViewersRS.put(playerUUID, new ViewerState(builderPos, activeTabIndex, -1)); }
+
+    public static void removeViewerRS(UUID playerUUID)
+    { activeViewersRS.remove(playerUUID); }
+
+    // ── Logout ────────────────────────────────────────────────────────────────
+
     @SubscribeEvent
     public static void onPlayerLogout(PlayerEvent.PlayerLoggedOutEvent event)
     {
         if (event.getEntity() instanceof ServerPlayer sp)
+        {
             activeViewers.remove(sp.getUUID());
+            activeViewersRS.remove(sp.getUUID());
+        }
     }
 
-    /**
-     * Envoi immédiat d'un packet complet au joueur à l'ouverture du GUI,
-     * sans attendre le prochain cycle du ticker (40 ticks).
-     * Exécute la même logique complète que le ticker.
-     */
-    public static void sendImmediateUpdate(ServerPlayer player, BlockPos builderPos)
+    // ── Immediate update ──────────────────────────────────────────────────────
+
+    public static void sendImmediateUpdate(ServerPlayer player, BlockPos builderPos, int activeTabIndex)
     {
-        sendFullUpdate(player, builderPos);
+        ItemStack wand = findWandInInventory(player);
+        if (wand != null) sendFullUpdate(player, builderPos, activeTabIndex, wand);
+            // Si pas de wand AE2, tente RS2 (fix 4+5 : le GUI utilise la wand RS2)
+        else
+        {
+            ItemStack wandRS = findWandRSInInventory(player);
+            if (wandRS != null) sendFullUpdateRS(player, builderPos, activeTabIndex, wandRS);
+        }
     }
+
+    public static void sendImmediateUpdateRS(ServerPlayer player, BlockPos builderPos, int activeTabIndex)
+    { sendFullUpdateRS(player, builderPos, activeTabIndex, findWandRSInInventory(player)); }
+
+    // ── Server tick ───────────────────────────────────────────────────────────
 
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Pre event)
     {
-        tickCounter++;
-        if (tickCounter < 40) return;
-        tickCounter = 0;
+        if (tickCounter.incrementAndGet() < getTickerInterval()) return;
+        tickCounter.set(0);
 
-        if (activeViewers.isEmpty()) return;
+        List<UUID> toRemove   = new ArrayList<>();
+        List<UUID> toRemoveRS = new ArrayList<>();
 
-        List<UUID> toRemove = new ArrayList<>();
-
-        activeViewers.forEach((uuid, builderPos) ->
+        // ── Viewers AE2 ───────────────────────────────────────────────────────
+        activeViewers.forEach((uuid, state) ->
         {
             ServerPlayer player = event.getServer().getPlayerList().getPlayer(uuid);
-            if (player == null)
+            if (player == null) { toRemove.add(uuid); return; }
+
+            ItemStack wand = findWandInInventory(player);
+
+            // Drain RF passif
+            if (wand != null)
             {
-                toRemove.add(uuid);
-                return;
+                long drain = ColonyLinkConfig.PASSIVE_DRAIN_RF.get();
+                if (drain > 0)
+                {
+                    long stored = WandEnergyStorage.getStoredRF(wand);
+                    WandEnergyStorage.setStoredRF(wand, Math.max(0, stored - drain));
+                }
             }
-            sendFullUpdate(player, builderPos);
+
+            sendFullUpdate(player, state.builderPos(), state.activeTabIndex(), wand);
+        });
+
+        // ── Viewers RS2 ───────────────────────────────────────────────────────
+        activeViewersRS.forEach((uuid, state) ->
+        {
+            ServerPlayer player = event.getServer().getPlayerList().getPlayer(uuid);
+            if (player == null) { toRemoveRS.add(uuid); return; }
+
+            ItemStack wand = findWandRSInInventory(player);
+
+            // Drain RF passif (même logique que AE2)
+            if (wand != null)
+            {
+                long drain = ColonyLinkConfig.PASSIVE_DRAIN_RF.get();
+                if (drain > 0)
+                {
+                    long stored = WandEnergyStorage.getStoredRF(wand);
+                    WandEnergyStorage.setStoredRF(wand, Math.max(0, stored - drain));
+                }
+            }
+
+            sendFullUpdateRS(player, state.builderPos(), state.activeTabIndex(), wand);
         });
 
         toRemove.forEach(activeViewers::remove);
+        toRemoveRS.forEach(activeViewersRS::remove);
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // Logique complète partagée — ticker + immediate update
-    // ────────────────────────────────────────────────────────────────────────
+    // ── RF helpers ────────────────────────────────────────────────────────────
 
-    /**
-     * Calcule l'état complet (ressources builder, statuts AE2, redirector, warehouse card)
-     * et envoie un ColonyLinkPacket complet au client.
-     * Appelé par sendImmediateUpdate() ET par le ticker toutes les 40 ticks.
-     */
-    private static void sendFullUpdate(ServerPlayer player, BlockPos builderPos)
+    public static boolean tryConsumeRF(ServerPlayer player, long amount)
+    {
+        if (amount <= 0) return true;
+        // Cherche d'abord wand AE2, puis wand RS2
+        ItemStack wand = findWandInInventory(player);
+        if (wand == null) wand = findWandRSInInventory(player);
+        if (wand == null) return false;
+        return WandEnergyStorage.tryConsume(wand, amount);
+    }
+
+    // ── sendFullUpdate AE2 ────────────────────────────────────────────────────
+
+    private static void sendFullUpdate(ServerPlayer player, BlockPos builderPos,
+                                       int activeTabIndex, ItemStack wandStack)
     {
         ServerLevel level = player.serverLevel();
 
-        ItemStack wandStack = findWandInInventory(player);
         if (wandStack == null || !ColonyLinkWandLinkableHandler.isLinked(wandStack)) return;
+
+        long rfStored = WandEnergyStorage.getStoredRF(wandStack);
+        long rfMax    = ColonyLinkConfig.WAND_RF_CAPACITY.get();
+
+        List<BuilderEntry> allEntries = ColonyLinkWandLinkableHandler.getBuilderEntries(wandStack);
 
         IWirelessAccessPoint wap = getWap(wandStack, level);
         if (wap == null) return;
@@ -118,268 +194,609 @@ public class ColonyLinkServerTicker
         IGrid grid = wap.getGrid();
         if (grid == null) return;
 
-        IColony colony = IColonyManager.getInstance().getClosestColony(level, builderPos);
-        if (colony == null) return;
-
-        IBuilding building = null;
-        for (IBuilding b : colony.getServerBuildingManager().getBuildings().values())
+        // Cache colonyId
+        IColony colony = null;
+        ViewerState currentState = activeViewers.get(player.getUUID());
+        if (currentState != null && currentState.colonyId() >= 0)
+            colony = IColonyManager.getInstance().getColonyByWorld(currentState.colonyId(), level);
+        if (colony == null)
         {
-            if (b.getPosition().equals(builderPos))
-            {
-                building = b;
-                break;
-            }
+            colony = IColonyManager.getInstance().getClosestColony(level, builderPos);
+            if (colony != null && currentState != null)
+                activeViewers.put(player.getUUID(),
+                        new ViewerState(currentState.builderPos(), currentState.activeTabIndex(), colony.getID()));
         }
 
-        if (!(building instanceof AbstractBuildingStructureBuilder builderBuilding)) return;
-
-        // ── Infos builder + statut worker ────────────────────────────────────
-        String builderName = "N/A";
-        String workerStatus = "IDLE";
-        if (!builderBuilding.getAllAssignedCitizen().isEmpty())
+        if (colony == null)
         {
-            var citizen = builderBuilding.getAllAssignedCitizen().iterator().next();
+            List<ColonyLinkPacket.BuilderTabMeta> tabMetas = ColonyLinkWand.buildTabMetas(allEntries);
+            PacketDistributor.sendToPlayer(player, new ColonyLinkPacket(
+                    new ArrayList<>(), builderPos, "N/A", "No colony", "N/A", "", 0,
+                    "NOT_LINKED", ColonyLinkPacket.BuilderRequest.NONE,
+                    false, false, tabMetas, activeTabIndex, rfStored, rfMax, false));
+            return;
+        }
+
+        if (!colony.getPermissions().hasPermission(player, Action.ACCESS_HUTS))
+        {
+            activeViewers.remove(player.getUUID());
+            player.sendSystemMessage(Component.literal("§c[ColonyLink] Access revoked."));
+            return;
+        }
+
+        IBuilding building = IColonyManager.getInstance().getBuilding(level, builderPos);
+        if (building == null)
+            for (IBuilding b : colony.getServerBuildingManager().getBuildings().values())
+                if (b.getPosition().equals(builderPos)) { building = b; break; }
+
+        if (!(building instanceof AbstractBuildingStructureBuilder bb))
+        {
+            List<ColonyLinkPacket.BuilderTabMeta> tabMetas = ColonyLinkWand.buildTabMetas(allEntries);
+            PacketDistributor.sendToPlayer(player, new ColonyLinkPacket(
+                    new ArrayList<>(), builderPos, "N/A", "N/A", "N/A", "", 0,
+                    "NOT_LINKED", ColonyLinkPacket.BuilderRequest.NONE,
+                    false, false, tabMetas, activeTabIndex, rfStored, rfMax, false));
+            return;
+        }
+
+        String builderName = "N/A", workerStatus = "IDLE", workerIdleReason = "";
+        if (!bb.getAllAssignedCitizen().isEmpty())
+        {
+            var citizen = bb.getAllAssignedCitizen().iterator().next();
             builderName = citizen.getName();
-            var visibleStatus = citizen.getStatus();
-            if (visibleStatus != null)
-                workerStatus = Component.translatable(visibleStatus.getTranslationKey()).getString();
-            else
-                workerStatus = citizen.getJobStatus().name();
-        }
+            var vs = citizen.getStatus();
+            workerStatus = vs != null
+                    ? Component.translatable(vs.getTranslationKey()).getString()
+                    : citizen.getJobStatus().name();
+            boolean isIdle = workerStatus.toLowerCase().contains("idle") || workerStatus.equals("IDLE");
+            workerIdleReason = isIdle ? computeIdleReason(citizen) : "";
 
-        // ── Infos work order ─────────────────────────────────────────────────
-        String buildingName = "N/A";
-        var workOrder = builderBuilding.getWorkOrder();
-        if (workOrder != null)
-        {
-            buildingName = workOrder.getDisplayName().getString();
-            if (workOrder.getStage() != null)
-                buildingName += " [" + workOrder.getStage().name() + "]";
-        }
-
-        // ── CPUs AE2 ─────────────────────────────────────────────────────────
-        ICraftingService craftingService = grid.getCraftingService();
-        int availableCpus = 0;
-        for (var cpu : craftingService.getCpus())
-            if (!cpu.isBusy()) availableCpus++;
-
-        // ── État redirector + présence WarehouseLinkCard ──────────────────────
-        String redirectorState = "N/A";
-        boolean hasWarehouseCard = false;
-        boolean warehousePriority = false;
-        BlockPos redirectorPos = getLinkedRedirectorPos(wandStack);
-        if (redirectorPos != null)
-        {
-            var be = level.getBlockEntity(redirectorPos);
-            if (be instanceof ColonyLinkRedirectorBlockEntity redirector)
+            int st = Math.min(activeTabIndex, allEntries.size() - 1);
+            if (st >= 0)
             {
-                appeng.api.networking.IGridNode rnode = redirector.getManagedGridNode().getNode();
-                if (rnode != null)
+                BuilderEntry cur = allEntries.get(st);
+                if (cur.builderName().equals("N/A") || cur.builderName().equals("Builder"))
                 {
-                    ColonyLinkRedirectorBlockEntity.RedirectorState s = redirector.getState();
-                    redirectorState = switch (s)
-                    {
-                        case STANDBY    -> "STANDBY";
-                        case NOT_LINKED -> "NOT_LINKED";
-                        default         -> "LINKED";
-                    };
+                    String lbl = cur.buildingLabel();
+                    var wo2 = bb.getWorkOrder();
+                    if (wo2 != null) lbl = wo2.getDisplayName().getString();
+                    allEntries.set(st, cur.withLabels(builderName, lbl));
+                    ColonyLinkWandLinkableHandler.setBuilderEntries(wandStack, allEntries);
                 }
-                else
-                {
-                    redirectorState = "NOT_LINKED";
-                }
-                hasWarehouseCard = redirector.hasWarehouseCard();
-                warehousePriority = redirector.isWarehousePriority();
             }
         }
 
-        // ── Ressources manquantes ─────────────────────────────────────────────
-        IStorageService storageService = grid.getStorageService();
-        KeyCounter inventory = storageService.getCachedInventory();
-        BlockPos safeRedirectorPos = redirectorPos != null ? redirectorPos : BlockPos.ZERO;
-
-        Map<String, BuildingBuilderResource> neededResources = builderBuilding.getNeededResources();
-        List<ColonyLinkPacket.ResourceEntry> entries = new ArrayList<>();
-
-        if (neededResources != null && !neededResources.isEmpty())
+        String buildingName = "N/A";
+        var wo = bb.getWorkOrder();
+        if (wo != null)
         {
-            for (BuildingBuilderResource resource : neededResources.values())
+            buildingName = wo.getDisplayName().getString();
+            if (wo.getStage() != null) buildingName += " [" + wo.getStage().name() + "]";
+        }
+
+        boolean showCrafting  = ColonyLinkConfig.SHOW_CRAFTING_STATUS.get();
+        boolean showNoPattern = ColonyLinkConfig.SHOW_NO_PATTERN_ITEMS.get();
+        int maxDisplayed      = ColonyLinkConfig.MAX_RESOURCES_DISPLAYED.get();
+        boolean toolUpgrade   = ColonyLinkConfig.ENABLE_TOOL_UPGRADE.get();
+
+        ICraftingService cs = grid.getCraftingService();
+        int cpus = 0; for (var cpu : cs.getCpus()) if (!cpu.isBusy()) cpus++;
+
+        String rState = "N/A"; boolean hasCard = false, whPrio = false;
+        BlockPos rPos = null;
+        if (!allEntries.isEmpty())
+        {
+            int st = Math.min(activeTabIndex, allEntries.size() - 1);
+            BuilderEntry ae = allEntries.get(st);
+            if (ae.hasRedirector()) rPos = ae.redirectorPos();
+        }
+
+        if (rPos != null)
+        {
+            var rbe = level.getBlockEntity(rPos);
+            if (rbe instanceof ColonyLinkRedirectorBlockEntity r)
             {
-                ItemStack stack = resource.getItemStack();
-                int needed = resource.getAmount();
-                int available = resource.getAvailable();
-                int missing = needed - available;
+                var rn = r.getManagedGridNode().getNode();
+                rState = rn != null ? switch (r.getState()) {
+                    case STANDBY    -> "STANDBY";
+                    case NOT_LINKED -> "NOT_LINKED";
+                    default         -> "LINKED";
+                } : "NOT_LINKED";
+                hasCard = r.hasWarehouseCard();
+                whPrio  = r.isWarehousePriority();
+            }
+            else rState = "NOT_LINKED";
+        }
 
-                if (missing <= 0) continue;
+        IStorageService ss = grid.getStorageService();
+        KeyCounter inv = ss.getCachedInventory();
+        BlockPos safeR = rPos != null ? rPos : BlockPos.ZERO;
+        int buildingLevel = bb.getBuildingLevel();
 
-                ItemStack missingStack = stack.copy();
-                missingStack.setCount(Math.min(missing, 64));
+        Map<String, BuildingBuilderResource> needed = bb.getNeededResources();
+        List<ColonyLinkPacket.ResourceEntry> entries = new ArrayList<>();
+        if (needed != null)
+        {
+            for (var res : needed.values())
+            {
+                if (entries.size() >= maxDisplayed) break;
+                ItemStack st2 = res.getItemStack();
+                int miss = res.getAmount() - res.getAvailable();
+                if (miss <= 0) continue;
 
-                if (DomumCraftHandler.isDomumItem(stack))
+                if (toolUpgrade && BuilderToolHelper.isTool(st2))
                 {
-                    DomumCraftHandler.DomumStatus domumStatus =
-                            DomumCraftHandler.computeStatus(stack, grid, missing, redirectorPos, level);
-
-                    if (domumStatus != null)
+                    BuilderToolHelper.SubstituteResult sub =
+                            BuilderToolHelper.findBestTool(st2, buildingLevel, inv, cs);
+                    if (sub.action() != BuilderToolHelper.SubstituteAction.NONE)
                     {
-                        List<String> tooltip = buildDomumTooltip(
-                                stack, domumStatus, inventory, craftingService, missing);
+                        ItemStack displayStack = sub.displayStack().copy();
+                        displayStack.setCount(Math.min(miss, 64));
+                        ResourceStatus stat;
+                        AEItemKey subAEKey = AEItemKey.of(sub.displayStack()); long inSt = subAEKey != null ? inv.get(subAEKey) : 0L;
+                        if (sub.action() == BuilderToolHelper.SubstituteAction.CRAFT)
+                            stat = ResourceStatus.CRAFTABLE;
+                        else if (inSt >= miss) stat = ResourceStatus.AVAILABLE;
+                        else if (subAEKey != null && cs.isRequesting(subAEKey)) stat = ResourceStatus.CRAFTING;
+                        else stat = ResourceStatus.AVAILABLE;
+                        if (!showCrafting && stat == ResourceStatus.CRAFTING) continue;
+                        if (!showNoPattern && stat == ResourceStatus.NO_PATTERN) continue;
+                        List<String> tooltip = buildToolSubstituteTooltip(
+                                st2, sub.displayStack(), stat, miss, inSt, buildingLevel);
                         entries.add(new ColonyLinkPacket.ResourceEntry(
-                                missingStack, domumStatus.status(), missing,
-                                true, safeRedirectorPos, tooltip));
+                                displayStack, stat, miss, false, safeR, tooltip));
                         continue;
                     }
                 }
 
-                AEItemKey aeKey = AEItemKey.of(stack);
-                ResourceStatus status;
-                long inStorage = inventory.get(aeKey);
+                ItemStack ms = st2.copy(); ms.setCount(Math.min(miss, 64));
 
-                if (inStorage >= missing)
-                    status = ResourceStatus.AVAILABLE;
-                else if (craftingService.isRequesting(aeKey))
-                    status = ResourceStatus.CRAFTING;
-                else if (craftingService.isCraftable(aeKey))
-                    status = ResourceStatus.CRAFTABLE;
-                else
-                    status = ResourceStatus.NO_PATTERN;
-
-                List<String> tooltip = buildStandardTooltip(stack, status, missing, inStorage);
-                entries.add(new ColonyLinkPacket.ResourceEntry(
-                        missingStack, status, missing, false, safeRedirectorPos, tooltip));
-            }
-        }
-
-        // ── Feature 1 : Requête prioritaire du builder PNJ ───────────────────
-        ColonyLinkPacket.BuilderRequest builderRequest =
-                fetchBuilderRequest(builderBuilding, inventory, craftingService, safeRedirectorPos);
-
-        PacketDistributor.sendToPlayer(player, new ColonyLinkPacket(
-                entries, builderPos, builderName, buildingName, workerStatus,
-                availableCpus, redirectorState, builderRequest, hasWarehouseCard, warehousePriority));
-    }
-
-    // ────────────────────────────────────────────────────────────────────────
-    // Feature 1 — Requête prioritaire du builder PNJ
-    // ────────────────────────────────────────────────────────────────────────
-
-    @SuppressWarnings("unchecked")
-    private static ColonyLinkPacket.BuilderRequest fetchBuilderRequest(
-            AbstractBuildingStructureBuilder builderBuilding,
-            KeyCounter inventory,
-            ICraftingService craftingService,
-            BlockPos safeRedirectorPos)
-    {
-        if (builderBuilding.getAllAssignedCitizen().isEmpty())
-            return ColonyLinkPacket.BuilderRequest.NONE;
-
-        var citizen = builderBuilding.getAllAssignedCitizen().iterator().next();
-
-        try
-        {
-            var requests = builderBuilding.getOpenRequests(citizen.getId());
-
-            if (requests == null || requests.isEmpty())
-                return ColonyLinkPacket.BuilderRequest.NONE;
-
-            for (IRequest<?> request : requests)
-            {
-                if (request.getState() == RequestState.CANCELLED
-                        || request.getState() == RequestState.OVERRULED)
-                    continue;
-
-                if (!(request.getRequest() instanceof IDeliverable deliverable))
-                    continue;
-
-                ItemStack reqStack = ItemStack.EMPTY;
-
-                List<ItemStack> displayStacks = request.getDisplayStacks();
-                if (displayStacks != null && !displayStacks.isEmpty())
+                if (DomumCraftHandler.isDomumItem(st2))
                 {
-                    for (ItemStack s : displayStacks)
+                    DomumCraftHandler.DomumStatus ds =
+                            DomumCraftHandler.computeStatus(st2, grid, miss, rPos, level);
+                    if (ds != null)
                     {
-                        if (!s.isEmpty()) { reqStack = s; break; }
+                        if (!showCrafting && ds.status() == ResourceStatus.CRAFTING) continue;
+                        if (!showNoPattern && ds.status() == ResourceStatus.NO_PATTERN) continue;
+                        entries.add(new ColonyLinkPacket.ResourceEntry(
+                                ms, ds.status(), miss, true, safeR,
+                                buildDomumTooltip(st2, ds, inv, cs, miss)));
+                        continue;
                     }
                 }
 
-                if (reqStack.isEmpty()) continue;
+                AEItemKey k = AEItemKey.of(st2); long inSt = inv.get(k);
+                ResourceStatus stat;
+                if (inSt >= miss)            stat = ResourceStatus.AVAILABLE;
+                else if (cs.isRequesting(k)) stat = ResourceStatus.CRAFTING;
+                else if (cs.isCraftable(k))  stat = ResourceStatus.CRAFTABLE;
+                else                         stat = ResourceStatus.NO_PATTERN;
 
-                int reqCount = deliverable.getCount();
-                if (reqCount <= 0) reqCount = 1;
+                if (!showCrafting && stat == ResourceStatus.CRAFTING) continue;
+                if (!showNoPattern && stat == ResourceStatus.NO_PATTERN) continue;
 
-                AEItemKey aeKey = AEItemKey.of(reqStack);
-                long inStorage = inventory.get(aeKey);
-                ResourceStatus status;
-
-                if (inStorage >= reqCount)
-                    status = ResourceStatus.AVAILABLE;
-                else if (craftingService.isRequesting(aeKey))
-                    status = ResourceStatus.CRAFTING;
-                else if (craftingService.isCraftable(aeKey))
-                    status = ResourceStatus.CRAFTABLE;
-                else
-                    status = ResourceStatus.NO_PATTERN;
-
-                List<String> tooltip = buildStandardTooltip(reqStack, status, reqCount, inStorage);
-
-                ItemStack displayStack = reqStack.copy();
-                displayStack.setCount(Math.min(reqCount, 64));
-
-                return new ColonyLinkPacket.BuilderRequest(
-                        displayStack, reqCount, status, safeRedirectorPos, tooltip);
+                entries.add(new ColonyLinkPacket.ResourceEntry(
+                        ms, stat, miss, false, safeR, buildStandardTooltip(st2, stat, miss, inSt)));
             }
         }
-        catch (Exception e)
+
+        ColonyLinkPacket.BuilderRequest req = fetchBuilderRequest(bb, inv, cs, safeR, buildingLevel, toolUpgrade);
+        List<ColonyLinkPacket.BuilderTabMeta> tabMetas = ColonyLinkWand.buildTabMetas(allEntries);
+
+        PacketDistributor.sendToPlayer(player, new ColonyLinkPacket(
+                entries, builderPos, builderName, buildingName, workerStatus, workerIdleReason,
+                cpus, rState, req, hasCard, whPrio,
+                tabMetas, activeTabIndex, rfStored, rfMax, false));
+    }
+
+    // ── sendFullUpdateRS — RS2 ────────────────────────────────────────────────
+
+    private static void sendFullUpdateRS(ServerPlayer player, BlockPos builderPos,
+                                         int activeTabIndex, ItemStack wandStack)
+    {
+        ServerLevel level = player.serverLevel();
+
+        if (wandStack == null || !ColonyLinkWandRSLinkableHandler.isLinked(wandStack)) return;
+
+        long rfStored = WandEnergyStorage.getStoredRF(wandStack);
+        long rfMax    = ColonyLinkConfig.WAND_RF_CAPACITY.get();
+
+        List<BuilderEntry> allEntries = ColonyLinkWandRSLinkableHandler.getBuilderEntries(wandStack);
+
+        Network network = ColonyLinkWandRSLinkableHandler.getNetwork(wandStack, level);
+        if (network == null) return;
+
+        StorageNetworkComponent storage = network.getComponent(StorageNetworkComponent.class);
+        AutocraftingNetworkComponent crafting = network.getComponent(AutocraftingNetworkComponent.class);
+
+        // Cache colonyId RS2
+        IColony colony = null;
+        ViewerState currentState = activeViewersRS.get(player.getUUID());
+        if (currentState != null && currentState.colonyId() >= 0)
+            colony = IColonyManager.getInstance().getColonyByWorld(currentState.colonyId(), level);
+        if (colony == null)
         {
-            ColonyLink.LOGGER.debug("[ColonyLink] Could not fetch builder request: {}", e.getMessage());
+            colony = IColonyManager.getInstance().getClosestColony(level, builderPos);
+            if (colony != null && currentState != null)
+                activeViewersRS.put(player.getUUID(),
+                        new ViewerState(currentState.builderPos(), currentState.activeTabIndex(), colony.getID()));
         }
 
+        if (colony == null)
+        {
+            List<ColonyLinkPacket.BuilderTabMeta> tabMetas = ColonyLinkWandRS.buildTabMetas(allEntries);
+            PacketDistributor.sendToPlayer(player, new ColonyLinkPacket(
+                    new ArrayList<>(), builderPos, "N/A", "No colony", "N/A", "", 0,
+                    "NOT_LINKED", ColonyLinkPacket.BuilderRequest.NONE,
+                    false, false, tabMetas, activeTabIndex, rfStored, rfMax, true));
+            return;
+        }
+
+        if (!colony.getPermissions().hasPermission(player, Action.ACCESS_HUTS))
+        {
+            activeViewersRS.remove(player.getUUID());
+            player.sendSystemMessage(Component.literal("§c[ColonyLink RS] Access revoked."));
+            return;
+        }
+
+        IBuilding building = IColonyManager.getInstance().getBuilding(level, builderPos);
+        if (building == null)
+            for (IBuilding b : colony.getServerBuildingManager().getBuildings().values())
+                if (b.getPosition().equals(builderPos)) { building = b; break; }
+
+        if (!(building instanceof AbstractBuildingStructureBuilder bb))
+        {
+            List<ColonyLinkPacket.BuilderTabMeta> tabMetas = ColonyLinkWandRS.buildTabMetas(allEntries);
+            PacketDistributor.sendToPlayer(player, new ColonyLinkPacket(
+                    new ArrayList<>(), builderPos, "N/A", "N/A", "N/A", "", 0,
+                    "NOT_LINKED", ColonyLinkPacket.BuilderRequest.NONE,
+                    false, false, tabMetas, activeTabIndex, rfStored, rfMax, true));
+            return;
+        }
+
+        String builderName = "N/A", workerStatus = "IDLE", workerIdleReason = "";
+        if (!bb.getAllAssignedCitizen().isEmpty())
+        {
+            var citizen = bb.getAllAssignedCitizen().iterator().next();
+            builderName = citizen.getName();
+            var vs = citizen.getStatus();
+            workerStatus = vs != null
+                    ? Component.translatable(vs.getTranslationKey()).getString()
+                    : citizen.getJobStatus().name();
+            boolean isIdle = workerStatus.toLowerCase().contains("idle") || workerStatus.equals("IDLE");
+            workerIdleReason = isIdle ? computeIdleReason(citizen) : "";
+
+            int st = Math.min(activeTabIndex, allEntries.size() - 1);
+            if (st >= 0)
+            {
+                BuilderEntry cur = allEntries.get(st);
+                if (cur.builderName().equals("N/A") || cur.builderName().equals("Builder"))
+                {
+                    String lbl = cur.buildingLabel();
+                    var wo2 = bb.getWorkOrder();
+                    if (wo2 != null) lbl = wo2.getDisplayName().getString();
+                    allEntries.set(st, cur.withLabels(builderName, lbl));
+                    ColonyLinkWandRSLinkableHandler.setBuilderEntries(wandStack, allEntries);
+                }
+            }
+        }
+
+        String buildingName = "N/A";
+        var wo = bb.getWorkOrder();
+        if (wo != null)
+        {
+            buildingName = wo.getDisplayName().getString();
+            if (wo.getStage() != null) buildingName += " [" + wo.getStage().name() + "]";
+        }
+
+        boolean showCrafting  = ColonyLinkConfig.SHOW_CRAFTING_STATUS.get();
+        boolean showNoPattern = ColonyLinkConfig.SHOW_NO_PATTERN_ITEMS.get();
+        int maxDisplayed      = ColonyLinkConfig.MAX_RESOURCES_DISPLAYED.get();
+
+        // Crafters RS2 = nombre de patterns disponibles (approximation)
+        int freeCrafters = crafting != null ? crafting.getPatterns().size() : 0;
+
+        String rState = "N/A"; boolean hasCard = false, whPrio = false;
+        BlockPos rPos = null;
+        if (!allEntries.isEmpty())
+        {
+            int st = Math.min(activeTabIndex, allEntries.size() - 1);
+            BuilderEntry ae = allEntries.get(st);
+            if (ae.hasRedirector()) rPos = ae.redirectorPos();
+        }
+
+        if (rPos != null)
+        {
+            var rbe = level.getBlockEntity(rPos);
+            if (rbe instanceof ColonyLinkRedirectorBlockEntityRS r)
+            {
+                rState = r.isRs2Active() ? switch (r.getState()) {
+                    case STANDBY    -> "STANDBY";
+                    case NOT_LINKED -> "NOT_LINKED";
+                    default         -> "LINKED";
+                } : "NOT_LINKED";
+                hasCard = r.hasWarehouseCard();
+                whPrio  = r.isWarehousePriority();
+            }
+            else rState = "NOT_LINKED";
+        }
+
+        BlockPos safeR = rPos != null ? rPos : BlockPos.ZERO;
+
+        Map<String, BuildingBuilderResource> needed = bb.getNeededResources();
+        List<ColonyLinkPacket.ResourceEntry> entries = new ArrayList<>();
+        if (needed != null && storage != null)
+        {
+            for (var res : needed.values())
+            {
+                if (entries.size() >= maxDisplayed) break;
+                ItemStack st2 = res.getItemStack();
+                int miss = res.getAmount() - res.getAvailable();
+                if (miss <= 0) continue;
+
+                ItemStack ms = st2.copy(); ms.setCount(Math.min(miss, 64));
+
+                // ── Domum Ornamentum : détection et résolution des composants ──
+                // RS2 n'a pas de patterns AE2, mais les items DO sont craftables
+                // "virtuellement" si leurs composants textures sont disponibles dans RS2.
+                if (DomumCraftHandler.isDomumItem(st2))
+                {
+                    // Calcule le status Domum en inspectant le stock RS2 pour chaque composant
+                    ResourceStatus domumStat = computeDomumStatusRS(st2, storage, crafting, miss, rPos, level);
+                    if (!showCrafting && domumStat == ResourceStatus.CRAFTING) continue;
+                    if (!showNoPattern && domumStat == ResourceStatus.NO_PATTERN) continue;
+                    List<String> tooltip = buildDomumTooltipRS(st2, storage, crafting, miss);
+                    entries.add(new ColonyLinkPacket.ResourceEntry(ms, domumStat, miss, true, safeR, tooltip));
+                    continue;
+                }
+
+                ItemResource rsKey = ItemResource.ofItemStack(st2);
+                long inSt = storage.get(rsKey);
+
+                ResourceStatus stat;
+                if (inSt >= miss)
+                    stat = ResourceStatus.AVAILABLE;
+                else if (crafting != null && crafting.getOutputs().contains(rsKey))
+                    stat = ResourceStatus.CRAFTABLE;
+                else
+                    stat = ResourceStatus.NO_PATTERN;
+
+                if (!showCrafting && stat == ResourceStatus.CRAFTING) continue;
+                if (!showNoPattern && stat == ResourceStatus.NO_PATTERN) continue;
+
+                List<String> tooltip = buildStandardTooltipRS(st2, stat, miss, inSt);
+                entries.add(new ColonyLinkPacket.ResourceEntry(ms, stat, miss, false, safeR, tooltip));
+            }
+        }
+
+        List<ColonyLinkPacket.BuilderTabMeta> tabMetas = ColonyLinkWandRS.buildTabMetas(allEntries);
+
+        ColonyLinkPacket.BuilderRequest req = fetchBuilderRequestRS(bb, storage, crafting, safeR, level);
+
+        PacketDistributor.sendToPlayer(player, new ColonyLinkPacket(
+                entries, builderPos, builderName, buildingName, workerStatus, workerIdleReason,
+                freeCrafters, rState, req,
+                hasCard, whPrio, tabMetas, activeTabIndex, rfStored, rfMax, true));
+    }
+
+    // ── fetchBuilderRequest (RS2) ─────────────────────────────────────────────
+
+    /**
+     * Équivalent RS2 de fetchBuilderRequest.
+     * Récupère la Priority Request du builder et calcule son statut dans le réseau RS2.
+     * Supporte les items Domum (composants bruts dans RS2) et les items standards.
+     */
+    private static ColonyLinkPacket.BuilderRequest fetchBuilderRequestRS(
+            AbstractBuildingStructureBuilder bb,
+            StorageNetworkComponent storage,
+            AutocraftingNetworkComponent crafting,
+            BlockPos rPos,
+            net.minecraft.server.level.ServerLevel level)
+    {
+        if (bb.getAllAssignedCitizen().isEmpty()) return ColonyLinkPacket.BuilderRequest.NONE;
+        var citizen = bb.getAllAssignedCitizen().iterator().next();
+        try
+        {
+            var reqs = bb.getOpenRequests(citizen.getId());
+            if (reqs == null || reqs.isEmpty()) return ColonyLinkPacket.BuilderRequest.NONE;
+
+            for (com.minecolonies.api.colony.requestsystem.request.IRequest<?> req : reqs)
+            {
+                if (req.getState() == com.minecolonies.api.colony.requestsystem.request.RequestState.CANCELLED
+                        || req.getState() == com.minecolonies.api.colony.requestsystem.request.RequestState.OVERRULED)
+                    continue;
+                if (!(req.getRequest() instanceof com.minecolonies.api.colony.requestsystem.requestable.IDeliverable del))
+                    continue;
+
+                ItemStack rs = ItemStack.EMPTY;
+                var ds = req.getDisplayStacks();
+                if (ds != null) for (ItemStack s : ds) if (!s.isEmpty()) { rs = s; break; }
+                if (rs.isEmpty()) continue;
+
+                int cnt = del.getCount(); if (cnt <= 0) cnt = 1;
+                ItemStack disp = rs.copy(); disp.setCount(Math.min(cnt, 64));
+
+                // Cas Domum — calcule via composants bruts RS2
+                if (DomumCraftHandler.isDomumItem(rs))
+                {
+                    ResourceStatus domumStat = computeDomumStatusRS(rs, storage, crafting, cnt, rPos, level);
+                    return new ColonyLinkPacket.BuilderRequest(
+                            disp, cnt, domumStat, rPos,
+                            buildDomumTooltipRS(rs, storage, crafting, cnt));
+                }
+
+                // Cas standard
+                ItemResource rsKey = ItemResource.ofItemStack(rs);
+                long inSt = storage.get(rsKey);
+                ResourceStatus stat;
+                if (inSt >= cnt)
+                    stat = ResourceStatus.AVAILABLE;
+                else if (crafting != null && crafting.getOutputs().contains(rsKey))
+                    stat = ResourceStatus.CRAFTABLE;
+                else
+                    stat = ResourceStatus.NO_PATTERN;
+
+                return new ColonyLinkPacket.BuilderRequest(
+                        disp, cnt, stat, rPos,
+                        buildStandardTooltipRS(rs, stat, cnt, inSt));
+            }
+        }
+        catch (Exception e) { ColonyLink.LOGGER.debug("[ColonyLink RS] fetchBuilderRequestRS: {}", e.getMessage()); }
         return ColonyLinkPacket.BuilderRequest.NONE;
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // Tooltip builders
-    // ────────────────────────────────────────────────────────────────────────
+    // ── fetchBuilderRequest (AE2) ─────────────────────────────────────────────
 
-    private static List<String> buildDomumTooltip(ItemStack stack, DomumCraftHandler.DomumStatus domumStatus,
-                                                  KeyCounter inventory, ICraftingService craftingService, int missing)
+    @SuppressWarnings("unchecked")
+    private static ColonyLinkPacket.BuilderRequest fetchBuilderRequest(
+            AbstractBuildingStructureBuilder bb, KeyCounter inv, ICraftingService cs,
+            BlockPos rPos, int buildingLevel, boolean toolUpgrade)
+    {
+        if (bb.getAllAssignedCitizen().isEmpty()) return ColonyLinkPacket.BuilderRequest.NONE;
+        var citizen = bb.getAllAssignedCitizen().iterator().next();
+        try
+        {
+            var reqs = bb.getOpenRequests(citizen.getId());
+            if (reqs == null || reqs.isEmpty()) return ColonyLinkPacket.BuilderRequest.NONE;
+            for (IRequest<?> req : reqs)
+            {
+                if (req.getState() == RequestState.CANCELLED
+                        || req.getState() == RequestState.OVERRULED) continue;
+                if (!(req.getRequest() instanceof IDeliverable del)) continue;
+                ItemStack rs = ItemStack.EMPTY;
+                var ds = req.getDisplayStacks();
+                if (ds != null) for (ItemStack s : ds) if (!s.isEmpty()) { rs = s; break; }
+                if (rs.isEmpty()) continue;
+                int cnt = del.getCount(); if (cnt <= 0) cnt = 1;
+
+                AEItemKey k = AEItemKey.of(rs); long inSt = inv.get(k);
+                ResourceStatus st;
+                if (inSt >= cnt)             st = ResourceStatus.AVAILABLE;
+                else if (cs.isRequesting(k)) st = ResourceStatus.CRAFTING;
+                else if (cs.isCraftable(k))  st = ResourceStatus.CRAFTABLE;
+                else                         st = ResourceStatus.NO_PATTERN;
+
+                if (toolUpgrade && BuilderToolHelper.isTool(rs))
+                {
+                    BuilderToolHelper.SubstituteResult sub =
+                            BuilderToolHelper.findBestTool(rs, buildingLevel, inv, cs);
+                    if (sub.action() != BuilderToolHelper.SubstituteAction.NONE)
+                    {
+                        ItemStack substDisp = sub.displayStack().copy();
+                        substDisp.setCount(Math.min(cnt, 64));
+                        ResourceStatus substSt;
+                        AEItemKey substAEKey = AEItemKey.of(sub.displayStack()); long substInSt = substAEKey != null ? inv.get(substAEKey) : 0L;
+                        if (sub.action() == BuilderToolHelper.SubstituteAction.CRAFT)
+                            substSt = ResourceStatus.CRAFTABLE;
+                        else if (substInSt >= cnt) substSt = ResourceStatus.AVAILABLE;
+                        else if (substAEKey != null && cs.isRequesting(substAEKey)) substSt = ResourceStatus.CRAFTING;
+                        else substSt = ResourceStatus.AVAILABLE;
+                        List<String> tooltip = buildToolSubstituteTooltip(
+                                rs, sub.displayStack(), substSt, cnt, substInSt, buildingLevel);
+                        return new ColonyLinkPacket.BuilderRequest(substDisp, cnt, substSt, rPos, tooltip);
+                    }
+                }
+
+                ItemStack disp = rs.copy(); disp.setCount(Math.min(cnt, 64));
+                return new ColonyLinkPacket.BuilderRequest(disp, cnt, st, rPos, buildStandardTooltip(rs, st, cnt, inSt));
+            }
+        }
+        catch (Exception e) { ColonyLink.LOGGER.debug("[ColonyLink] fetchBuilderRequest: {}", e.getMessage()); }
+        return ColonyLinkPacket.BuilderRequest.NONE;
+    }
+
+    // ── Idle reason ───────────────────────────────────────────────────────────
+
+    private static String computeIdleReason(com.minecolonies.api.colony.ICivilianData citizen)
+    {
+        List<String> reasons = new ArrayList<>();
+        try
+        {
+            if (citizen instanceof com.minecolonies.api.colony.ICitizenDataView view)
+            {
+                if (view.hasBlockingInteractions()) reasons.add("§c⚠ Blocking interaction pending");
+                else if (view.hasPendingInteractions()) reasons.add("§e⚠ Pending interaction");
+                if (view.isSick()) reasons.add("§c🤒 Sick");
+                if (view.getHomeBuilding() == null || view.getHomeBuilding().equals(BlockPos.ZERO))
+                    reasons.add("§e🏠 No home assigned");
+                double happiness = view.getHappiness();
+                if (happiness < 5.0)
+                {
+                    int h10 = (int) Math.round(happiness * 10);
+                    reasons.add("§e😞 Low happiness (" + (h10 / 10) + "." + (h10 % 10) + "/10)");
+                }
+                var visibleStatus = view.getVisibleStatus();
+                if (visibleStatus != null)
+                {
+                    String statusKey = visibleStatus.getTranslationKey();
+                    if (statusKey.contains("eat") || statusKey.contains("food")) reasons.add("§e🍖 Hungry");
+                    else if (statusKey.contains("house") || statusKey.contains("home")) reasons.add("§e🏠 No home");
+                    else if (statusKey.contains("raid")) reasons.add("§c⚔ Raided!");
+                    else if (statusKey.contains("mourn")) reasons.add("§7😢 Mourning");
+                    else if (statusKey.contains("weather")) reasons.add("§9🌧 Bad weather");
+                    else if (statusKey.contains("sleep")) reasons.add("§9💤 Sleeping");
+                    else if (statusKey.contains("sick")) reasons.add("§c🤒 Sick");
+                    else if (!statusKey.contains("work"))
+                    {
+                        String translated = Component.translatable(statusKey).getString();
+                        if (!translated.equals(statusKey)) reasons.add("§7" + translated);
+                    }
+                }
+            }
+            else
+            {
+                double sat = citizen.getSaturation();
+                if (sat < 3.0) reasons.add("§e🍖 Hungry");
+            }
+        }
+        catch (Exception e)
+        { ColonyLink.LOGGER.debug("[ColonyLink] computeIdleReason error: {}", e.getMessage()); }
+        return String.join(" | ", reasons);
+    }
+
+    // ── Tooltips ──────────────────────────────────────────────────────────────
+
+    private static List<String> buildToolSubstituteTooltip(ItemStack original, ItemStack substitute,
+                                                           ResourceStatus stat, int missing, long inStorage, int buildingLevel)
     {
         List<String> lines = new ArrayList<>();
-
-        if (!(stack.getItem() instanceof BlockItem blockItem)) return lines;
-        Block block = blockItem.getBlock();
-        if (!(block instanceof IMateriallyTexturedBlock texturedBlock)) return lines;
-
-        MaterialTextureData textureData = MaterialTextureData.readFromItemStack(stack);
-        lines.add("§b[Domum Ornamentum] §7Components:");
-
-        for (IMateriallyTexturedBlockComponent component : texturedBlock.getComponents())
+        lines.add("§6⚙ Tool Upgrade — Work Hut Level " + buildingLevel);
+        lines.add("§7  Requested: §f" + original.getDisplayName().getString());
+        lines.add("§7  Best available: §f" + substitute.getDisplayName().getString());
+        switch (stat)
         {
-            Block materialBlock = textureData.getTexturedComponents().get(component.getId());
-            if (materialBlock == null)
-            {
-                lines.add("§c  - " + component.getId().getPath() + ": §4MISSING");
-                continue;
-            }
-
-            ItemStack materialStack = new ItemStack(materialBlock);
-            String matName = materialStack.getDisplayName().getString();
-            AEItemKey aeKey = AEItemKey.of(materialStack);
-            long inStorage = inventory.get(aeKey);
-
-            String statusStr;
-            if (inStorage >= missing)
-                statusStr = "§a✔ " + inStorage + " in ME";
-            else if (craftingService.isRequesting(aeKey))
-                statusStr = "§6⟳ Crafting...";
-            else if (craftingService.isCraftable(aeKey))
-                statusStr = "§e⚒ Craftable (" + inStorage + "/" + missing + ")";
-            else
-                statusStr = "§c✘ No pattern (" + inStorage + "/" + missing + ")";
-
-            lines.add("§7  - " + matName + ": " + statusStr);
+            case AVAILABLE -> lines.add("§a  ✔ " + inStorage + "x in ME — ready to send");
+            case CRAFTABLE -> lines.add("§a  ⚒ Craftable via AE2 pattern");
+            case CRAFTING  -> lines.add("§6  ⟳ Craft in progress...");
+            default        -> lines.add("§c  ✘ No pattern available");
         }
+        lines.add("§8  Needed: §f" + missing + "x");
+        return lines;
+    }
 
+    private static List<String> buildDomumTooltip(ItemStack stack, DomumCraftHandler.DomumStatus ds,
+                                                  KeyCounter inv, ICraftingService cs, int missing)
+    {
+        List<String> lines = new ArrayList<>();
+        if (!(stack.getItem() instanceof BlockItem bi)) return lines;
+        Block block = bi.getBlock();
+        if (!(block instanceof IMateriallyTexturedBlock tb)) return lines;
+        MaterialTextureData td = MaterialTextureData.readFromItemStack(stack);
+        lines.add("§b[Domum Ornamentum] §7Components:");
+        for (IMateriallyTexturedBlockComponent comp : tb.getComponents())
+        {
+            Block mb = td.getTexturedComponents().get(comp.getId());
+            if (mb == null) { lines.add("§c  - " + comp.getId().getPath() + ": §4MISSING"); continue; }
+            ItemStack ms = new ItemStack(mb);
+            AEItemKey k = AEItemKey.of(ms); long inSt = inv.get(k);
+            String s;
+            if (inSt >= missing)         s = "§a✔ " + inSt + " in ME";
+            else if (cs.isRequesting(k)) s = "§6⟳ Crafting...";
+            else if (cs.isCraftable(k))  s = "§e⚒ Craftable (" + inSt + "/" + missing + ")";
+            else                         s = "§c✘ No pattern (" + inSt + "/" + missing + ")";
+            lines.add("§7  - " + ms.getDisplayName().getString() + ": " + s);
+        }
         return lines;
     }
 
@@ -387,78 +804,205 @@ public class ColonyLinkServerTicker
                                                      int missing, long inStorage)
     {
         List<String> lines = new ArrayList<>();
-        String itemName = stack.getDisplayName().getString();
-
+        String n = stack.getDisplayName().getString();
         switch (status)
         {
-            case NO_PATTERN ->
-            {
-                lines.add("§c✘ No AE2 pattern for:");
-                lines.add("§7  " + itemName);
-                lines.add("§8  Needed: §f" + missing + "x");
-                lines.add("§8  In ME: §f" + inStorage + "x");
-            }
-            case CRAFTABLE ->
-            {
-                lines.add("§a⚒ Craftable via AE2:");
-                lines.add("§7  " + itemName);
-                lines.add("§8  Needed: §f" + missing + "x");
-                lines.add("§8  In ME: §f" + inStorage + "x");
-            }
-            case AVAILABLE ->
-            {
-                lines.add("§a✔ Available in ME:");
-                lines.add("§7  " + itemName);
-                lines.add("§8  Needed: §f" + missing + "x");
-                lines.add("§8  In ME: §f" + inStorage + "x");
-            }
-            case CRAFTING ->
-            {
-                lines.add("§6⟳ Crafting in progress:");
-                lines.add("§7  " + itemName);
-                lines.add("§8  Needed: §f" + missing + "x");
-            }
-            case MISSING ->
-            {
-                lines.add("§e⚒ Missing raw materials:");
-                lines.add("§7  " + itemName);
-                lines.add("§8  Needed: §f" + missing + "x");
-            }
+            case NO_PATTERN -> { lines.add("§c✘ No AE2 pattern for:"); lines.add("§7  " + n);
+                lines.add("§8  Needed: §f" + missing + "x"); lines.add("§8  In ME: §f" + inStorage + "x"); }
+            case CRAFTABLE  -> { lines.add("§a⚒ Craftable via AE2:"); lines.add("§7  " + n);
+                lines.add("§8  Needed: §f" + missing + "x"); lines.add("§8  In ME: §f" + inStorage + "x"); }
+            case AVAILABLE  -> { lines.add("§a✔ Available in ME:"); lines.add("§7  " + n);
+                lines.add("§8  Needed: §f" + missing + "x"); lines.add("§8  In ME: §f" + inStorage + "x"); }
+            case CRAFTING   -> { lines.add("§6⟳ Crafting in progress:"); lines.add("§7  " + n);
+                lines.add("§8  Needed: §f" + missing + "x"); }
+            case MISSING    -> { lines.add("§e⚒ Missing raw materials:"); lines.add("§7  " + n);
+                lines.add("§8  Needed: §f" + missing + "x"); }
         }
-
         return lines;
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // Helpers
-    // ────────────────────────────────────────────────────────────────────────
+    // ── Domum RS2 helpers ────────────────────────────────────────────────────
 
-    private static BlockPos getLinkedRedirectorPos(ItemStack wandStack)
+    /**
+     * Calcule le statut d'un item Domum en mode RS2.
+     * Vérifie si les composants textures sont disponibles dans le stock RS2.
+     */
+    /**
+     * Calcule le statut d'un item Domum en mode RS2.
+     *
+     * Miroir exact de DomumCraftHandler.computeStatus() pour AE2, adapté RS2.
+     * On inspecte chaque composant BRUT (matériau de texture), pas l'item DO final.
+     * RS2 ne peut pas crafter les items DO via pattern — le craft est "virtuel" :
+     * les composants sont extraits du stock RS2 puis assemblés dans le buffer redirector.
+     *
+     * Logique identique à AE2 :
+     *   - composant en stock RS2 >= needed                    → OK (dispo)
+     *   - composant craftable via RS2 (a un pattern de sortie) → MISSING (craftable mais absent)
+     *   - composant absent ET pas craftable                   → NO_PATTERN (bloquant)
+     *
+     * Status final :
+     *   - tous OK                          → CRAFTABLE  (craft virtuel possible immédiatement)
+     *   - au moins un MISSING              → MISSING    (composants craftables mais manquants)
+     *   - au moins un NO_PATTERN           → NO_PATTERN (impossible)
+     *   - au moins un en cours de craft    → CRAFTING
+     */
+    private static ResourceStatus computeDomumStatusRS(
+            ItemStack stack,
+            StorageNetworkComponent storage,
+            AutocraftingNetworkComponent crafting,
+            int needed,
+            BlockPos redirectorPos,
+            net.minecraft.server.level.ServerLevel level)
     {
-        var data = wandStack.get(net.minecraft.core.component.DataComponents.CUSTOM_DATA);
-        if (data == null) return null;
-        var tag = data.copyTag();
-        if (!tag.contains("redirector_x")) return null;
-        return new BlockPos(
-                tag.getInt("redirector_x"),
-                tag.getInt("redirector_y"),
-                tag.getInt("redirector_z"));
+        if (!(stack.getItem() instanceof net.minecraft.world.item.BlockItem bi)) return ResourceStatus.NO_PATTERN;
+        net.minecraft.world.level.block.Block block = bi.getBlock();
+        if (!(block instanceof com.ldtteam.domumornamentum.block.IMateriallyTexturedBlock tb)) return ResourceStatus.NO_PATTERN;
+
+        MaterialTextureData td = MaterialTextureData.readFromItemStack(stack);
+        net.minecraft.core.component.DataComponents dataComponents = null;
+        net.minecraft.world.item.component.BlockItemStateProperties targetBlockState =
+                stack.get(net.minecraft.core.component.DataComponents.BLOCK_STATE);
+
+        // ── 1. Vérifie d'abord si l'item DO est déjà dans le buffer du redirector ──
+        // Miroir exact de DomumCraftHandler.computeStatus() AE2.
+        // Si les items craftés sont dans le buffer → AVAILABLE (prêt à envoyer).
+        if (redirectorPos != null && level != null && !redirectorPos.equals(BlockPos.ZERO))
+        {
+            var be = level.getBlockEntity(redirectorPos);
+            net.neoforged.neoforge.items.IItemHandler buffer = null;
+            if (be instanceof ColonyLinkRedirectorBlockEntityRS rRS) buffer = rRS.buffer;
+            else if (be instanceof ColonyLinkRedirectorBlockEntity rAE2) buffer = rAE2.buffer;
+
+            if (buffer != null)
+            {
+                int foundInBuffer = 0;
+                for (int slot = 0; slot < buffer.getSlots(); slot++)
+                {
+                    ItemStack inSlot = buffer.getStackInSlot(slot);
+                    if (inSlot.isEmpty() || inSlot.getItem() != stack.getItem()) continue;
+                    if (!MaterialTextureData.readFromItemStack(inSlot).equals(td)) continue;
+                    net.minecraft.world.item.component.BlockItemStateProperties slotBlockState =
+                            inSlot.get(net.minecraft.core.component.DataComponents.BLOCK_STATE);
+                    if (!java.util.Objects.equals(slotBlockState, targetBlockState)) continue;
+                    foundInBuffer += inSlot.getCount();
+                }
+                if (foundInBuffer >= needed)
+                    return ResourceStatus.AVAILABLE;
+            }
+        }
+
+        // ── 2. Vérifie les composants bruts dans RS2 ─────────────────────────────
+        boolean anyMissing  = false;
+        boolean anyUnknown  = false;
+        boolean anyCrafting = false;
+
+        for (IMateriallyTexturedBlockComponent comp : tb.getComponents())
+        {
+            net.minecraft.world.level.block.Block mb = td.getTexturedComponents().get(comp.getId());
+            if (mb == null)
+            {
+                if (!comp.isOptional()) anyUnknown = true;
+                continue;
+            }
+
+            ItemResource rsKey = ItemResource.ofItemStack(new ItemStack(mb));
+            long inRS2 = storage.get(rsKey);
+
+            if (inRS2 >= needed)
+                continue;
+            else if (crafting != null && crafting.getOutputs().contains(rsKey))
+                anyMissing = true;
+            else
+                anyUnknown = true;
+        }
+
+        if (anyUnknown)  return ResourceStatus.NO_PATTERN;
+        if (anyCrafting) return ResourceStatus.CRAFTING;
+        if (anyMissing)  return ResourceStatus.MISSING;
+        return ResourceStatus.CRAFTABLE;
     }
 
-    private static ItemStack findWandInInventory(ServerPlayer player)
+    /**
+     * Construit le tooltip Domum RS2 avec détail des composants.
+     */
+    private static List<String> buildDomumTooltipRS(
+            ItemStack stack,
+            StorageNetworkComponent storage,
+            AutocraftingNetworkComponent crafting,
+            int missing)
+    {
+        List<String> lines = new ArrayList<>();
+        if (!(stack.getItem() instanceof net.minecraft.world.item.BlockItem bi)) return lines;
+        net.minecraft.world.level.block.Block block = bi.getBlock();
+        if (!(block instanceof com.ldtteam.domumornamentum.block.IMateriallyTexturedBlock tb)) return lines;
+
+        MaterialTextureData td = MaterialTextureData.readFromItemStack(stack);
+        lines.add("§b[DO/RS2] §7Components (bruts requis):");
+
+        for (IMateriallyTexturedBlockComponent comp : tb.getComponents())
+        {
+            net.minecraft.world.level.block.Block mb = td.getTexturedComponents().get(comp.getId());
+            if (mb == null) { lines.add("§c  - " + comp.getId().getPath() + ": §4MISSING"); continue; }
+
+            ItemStack ms = new ItemStack(mb);
+            ItemResource rsKey = ItemResource.ofItemStack(ms);
+            long inRS2 = storage.get(rsKey);
+            String s;
+            if (inRS2 >= missing)
+                s = "§a✔ " + inRS2 + " in RS2";
+            else if (crafting != null && crafting.getOutputs().contains(rsKey))
+                s = "§e⚒ Craftable in RS2 (" + inRS2 + "/" + missing + ")";
+            else
+                s = "§c✘ No RS2 pattern (" + inRS2 + "/" + missing + ")";
+            lines.add("§7  - " + ms.getDisplayName().getString() + ": " + s);
+        }
+        return lines;
+    }
+
+    private static List<String> buildStandardTooltipRS(ItemStack stack, ResourceStatus status,
+                                                       int missing, long inStorage)
+    {
+        List<String> lines = new ArrayList<>();
+        String n = stack.getDisplayName().getString();
+        switch (status)
+        {
+            case NO_PATTERN -> { lines.add("§c✘ No RS2 pattern for:"); lines.add("§7  " + n);
+                lines.add("§8  Needed: §f" + missing + "x"); lines.add("§8  In RS2: §f" + inStorage + "x"); }
+            case CRAFTABLE  -> { lines.add("§a⚒ Craftable via RS2:"); lines.add("§7  " + n);
+                lines.add("§8  Needed: §f" + missing + "x"); lines.add("§8  In RS2: §f" + inStorage + "x"); }
+            case AVAILABLE  -> { lines.add("§a✔ Available in RS2:"); lines.add("§7  " + n);
+                lines.add("§8  Needed: §f" + missing + "x"); lines.add("§8  In RS2: §f" + inStorage + "x"); }
+            case CRAFTING   -> { lines.add("§6⟳ Crafting in progress:"); lines.add("§7  " + n);
+                lines.add("§8  Needed: §f" + missing + "x"); }
+            case MISSING    -> { lines.add("§e⚒ Missing raw materials:"); lines.add("§7  " + n);
+                lines.add("§8  Needed: §f" + missing + "x"); }
+        }
+        return lines;
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    static ItemStack findWandInInventory(ServerPlayer player)
     {
         for (ItemStack stack : player.getInventory().items)
             if (stack.getItem() instanceof ColonyLinkWand) return stack;
         return null;
     }
 
+    static ItemStack findWandRSInInventory(ServerPlayer player)
+    {
+        for (ItemStack stack : player.getInventory().items)
+            if (stack.getItem() instanceof ColonyLinkWandRS) return stack;
+        return null;
+    }
+
     private static IWirelessAccessPoint getWap(ItemStack wandStack, ServerLevel level)
     {
-        net.minecraft.core.GlobalPos linkedPos = ColonyLinkWandLinkableHandler.getLinkedPos(wandStack);
-        if (linkedPos == null) return null;
-        ServerLevel targetLevel = level.getServer().getLevel(linkedPos.dimension());
-        if (targetLevel == null) return null;
-        var be = targetLevel.getBlockEntity(linkedPos.pos());
+        net.minecraft.core.GlobalPos lp = ColonyLinkWandLinkableHandler.getLinkedPos(wandStack);
+        if (lp == null) return null;
+        ServerLevel tl = level.getServer().getLevel(lp.dimension());
+        if (tl == null) return null;
+        var be = tl.getBlockEntity(lp.pos());
         if (be instanceof IWirelessAccessPoint wap) return wap;
         return null;
     }

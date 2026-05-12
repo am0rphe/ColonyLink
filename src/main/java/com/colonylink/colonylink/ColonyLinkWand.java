@@ -1,19 +1,22 @@
 package com.colonylink.colonylink;
 
+import appeng.api.config.AccessRestriction;
+import appeng.api.config.Actionable;
 import appeng.api.implementations.blockentities.IWirelessAccessPoint;
+import appeng.api.implementations.items.IAEItemPowerStorage;
 import appeng.api.networking.IGrid;
 import appeng.api.networking.crafting.ICraftingService;
 import appeng.api.networking.storage.IStorageService;
 import appeng.api.stacks.AEItemKey;
 import appeng.api.stacks.KeyCounter;
 import com.minecolonies.api.colony.IColony;
+import com.minecolonies.api.colony.permissions.Action;
 import com.minecolonies.api.colony.IColonyManager;
 import com.minecolonies.api.colony.buildings.IBuilding;
 import com.minecolonies.core.colony.buildings.AbstractBuildingStructureBuilder;
 import com.minecolonies.core.colony.buildings.utils.BuildingBuilderResource;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
-import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -24,7 +27,6 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.TooltipFlag;
 import net.minecraft.world.item.Item.TooltipContext;
-import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.Level;
 import net.neoforged.neoforge.network.PacketDistributor;
@@ -33,20 +35,123 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-public class ColonyLinkWand extends Item
+/**
+ * ColonyLink Wand — v1.1.3
+ *
+ * Implémente IAEItemPowerStorage → charge native dans le Charger AE2.
+ * Expose IEnergyStorage via capability → charge dans les mods FE tiers.
+ *
+ * Anti-pop :
+ *   shouldCauseReequipAnimation() retourne false quand seul le NBT change
+ *   (même item, slot identique), exactement comme AEBasePoweredItem d'AE2.
+ *   Cela supprime l'animation de re-équipement qui causait le flash visuel
+ *   de la barre durabilité toutes les 40 ticks.
+ */
+public class ColonyLinkWand extends Item implements IAEItemPowerStorage
 {
-    public ColonyLinkWand(Properties properties)
+    private static final double AE_TO_RF = 2.0;
+
+    public ColonyLinkWand(Properties properties) { super(properties); }
+
+    // ── Anti-pop ──────────────────────────────────────────────────────────────
+
+    /**
+     * Même logique que AEBasePoweredItem :
+     * Retourne false si c'est le même item dans le même slot (seul le NBT a changé).
+     * Cela évite l'animation de re-équipement et le flash de la barre durabilité
+     * quand le ticker met à jour le RF toutes les 40 ticks.
+     */
+    @Override
+    public boolean shouldCauseReequipAnimation(ItemStack oldStack, ItemStack newStack, boolean slotChanged)
     {
-        super(properties);
+        return slotChanged || !ItemStack.isSameItem(oldStack, newStack);
+    }
+
+    // ── IAEItemPowerStorage ───────────────────────────────────────────────────
+
+    @Override
+    public double injectAEPower(ItemStack stack, double amount, Actionable mode)
+    {
+        long capacity = ColonyLinkConfig.WAND_RF_CAPACITY.get();
+        long stored   = WandEnergyStorage.getStoredRF(stack);
+        long space    = capacity - stored;
+        if (space <= 0) return amount;
+
+        long rfToAdd     = (long)(amount * AE_TO_RF);
+        long rfAdded     = Math.min(rfToAdd, space);
+        double aeConsumed = rfAdded / AE_TO_RF;
+
+        if (mode == Actionable.MODULATE)
+            WandEnergyStorage.setStoredRF(stack, stored + rfAdded);
+
+        return Math.max(0.0, amount - aeConsumed);
     }
 
     @Override
-    public void appendHoverText(ItemStack stack, TooltipContext context, List<Component> tooltip, TooltipFlag flag)
+    public double extractAEPower(ItemStack stack, double amount, Actionable mode) { return 0.0; }
+
+    @Override
+    public double getAEMaxPower(ItemStack stack)
+    { return ColonyLinkConfig.WAND_RF_CAPACITY.get() / AE_TO_RF; }
+
+    @Override
+    public double getAECurrentPower(ItemStack stack)
+    { return WandEnergyStorage.getStoredRF(stack) / AE_TO_RF; }
+
+    @Override
+    public AccessRestriction getPowerFlow(ItemStack stack) { return AccessRestriction.WRITE; }
+
+    @Override
+    public double getChargeRate(ItemStack stack)
+    { return ColonyLinkConfig.WAND_RF_TRANSFER_RATE.get() / AE_TO_RF; }
+
+    // ── Barre durabilité ──────────────────────────────────────────────────────
+
+    @Override
+    public boolean isBarVisible(ItemStack stack) { return true; }
+
+    @Override
+    public int getBarWidth(ItemStack stack)
     {
+        long stored   = WandEnergyStorage.getStoredRF(stack);
+        long capacity = ColonyLinkConfig.WAND_RF_CAPACITY.get();
+        if (capacity <= 0) return 0;
+        return (int)(stored * 13L / capacity);
+    }
+
+    @Override
+    public int getBarColor(ItemStack stack)
+    {
+        long stored   = WandEnergyStorage.getStoredRF(stack);
+        long capacity = ColonyLinkConfig.WAND_RF_CAPACITY.get();
+        int pct       = capacity > 0 ? (int)(stored * 100L / capacity) : 0;
+        int threshold = ColonyLinkConfig.LOW_POWER_THRESHOLD_PERCENT.get();
+        if (pct <= threshold) return 0xFF2222;
+        if (pct <= 30)        return 0xFFAA00;
+        return 0x22CC22;
+    }
+
+    // ── Tooltip ───────────────────────────────────────────────────────────────
+
+    @Override
+    public void appendHoverText(ItemStack stack, TooltipContext context,
+                                List<Component> tooltip, TooltipFlag flag)
+    {
+        long stored   = WandEnergyStorage.getStoredRF(stack);
+        long capacity = ColonyLinkConfig.WAND_RF_CAPACITY.get();
+        int pct       = capacity > 0 ? (int)(stored * 100L / capacity) : 0;
+        int threshold = ColonyLinkConfig.LOW_POWER_THRESHOLD_PERCENT.get();
+        String rfColor = pct <= threshold ? "§c" : (pct <= 30 ? "§e" : "§a");
+
+        tooltip.add(Component.literal(rfColor + "⚡ " + formatRF(stored)
+                + " §7/ §f" + formatRF(capacity) + " RF §7(" + pct + "%)"));
+
+        if (stored <= 0)
+            tooltip.add(Component.literal("§c⚠ OUT OF POWER — charge in AE2 Charger or FE charger"));
+
         boolean linkedAE2 = ColonyLinkWandLinkableHandler.isLinked(stack);
-        boolean linkedRedirector = isLinkedToRedirector(stack);
-        BlockPos lastBuilder = getLastBuilderPos(stack);
-        BlockPos redirectorPos = getLinkedRedirectorPos(stack);
+        List<BuilderEntry> entries = ColonyLinkWandLinkableHandler.getBuilderEntries(stack);
+        int activeTab = ColonyLinkWandLinkableHandler.getActiveTab(stack);
 
         if (!linkedAE2)
         {
@@ -56,115 +161,53 @@ public class ColonyLinkWand extends Item
         else
         {
             tooltip.add(Component.literal("§a✔ Linked to AE2 network"));
-
-            if (!linkedRedirector)
+            if (entries.isEmpty())
             {
-                tooltip.add(Component.literal("§e⚠ No Redirector linked"));
-                tooltip.add(Component.literal("§8  → §fSneak + Right-click §8a Colony Link Redirector"));
+                tooltip.add(Component.literal("§e⚠ No Builder linked"));
+                tooltip.add(Component.literal("§8  → §fSneak + Right-click §8a Builder's Hut"));
             }
             else
             {
-                tooltip.add(Component.literal("§b✔ Redirector linked"));
-                if (redirectorPos != null)
-                    tooltip.add(Component.literal("§8  at " + redirectorPos.toShortString()));
-            }
-
-            if (lastBuilder == null)
-            {
-                tooltip.add(Component.literal("§e⚠ No Builder's Hut linked"));
-                tooltip.add(Component.literal("§8  → §fSneak + Right-click §8a Builder's Hut to link"));
-            }
-            else
-            {
-                tooltip.add(Component.literal("§a✔ Builder linked at §f" + lastBuilder.toShortString()));
-                tooltip.add(Component.literal("§8  → §fRight-click §8(air) to open GUI"));
+                tooltip.add(Component.literal("§a✔ " + entries.size() + "/"
+                        + ColonyLinkWandLinkableHandler.getMaxBuilders() + " Builder(s) linked"));
+                BuilderEntry active = entries.get(Math.min(activeTab, entries.size() - 1));
+                tooltip.add(Component.literal("§7Active: §f" + active.builderName()
+                        + " §8@ " + active.builderPos().toShortString()));
+                if (!active.hasRedirector())
+                    tooltip.add(Component.literal("§e⚠ No Redirector linked for this builder"));
             }
         }
 
         tooltip.add(Component.literal("§8──────────────────"));
         tooltip.add(Component.literal("§7Right-click §8(air) → open resource GUI"));
-        tooltip.add(Component.literal("§7Sneak + Right-click §8Builder's Hut → link builder"));
-        tooltip.add(Component.literal("§7Sneak + Right-click §8Redirector → link redirector"));
+        tooltip.add(Component.literal("§7Sneak + Right-click §8Builder's Hut → add/link builder"));
+        tooltip.add(Component.literal("§7Sneak + Right-click §8Redirector → link to active builder"));
+        tooltip.add(Component.literal("§8Charge: §fAE2 Charger §8· §fany FE charger mod"));
     }
 
-    private boolean isLinkedToRedirector(ItemStack stack)
+    private static String formatRF(long rf)
     {
-        CustomData data = stack.get(DataComponents.CUSTOM_DATA);
-        if (data == null) return false;
-        return data.copyTag().contains("redirector_x");
+        if (rf >= 1_000_000L) return String.format("%.1fM", rf / 1_000_000.0);
+        if (rf >= 1_000L)     return String.format("%.1fK", rf / 1_000.0);
+        return String.valueOf(rf);
     }
 
-    private BlockPos getLinkedRedirectorPos(ItemStack stack)
-    {
-        CustomData data = stack.get(DataComponents.CUSTOM_DATA);
-        if (data == null) return null;
-        var tag = data.copyTag();
-        if (!tag.contains("redirector_x")) return null;
-        return new BlockPos(tag.getInt("redirector_x"), tag.getInt("redirector_y"), tag.getInt("redirector_z"));
-    }
+    // ── use() — clic droit AIR ────────────────────────────────────────────────
 
-    private void setLinkedRedirectorPos(ItemStack stack, BlockPos pos)
-    {
-        stack.update(DataComponents.CUSTOM_DATA, CustomData.EMPTY, data -> {
-            var tag = data.copyTag();
-            if (pos == null)
-            {
-                tag.remove("redirector_x");
-                tag.remove("redirector_y");
-                tag.remove("redirector_z");
-            }
-            else
-            {
-                tag.putInt("redirector_x", pos.getX());
-                tag.putInt("redirector_y", pos.getY());
-                tag.putInt("redirector_z", pos.getZ());
-            }
-            return CustomData.of(tag);
-        });
-    }
-
-    public static BlockPos getLastBuilderPos(ItemStack stack)
-    {
-        CustomData data = stack.get(DataComponents.CUSTOM_DATA);
-        if (data == null) return null;
-        var tag = data.copyTag();
-        if (!tag.contains("last_builder_x")) return null;
-        return new BlockPos(tag.getInt("last_builder_x"), tag.getInt("last_builder_y"), tag.getInt("last_builder_z"));
-    }
-
-    private void setLastBuilderPos(ItemStack stack, BlockPos pos)
-    {
-        stack.update(DataComponents.CUSTOM_DATA, CustomData.EMPTY, data -> {
-            var tag = data.copyTag();
-            if (pos == null)
-            {
-                tag.remove("last_builder_x");
-                tag.remove("last_builder_y");
-                tag.remove("last_builder_z");
-            }
-            else
-            {
-                tag.putInt("last_builder_x", pos.getX());
-                tag.putInt("last_builder_y", pos.getY());
-                tag.putInt("last_builder_z", pos.getZ());
-            }
-            return CustomData.of(tag);
-        });
-    }
-
-    /**
-     * Clic droit AIR uniquement → ouvre le GUI.
-     * Sneak + clic droit AIR → ignoré (réservé à useOn sur les blocs).
-     */
     @Override
     public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand)
     {
         ItemStack wandStack = player.getItemInHand(hand);
-
         if (level.isClientSide()) return InteractionResultHolder.pass(wandStack);
-
-        // Sneak réservé à useOn (Builder's Hut / Redirector) — on ne fait rien ici
         if (player.isShiftKeyDown()) return InteractionResultHolder.pass(wandStack);
+        if (!(player instanceof ServerPlayer sp)) return InteractionResultHolder.pass(wandStack);
+
+        if (WandEnergyStorage.getStoredRF(wandStack) <= 0)
+        {
+            player.sendSystemMessage(Component.literal(
+                    "§c[ColonyLink] Out of Power! Charge in AE2 Charger or FE charger."));
+            return InteractionResultHolder.fail(wandStack);
+        }
 
         if (!ColonyLinkWandLinkableHandler.isLinked(wandStack))
         {
@@ -172,47 +215,51 @@ public class ColonyLinkWand extends Item
             return InteractionResultHolder.fail(wandStack);
         }
 
-        BlockPos lastBuilderPos = getLastBuilderPos(wandStack);
-        if (lastBuilderPos == null)
+        List<BuilderEntry> entries = ColonyLinkWandLinkableHandler.getBuilderEntries(wandStack);
+        if (entries.isEmpty())
         {
-            player.sendSystemMessage(Component.literal("§eNo Builder's Hut linked yet. Sneak + Right-click a Builder's Hut first."));
+            player.sendSystemMessage(Component.literal(
+                    "§eNo Builder's Hut linked yet. Sneak + Right-click a Builder's Hut first."));
             return InteractionResultHolder.fail(wandStack);
         }
 
-        ServerLevel serverLevel = (ServerLevel) level;
-        return openGUI(wandStack, player, serverLevel, lastBuilderPos)
+        int activeTab = ColonyLinkWandLinkableHandler.getActiveTab(wandStack);
+        BuilderEntry active = entries.get(Math.min(activeTab, entries.size() - 1));
+
+        return openGUI(wandStack, sp, (ServerLevel) level, active.builderPos(), activeTab)
                 ? InteractionResultHolder.success(wandStack)
                 : InteractionResultHolder.fail(wandStack);
     }
 
-    /**
-     * Clic droit sur un BLOC.
-     * - Sneak + clic sur Redirector → lie la wand au redirector
-     * - Sneak + clic sur Builder's Hut → lie le builder
-     * - Clic simple sur bloc → PASS silencieux (use() gère le clic air)
-     */
+    // ── useOn() — clic droit sur BLOC ─────────────────────────────────────────
+    // Pas de guard RF — le Charger AE2 utilise useOn() pour insérer la wand.
+
     @Override
     public net.minecraft.world.InteractionResult useOn(UseOnContext context)
     {
-        Level level = context.getLevel();
+        Level level   = context.getLevel();
         Player player = context.getPlayer();
-        BlockPos pos = context.getClickedPos();
+        BlockPos pos  = context.getClickedPos();
 
-        if (level.isClientSide() || player == null) return net.minecraft.world.InteractionResult.PASS;
+        if (level.isClientSide() || player == null)
+            return net.minecraft.world.InteractionResult.PASS;
+        if (!(player instanceof ServerPlayer sp))
+            return net.minecraft.world.InteractionResult.PASS;
 
-        ItemStack wandStack = context.getItemInHand();
+        ItemStack wandStack = null;
+        for (ItemStack s : player.getInventory().items)
+            if (s.getItem() instanceof ColonyLinkWand) { wandStack = s; break; }
+        if (wandStack == null) wandStack = context.getItemInHand();
 
-        // Si le joueur clique sur le redirector SANS sneak, on consomme l'action (SUCCESS)
-        // pour empêcher NeoForge d'appeler ensuite useWithoutItem du bloc,
-        // qui ouvrirait le GUI buffer alors qu'on tient la wand.
         var be = level.getBlockEntity(pos);
+
         if (be instanceof ColonyLinkRedirectorBlockEntity && !player.isShiftKeyDown())
             return net.minecraft.world.InteractionResult.SUCCESS;
 
-        // Seul le SNEAK est actif sur les autres blocs
-        if (!player.isShiftKeyDown()) return net.minecraft.world.InteractionResult.PASS;
+        if (!player.isShiftKeyDown())
+            return net.minecraft.world.InteractionResult.PASS;
 
-        // Sneak + clic sur Redirector → lie la wand
+        // Sneak + Redirector
         if (be instanceof ColonyLinkRedirectorBlockEntity redirector)
         {
             if (redirector.getManagedGridNode().getNode() == null)
@@ -221,44 +268,62 @@ public class ColonyLinkWand extends Item
                 return net.minecraft.world.InteractionResult.FAIL;
             }
 
-            // Récupère le dernier builder lié à la wand
-            BlockPos builderPosForRedirector = getLastBuilderPos(wandStack);
-            if (builderPosForRedirector == null)
+            List<BuilderEntry> entries = ColonyLinkWandLinkableHandler.getBuilderEntries(wandStack);
+            if (entries.isEmpty())
             {
                 player.sendSystemMessage(Component.literal("§cNo Builder's Hut linked to this wand!"));
                 player.sendSystemMessage(Component.literal("§7Sneak + Right-click a Builder's Hut first."));
                 return net.minecraft.world.InteractionResult.FAIL;
             }
 
-            // Lie le redirector au builder (targetInventory = inventaire du builder's hut)
-            redirector.setTargetInventoryPos(builderPosForRedirector);
-            redirector.setLinkedBuilderPos(builderPosForRedirector);
+            for (BuilderEntry e : entries)
+            {
+                if (e.redirectorPos().equals(pos))
+                {
+                    player.sendSystemMessage(Component.literal(
+                            "§c[ColonyLink] This Redirector is already paired with builder §f"
+                                    + e.builderName() + "§c!"));
+                    return net.minecraft.world.InteractionResult.FAIL;
+                }
+            }
+
+            int targetIndex = -1;
+            int activeTab = ColonyLinkWandLinkableHandler.getActiveTab(wandStack);
+            if (activeTab < entries.size() && !entries.get(activeTab).hasRedirector())
+                targetIndex = activeTab;
+            if (targetIndex == -1)
+                for (int i = 0; i < entries.size(); i++)
+                    if (!entries.get(i).hasRedirector()) { targetIndex = i; break; }
+            if (targetIndex == -1)
+                targetIndex = Math.min(activeTab, entries.size() - 1);
+
+            BuilderEntry target = entries.get(targetIndex);
+            redirector.setTargetInventoryPos(target.builderPos());
+            redirector.setLinkedBuilderPos(target.builderPos());
             redirector.updateState();
+            entries.set(targetIndex, target.withRedirector(pos));
+            ColonyLinkWandLinkableHandler.setBuilderEntries(wandStack, entries);
 
-            // Lie la wand au redirector
-            setLinkedRedirectorPos(wandStack, pos);
-
-            player.sendSystemMessage(Component.literal("§aWand linked to Colony Link Redirector!"));
-            player.sendSystemMessage(Component.literal("§7Builder at " + builderPosForRedirector.toShortString() + " → Redirector linked."));
+            player.sendSystemMessage(Component.literal(
+                    "§aRedirector linked to builder §f" + target.builderName()
+                            + " §7@ " + target.builderPos().toShortString()));
             return net.minecraft.world.InteractionResult.SUCCESS;
         }
 
-        // Sneak + clic sur Builder's Hut → lie le builder et ouvre le GUI
+        // Sneak + Builder's Hut
         if (!ColonyLinkWandLinkableHandler.isLinked(wandStack))
         {
             player.sendSystemMessage(Component.literal("§cThis wand is not linked to an AE2 network!"));
             return net.minecraft.world.InteractionResult.FAIL;
         }
 
-        ServerLevel serverLevel = (ServerLevel) level;
-
-        IWirelessAccessPoint wap = getWap(wandStack, serverLevel);
+        ServerLevel sl = (ServerLevel) level;
+        IWirelessAccessPoint wap = getWap(wandStack, sl);
         if (wap == null)
         {
             player.sendSystemMessage(Component.literal("§cCannot connect to AE2 network!"));
             return net.minecraft.world.InteractionResult.FAIL;
         }
-
         IGrid grid = wap.getGrid();
         if (grid == null)
         {
@@ -266,192 +331,177 @@ public class ColonyLinkWand extends Item
             return net.minecraft.world.InteractionResult.FAIL;
         }
 
-        IColony colony = IColonyManager.getInstance().getClosestColony(serverLevel, pos);
+        IColony colony = IColonyManager.getInstance().getClosestColony(sl, pos);
         if (colony == null) return net.minecraft.world.InteractionResult.PASS;
 
+        if (!colony.getPermissions().hasPermission(sp, Action.ACCESS_HUTS))
+        {
+            player.sendSystemMessage(Component.literal("§c[ColonyLink] No permission for this colony!"));
+            return net.minecraft.world.InteractionResult.FAIL;
+        }
+
         IBuilding building = null;
         for (IBuilding b : colony.getServerBuildingManager().getBuildings().values())
-        {
-            if (b.getPosition().equals(pos))
-            {
-                building = b;
-                break;
-            }
-        }
+            if (b.getPosition().equals(pos)) { building = b; break; }
 
         if (building == null) return net.minecraft.world.InteractionResult.PASS;
-
         if (!building.getBuildingType().getRegistryName().getPath().contains("builder"))
             return net.minecraft.world.InteractionResult.PASS;
-
-        if (!(building instanceof AbstractBuildingStructureBuilder))
+        if (!(building instanceof AbstractBuildingStructureBuilder bb))
             return net.minecraft.world.InteractionResult.PASS;
 
-        setLastBuilderPos(wandStack, pos);
+        String builderName = "Builder";
+        if (!bb.getAllAssignedCitizen().isEmpty())
+            builderName = bb.getAllAssignedCitizen().iterator().next().getName();
 
-        BlockPos redirectorPos = getLinkedRedirectorPos(wandStack);
-        if (redirectorPos != null)
+        String buildingLabel = "Builder's Hut";
+        var wo = bb.getWorkOrder();
+        if (wo != null) buildingLabel = wo.getDisplayName().getString();
+
+        BuilderEntry newEntry = new BuilderEntry(pos, BlockPos.ZERO, builderName, buildingLabel);
+        if (!ColonyLinkWandLinkableHandler.addOrUpdateEntry(wandStack, newEntry))
         {
-            var redirectorBe = serverLevel.getBlockEntity(redirectorPos);
-            if (redirectorBe instanceof ColonyLinkRedirectorBlockEntity r)
-                r.setLinkedBuilderPos(pos);
+            player.sendSystemMessage(Component.literal(
+                    "§cMax builders reached (" + ColonyLinkWandLinkableHandler.getMaxBuilders() + ")!"));
+            return net.minecraft.world.InteractionResult.FAIL;
         }
 
-        boolean success = openGUI(wandStack, player, serverLevel, pos);
-        return success
-                ? net.minecraft.world.InteractionResult.SUCCESS
-                : net.minecraft.world.InteractionResult.FAIL;
+        List<BuilderEntry> entries = ColonyLinkWandLinkableHandler.getBuilderEntries(wandStack);
+        int newIdx = entries.size() - 1;
+        for (int i = 0; i < entries.size(); i++)
+            if (entries.get(i).builderPos().equals(pos)) { newIdx = i; break; }
+        ColonyLinkWandLinkableHandler.setActiveTab(wandStack, newIdx);
+
+        player.sendSystemMessage(Component.literal(
+                "§aBuilder §f" + builderName + " §aadded! (slot "
+                        + (newIdx + 1) + "/" + ColonyLinkWandLinkableHandler.getMaxBuilders() + ")"));
+        player.sendSystemMessage(Component.literal(
+                "§7Now §fSneak + Right-click a Colony Link Redirector §7to pair it."));
+        return net.minecraft.world.InteractionResult.SUCCESS;
     }
 
-    private boolean openGUI(ItemStack wandStack, Player player, ServerLevel serverLevel, BlockPos builderPos)
+    // ── openGUI ───────────────────────────────────────────────────────────────
+
+    private boolean openGUI(ItemStack wandStack, ServerPlayer player, ServerLevel sl,
+                            BlockPos builderPos, int activeTabIndex)
     {
-        IWirelessAccessPoint wap = getWap(wandStack, serverLevel);
-        if (wap == null)
-        {
-            player.sendSystemMessage(Component.literal("§cCannot connect to AE2 network!"));
-            return false;
-        }
-
+        IWirelessAccessPoint wap = getWap(wandStack, sl);
+        if (wap == null) { player.sendSystemMessage(Component.literal("§cCannot connect to AE2 network!")); return false; }
         IGrid grid = wap.getGrid();
-        if (grid == null)
-        {
-            player.sendSystemMessage(Component.literal("§cAE2 network is offline!"));
-            return false;
-        }
+        if (grid == null) { player.sendSystemMessage(Component.literal("§cAE2 network is offline!")); return false; }
 
-        IColony colony = IColonyManager.getInstance().getClosestColony(serverLevel, builderPos);
-        if (colony == null)
-        {
-            player.sendSystemMessage(Component.literal("§cNo colony found nearby!"));
-            return false;
-        }
+        IColony colony = IColonyManager.getInstance().getClosestColony(sl, builderPos);
+        if (colony == null) { player.sendSystemMessage(Component.literal("§cNo colony found nearby!")); return false; }
+        if (!colony.getPermissions().hasPermission(player, Action.ACCESS_HUTS))
+        { player.sendSystemMessage(Component.literal("§c[ColonyLink] No permission!")); return false; }
 
         IBuilding building = null;
         for (IBuilding b : colony.getServerBuildingManager().getBuildings().values())
-        {
-            if (b.getPosition().equals(builderPos))
-            {
-                building = b;
-                break;
-            }
-        }
+            if (b.getPosition().equals(builderPos)) { building = b; break; }
+        if (!(building instanceof AbstractBuildingStructureBuilder bb))
+        { player.sendSystemMessage(Component.literal("§cBuilder's Hut not found — re-link.")); return false; }
 
-        if (!(building instanceof AbstractBuildingStructureBuilder builderBuilding))
+        String builderName = "N/A", workerStatus = "IDLE";
+        if (!bb.getAllAssignedCitizen().isEmpty())
         {
-            player.sendSystemMessage(Component.literal("§cBuilder's Hut not found — Sneak + Right-click it to re-link."));
-            return false;
-        }
-
-        String builderName = "N/A";
-        String workerStatus = "IDLE";
-        if (!builderBuilding.getAllAssignedCitizen().isEmpty())
-        {
-            var citizen = builderBuilding.getAllAssignedCitizen().iterator().next();
-            builderName = citizen.getName();
-            var visibleStatus = citizen.getStatus();
-            if (visibleStatus != null)
-                workerStatus = Component.translatable(visibleStatus.getTranslationKey()).getString();
-            else
-                workerStatus = citizen.getJobStatus().name();
+            var c = bb.getAllAssignedCitizen().iterator().next();
+            builderName = c.getName();
+            var vs = c.getStatus();
+            workerStatus = vs != null
+                    ? Component.translatable(vs.getTranslationKey()).getString()
+                    : c.getJobStatus().name();
         }
 
         String buildingName = "N/A";
-        var workOrder = builderBuilding.getWorkOrder();
-        if (workOrder != null)
+        var wo = bb.getWorkOrder();
+        if (wo != null)
         {
-            buildingName = workOrder.getDisplayName().getString();
-            if (workOrder.getStage() != null)
-                buildingName += " [" + workOrder.getStage().name() + "]";
+            buildingName = wo.getDisplayName().getString();
+            if (wo.getStage() != null) buildingName += " [" + wo.getStage().name() + "]";
         }
 
-        ICraftingService craftingService = grid.getCraftingService();
-        int availableCpus = 0;
-        for (var cpu : craftingService.getCpus())
-        {
-            if (!cpu.isBusy()) availableCpus++;
-        }
+        ICraftingService cs = grid.getCraftingService();
+        int cpus = 0; for (var cpu : cs.getCpus()) if (!cpu.isBusy()) cpus++;
 
-        String redirectorState = "N/A";
-        BlockPos redirectorPos = getLinkedRedirectorPos(wandStack);
-        if (redirectorPos != null)
+        List<BuilderEntry> allEntries = ColonyLinkWandLinkableHandler.getBuilderEntries(wandStack);
+        BuilderEntry ae = allEntries.isEmpty() ? null
+                : allEntries.get(Math.min(activeTabIndex, allEntries.size() - 1));
+        BlockPos rPos = (ae != null && ae.hasRedirector()) ? ae.redirectorPos() : null;
+
+        String rState = "N/A"; boolean hasCard = false, whPrio = false;
+        if (rPos != null)
         {
-            var rbe = serverLevel.getBlockEntity(redirectorPos);
-            if (rbe instanceof ColonyLinkRedirectorBlockEntity redirector)
+            var rbe = sl.getBlockEntity(rPos);
+            if (rbe instanceof ColonyLinkRedirectorBlockEntity r)
             {
-                appeng.api.networking.IGridNode rnode = redirector.getManagedGridNode().getNode();
-                if (rnode != null)
-                {
-                    ColonyLinkRedirectorBlockEntity.RedirectorState s = redirector.getState();
-                    if (s == ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY)
-                        redirectorState = "STANDBY";
-                    else if (s == ColonyLinkRedirectorBlockEntity.RedirectorState.NOT_LINKED)
-                        redirectorState = "NOT_LINKED";
-                    else
-                        redirectorState = "LINKED";
-                }
-                else
-                {
-                    redirectorState = "NOT_LINKED";
-                }
+                var rn = r.getManagedGridNode().getNode();
+                rState = rn != null ? switch (r.getState()) {
+                    case STANDBY    -> "STANDBY";
+                    case NOT_LINKED -> "NOT_LINKED";
+                    default         -> "LINKED";
+                } : "NOT_LINKED";
+                hasCard = r.hasWarehouseCard();
+                whPrio  = r.isWarehousePriority();
             }
         }
 
-        Map<String, BuildingBuilderResource> neededResources = builderBuilding.getNeededResources();
+        IStorageService ss = grid.getStorageService();
+        KeyCounter inv = ss.getCachedInventory();
+        BlockPos safeR = rPos != null ? rPos : BlockPos.ZERO;
+
+        Map<String, BuildingBuilderResource> needed = bb.getNeededResources();
         List<ColonyLinkPacket.ResourceEntry> entries = new ArrayList<>();
-
-        if (neededResources != null && !neededResources.isEmpty())
+        if (needed != null)
         {
-            IStorageService storageService = grid.getStorageService();
-            KeyCounter inventory = storageService.getCachedInventory();
-
-            for (BuildingBuilderResource resource : neededResources.values())
+            for (var res : needed.values())
             {
-                ItemStack stack = resource.getItemStack();
-                int needed = resource.getAmount();
-                int available = resource.getAvailable();
-                int missing = needed - available;
-
-                if (missing <= 0) continue;
-
-                ItemStack missingStack = stack.copy();
-                missingStack.setCount(Math.min(missing, 64));
-
-                AEItemKey aeKey = AEItemKey.of(stack);
-                ResourceStatus status;
-
-                long inStorage = inventory.get(aeKey);
-                if (inStorage >= missing)
-                    status = ResourceStatus.AVAILABLE;
-                else if (craftingService.isRequesting(aeKey))
-                    status = ResourceStatus.CRAFTING;
-                else if (craftingService.isCraftable(aeKey))
-                    status = ResourceStatus.CRAFTABLE;
-                else
-                    status = ResourceStatus.NO_PATTERN;
-
-                entries.add(new ColonyLinkPacket.ResourceEntry(
-                        missingStack, status, missing, false, BlockPos.ZERO, new java.util.ArrayList<>()));
+                ItemStack st = res.getItemStack();
+                int miss = res.getAmount() - res.getAvailable();
+                if (miss <= 0) continue;
+                ItemStack ms = st.copy(); ms.setCount(Math.min(miss, 64));
+                AEItemKey k = AEItemKey.of(st); long inSt = inv.get(k);
+                ResourceStatus stat;
+                if (inSt >= miss)              stat = ResourceStatus.AVAILABLE;
+                else if (cs.isRequesting(k))   stat = ResourceStatus.CRAFTING;
+                else if (cs.isCraftable(k))    stat = ResourceStatus.CRAFTABLE;
+                else                           stat = ResourceStatus.NO_PATTERN;
+                entries.add(new ColonyLinkPacket.ResourceEntry(ms, stat, miss, false, safeR, new ArrayList<>()));
             }
         }
 
-        PacketDistributor.sendToPlayer((ServerPlayer) player, new ColonyLinkPacket(
-                entries, builderPos, builderName, buildingName, workerStatus, availableCpus, redirectorState,
-                ColonyLinkPacket.BuilderRequest.NONE, false, false));
+        long rfStored = WandEnergyStorage.getStoredRF(wandStack);
+        long rfMax    = ColonyLinkConfig.WAND_RF_CAPACITY.get();
+
+        PacketDistributor.sendToPlayer(player, new ColonyLinkPacket(
+                entries, builderPos, builderName, buildingName, workerStatus, "", cpus,
+                rState, ColonyLinkPacket.BuilderRequest.NONE,
+                hasCard, whPrio, buildTabMetas(allEntries), activeTabIndex,
+                rfStored, rfMax, false));
         return true;
     }
 
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    public static List<ColonyLinkPacket.BuilderTabMeta> buildTabMetas(List<BuilderEntry> entries)
+    {
+        List<ColonyLinkPacket.BuilderTabMeta> metas = new ArrayList<>();
+        for (BuilderEntry e : entries)
+            metas.add(new ColonyLinkPacket.BuilderTabMeta(
+                    e.builderPos(), e.builderName(), e.buildingLabel(), e.hasRedirector()));
+        return metas;
+    }
+
+    public static BlockPos getLastBuilderPos(ItemStack stack)
+    { return ColonyLinkWandLinkableHandler.getActiveBuilderPos(stack); }
+
     private IWirelessAccessPoint getWap(ItemStack wandStack, ServerLevel level)
     {
-        GlobalPos linkedPos = ColonyLinkWandLinkableHandler.getLinkedPos(wandStack);
-        if (linkedPos == null) return null;
-
-        ServerLevel targetLevel = level.getServer().getLevel(linkedPos.dimension());
-        if (targetLevel == null) return null;
-
-        var blockEntity = targetLevel.getBlockEntity(linkedPos.pos());
-        if (blockEntity instanceof IWirelessAccessPoint wap)
-            return wap;
-
+        GlobalPos lp = ColonyLinkWandLinkableHandler.getLinkedPos(wandStack);
+        if (lp == null) return null;
+        ServerLevel tl = level.getServer().getLevel(lp.dimension());
+        if (tl == null) return null;
+        var be = tl.getBlockEntity(lp.pos());
+        if (be instanceof IWirelessAccessPoint wap) return wap;
         return null;
     }
 }

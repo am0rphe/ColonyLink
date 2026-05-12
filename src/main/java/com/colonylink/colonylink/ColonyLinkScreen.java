@@ -8,82 +8,110 @@ import net.minecraft.world.item.ItemStack;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
+/**
+ * GUI principal de la ColonyLink Wand — v1.1.3.
+ *
+ * RF : affiché uniquement via barre de durabilité item + tooltip hotbar.
+ * Pas de barre RF dans ce GUI.
+ *
+ * Si rfStored == 0 : le contenu est remplacé par "Out of Power".
+ * Les boutons Send/Craft sont grisés (isButtonClickable retourne false).
+ */
 public class ColonyLinkScreen extends Screen
 {
-    private List<ColonyLinkPacket.ResourceEntry> entries;
-    private final BlockPos builderPos;
-    private int scrollOffset = 0;
-    private static final int ENTRY_HEIGHT = 20;
-    private static final int MAX_VISIBLE = 8;
-    private static final int SCROLLBAR_WIDTH = 6;
-
-    private static final int GUI_WIDTH = 276;
+    private static final int GUI_WIDTH  = 276;
     private static final int GUI_HEIGHT = 320;
 
-    private boolean isDraggingScrollbar = false;
-    private double dragStartY = 0;
-    private int dragStartOffset = 0;
+    private static final int TAB_WIDTH   = 20;
+    private static final int TAB_HEIGHT  = 24;
+    private static final int TAB_SPACING = 2;
+    private static final int TAB_Y_OFFSET = 30;
+    private static final int TAB_OVERLAP  = 4;
 
-    private String builderName = "";
-    private String buildingName = "";
-    private String workerStatus = "";
-    private int availableCpus = 0;
-    private String redirectorState = "N/A";
+    private static final int ENTRY_HEIGHT    = 20;
+    private static final int MAX_VISIBLE     = 8;
+    private static final int SCROLLBAR_WIDTH = 6;
 
-    // Feature 1 — requête prioritaire
+    // ── État ──────────────────────────────────────────────────────────────────
+    private List<ColonyLinkPacket.BuilderTabMeta> tabMetas = new ArrayList<>();
+    private int activeTabIndex = 0;
+    private boolean isRS = false; // true si la wand dans l'inventaire est une ColonyLinkWandRS
+
+    private List<ColonyLinkPacket.ResourceEntry> entries = new ArrayList<>();
+    private BlockPos builderPos      = BlockPos.ZERO;
+    private String   builderName     = "";
+    private String   buildingName    = "";
+    private String   workerStatus    = "";
+    private String   workerIdleReason = ""; // v1.1.3 — raison IDLE
+    private int      availableCpus   = 0;
+    private String   redirectorState = "N/A";
     private ColonyLinkPacket.BuilderRequest builderRequest = ColonyLinkPacket.BuilderRequest.NONE;
+    private boolean  hasWarehouseCard  = false;
+    private boolean  warehousePriority = false;
+    private BlockPos redirectorPos   = BlockPos.ZERO;
 
-    // ── Warehouse snapshot ────────────────────────────────────────────────────
-    /** true si le redirector lié a une WarehouseLinkCard insérée. */
-    private boolean hasWarehouseCard = false;
+    // v1.1.3 — RF reçu du serveur (pour éventuels usages futurs, non affiché ici)
+    private long rfStored = 0L;
+    private long rfMax    = 1_600_000L;
 
-    /** État du switch priorité : true = Warehouse first, false = AE2 first. */
-    private boolean warehousePriority = false;
+    private int     scrollOffset        = 0;
+    private boolean isDraggingScrollbar = false;
+    private double  dragStartY          = 0;
+    private int     dragStartOffset     = 0;
 
-    /** Position du redirector lié à la wand (pour envoyer le packet toggle). */
-    private BlockPos redirectorPos = BlockPos.ZERO;
+    private WarehouseResultPacket warehouseSnapshot       = null;
+    private long warehouseSnapshotReceivedMs              = 0;
+    private static final long SNAPSHOT_VALIDITY_MS        = 20_000L; // fallback si config non chargée
 
-    /**
-     * Snapshot du dernier scan warehouse.
-     * Clé : item (utilise l'identité d'ItemStack via le displayName + item pour simplifier ;
-     * en pratique on indexe par Item car la résolution est déjà faite côté serveur).
-     * Valeur : WarehouseResultPacket.WarehouseEntry
-     */
-    private WarehouseResultPacket warehouseSnapshot = null;
-
-    /** Timestamp client (System.currentTimeMillis) du dernier scan reçu. */
-    private long warehouseSnapshotReceivedMs = 0;
-
-    /** Durée de validité du snapshot côté client : 400 ticks = 20 secondes. */
-    private static final long SNAPSHOT_VALIDITY_MS = 20_000L;
-
-    /** Etat du bouton Check Warehouse : IDLE, LOADING, DONE. */
+    private long getSnapshotValidityMs()
+    {
+        return ColonyLinkConfig.WAREHOUSE_SNAPSHOT_VALIDITY_TICKS.get() * 50L; // ticks → ms
+    }
     private enum WareCheckState { IDLE, LOADING, DONE }
     private WareCheckState wareCheckState = WareCheckState.IDLE;
 
-    // ────────────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
 
     public ColonyLinkScreen(ColonyLinkPacket packet)
     {
-        super(Component.literal("Colony Link - Builder Resources"));
-        this.entries = packet.entries();
-        this.builderPos = packet.builderPos();
-        this.builderName = packet.builderName();
-        this.buildingName = packet.buildingName();
-        this.workerStatus = packet.workerStatus();
-        this.availableCpus = packet.availableCpus();
+        super(Component.literal("Colony Link"));
+        applyPacket(packet);
+    }
+
+    private void applyPacket(ColonyLinkPacket packet)
+    {
+        this.entries        = packet.entries();
+        this.builderPos     = packet.builderPos();
+        this.builderName    = packet.builderName();
+        this.buildingName   = packet.buildingName();
+        this.workerStatus   = packet.workerStatus();
+        this.workerIdleReason = packet.workerIdleReason() != null ? packet.workerIdleReason() : "";
+        this.availableCpus  = packet.availableCpus();
         this.redirectorState = packet.redirectorState();
         this.builderRequest = packet.builderRequest() != null
                 ? packet.builderRequest() : ColonyLinkPacket.BuilderRequest.NONE;
-        this.hasWarehouseCard = packet.hasWarehouseCard();
+        this.hasWarehouseCard  = packet.hasWarehouseCard();
         this.warehousePriority = packet.warehousePriority();
-        // Récupère la position du redirector depuis la première entrée (ou ZERO si vide)
-        this.redirectorPos = packet.entries().isEmpty()
-                ? BlockPos.ZERO : packet.entries().get(0).redirectorPos();
+        this.tabMetas       = packet.tabMetas() != null ? packet.tabMetas() : new ArrayList<>();
+        this.activeTabIndex = packet.activeTabIndex();
+        this.rfStored       = packet.rfStored();
+        this.rfMax          = packet.rfMax() > 0 ? packet.rfMax() : 1_600_000L;
+        this.isRS           = packet.isRS();
+
+        if (!entries.isEmpty() && !entries.get(0).redirectorPos().equals(BlockPos.ZERO))
+            this.redirectorPos = entries.get(0).redirectorPos();
+
+        int maxOffset = Math.max(0, entries.size() - MAX_VISIBLE);
+        if (scrollOffset > maxOffset) scrollOffset = maxOffset;
+    }
+
+    public void updateFromPacket(ColonyLinkPacket packet)
+    {
+        applyPacket(packet);
+        if (tabMetas.isEmpty() && this.minecraft != null)
+            this.minecraft.setScreen(null);
     }
 
     public void updateEntries(List<ColonyLinkPacket.ResourceEntry> newEntries, String builderName,
@@ -91,14 +119,14 @@ public class ColonyLinkScreen extends Screen
                               String redirectorState, ColonyLinkPacket.BuilderRequest builderRequest,
                               boolean hasWarehouseCard, boolean warehousePriority)
     {
-        this.entries = newEntries;
-        this.builderName = builderName;
-        this.buildingName = buildingName;
-        this.workerStatus = workerStatus;
-        this.availableCpus = availableCpus;
+        this.entries        = newEntries;
+        this.builderName    = builderName;
+        this.buildingName   = buildingName;
+        this.workerStatus   = workerStatus;
+        this.availableCpus  = availableCpus;
         this.redirectorState = redirectorState;
         this.builderRequest = builderRequest != null ? builderRequest : ColonyLinkPacket.BuilderRequest.NONE;
-        this.hasWarehouseCard = hasWarehouseCard;
+        this.hasWarehouseCard  = hasWarehouseCard;
         this.warehousePriority = warehousePriority;
         if (!newEntries.isEmpty() && !newEntries.get(0).redirectorPos().equals(BlockPos.ZERO))
             this.redirectorPos = newEntries.get(0).redirectorPos();
@@ -106,210 +134,34 @@ public class ColonyLinkScreen extends Screen
         if (scrollOffset > maxOffset) scrollOffset = maxOffset;
     }
 
-    /**
-     * Appelé par WarehouseResultPacket.handle() quand le serveur répond au scan.
-     */
     public void updateWarehouseSnapshot(WarehouseResultPacket packet)
     {
-        this.warehouseSnapshot = packet;
+        this.warehouseSnapshot           = packet;
         this.warehouseSnapshotReceivedMs = System.currentTimeMillis();
         this.wareCheckState = packet.scanSuccess() ? WareCheckState.DONE : WareCheckState.IDLE;
     }
 
-    /**
-     * Retourne les données warehouse pour un item donné depuis le snapshot actif.
-     * Retourne null si le snapshot est absent, expiré, ou ne contient pas cet item.
-     */
-    private WarehouseResultPacket.WarehouseEntry getWarehouseEntry(ItemStack stack)
-    {
-        if (warehouseSnapshot == null) return null;
-        if (System.currentTimeMillis() - warehouseSnapshotReceivedMs > SNAPSHOT_VALIDITY_MS)
-        {
-            warehouseSnapshot = null;
-            wareCheckState = WareCheckState.IDLE;
-            return null;
-        }
-        for (WarehouseResultPacket.WarehouseEntry entry : warehouseSnapshot.entries())
-        {
-            if (ItemStack.isSameItem(entry.stack(), stack))
-                return entry;
-        }
-        return null;
-    }
+    // ── RF helpers ────────────────────────────────────────────────────────────
+    private boolean isOutOfPower() { return rfStored <= 0; }
 
-    @Override
-    protected void init()
-    {
-        super.init();
-        PacketDistributor.sendToServer(new GuiStatePacket(true, builderPos));
-    }
-
-    @Override
-    public void onClose()
-    {
-        PacketDistributor.sendToServer(new GuiStatePacket(false, builderPos));
-        super.onClose();
-    }
-
-    // ── Coordonnées GUI ───────────────────────────────────────────────────
-
-    private int getGuiX() { return (this.width - GUI_WIDTH) / 2; }
+    // ── Coordonnées ───────────────────────────────────────────────────────────
+    private int getGuiX() { return (this.width - GUI_WIDTH - TAB_WIDTH) / 2 + TAB_WIDTH; }
     private int getGuiY() { return (this.height - GUI_HEIGHT) / 2; }
 
-    /** Y de départ de la liste de ressources (après panel info + panel requête PNJ). */
-    private int getListStartY() { return getGuiY() + 112; }
-
-    private int getScrollbarX() { return getGuiX() + GUI_WIDTH - 16; }
-    private int getScrollbarTop() { return getListStartY() + 1; }
+    private int getListStartY()      { return getGuiY() + 112; }
+    private int getScrollbarX()      { return getGuiX() + GUI_WIDTH - 16; }
+    private int getScrollbarTop()    { return getListStartY() + 1; }
     private int getScrollbarBottom() { return getScrollbarTop() + MAX_VISIBLE * ENTRY_HEIGHT; }
     private int getScrollbarHeight() { return getScrollbarBottom() - getScrollbarTop(); }
 
-    private int getThumbHeight()
-    {
-        if (entries.size() <= MAX_VISIBLE) return getScrollbarHeight();
-        return Math.max(20, getScrollbarHeight() * MAX_VISIBLE / entries.size());
-    }
-
-    private int getThumbY()
-    {
-        if (entries.size() <= MAX_VISIBLE) return getScrollbarTop();
-        int maxOffset = entries.size() - MAX_VISIBLE;
-        return getScrollbarTop() + (getScrollbarHeight() - getThumbHeight()) * scrollOffset / maxOffset;
-    }
-
-    // ── Bouton Check Warehouse ────────────────────────────────────────────
+    private int getTabX(int i) { return getGuiX() - TAB_WIDTH + (i == activeTabIndex ? TAB_OVERLAP : 0); }
+    private int getTabY(int i) { return getGuiY() + TAB_Y_OFFSET + i * (TAB_HEIGHT + TAB_SPACING); }
+    private int getAddTabY()   { return getTabY(tabMetas.size()); }
 
     private int getWareCheckBtnX() { return getGuiX() + 8; }
     private int getWareCheckBtnY() { return getGuiY() + GUI_HEIGHT - 40; }
     private int getWareCheckBtnW() { return 120; }
     private int getWareCheckBtnH() { return 14; }
-
-    // ── Couleurs boutons ──────────────────────────────────────────────────
-
-    private int getButtonColor(ResourceStatus status)
-    {
-        return switch (status)
-        {
-            case AVAILABLE  -> 0xFF004488;
-            case CRAFTABLE  -> 0xFF005500;
-            case NO_PATTERN -> 0xFF550000;
-            case CRAFTING   -> 0xFF885500;
-            case MISSING    -> 0xFF5D3A00;
-        };
-    }
-
-    private int getButtonHoverColor(ResourceStatus status)
-    {
-        return switch (status)
-        {
-            case AVAILABLE  -> 0xFF0066CC;
-            case CRAFTABLE  -> 0xFF007700;
-            case NO_PATTERN -> 0xFF660000;
-            case CRAFTING   -> 0xFF885500;
-            case MISSING    -> 0xFF8B5E00;
-        };
-    }
-
-    private int getButtonTextColor(ResourceStatus status)
-    {
-        return switch (status)
-        {
-            case AVAILABLE  -> 0x4488FF;
-            case CRAFTABLE  -> 0x00FF00;
-            case NO_PATTERN -> 0xFF4444;
-            case CRAFTING   -> 0xFFAA00;
-            case MISSING    -> 0xFFCC66;
-        };
-    }
-
-    private String getButtonText(ResourceStatus status)
-    {
-        return switch (status)
-        {
-            case AVAILABLE  -> "Available";
-            case CRAFTABLE  -> "Craft";
-            case NO_PATTERN -> "No Pattern";
-            case CRAFTING   -> "Crafting...";
-            case MISSING    -> "Missing";
-        };
-    }
-
-    private String getRequestButtonText(ResourceStatus status)
-    {
-        return switch (status)
-        {
-            case AVAILABLE  -> "Fulfill";
-            case CRAFTABLE  -> "Craft";
-            case NO_PATTERN -> "No Pattern";
-            case CRAFTING   -> "Crafting...";
-            case MISSING    -> "Missing";
-        };
-    }
-
-    private boolean isButtonClickable(ResourceStatus status)
-    {
-        return status == ResourceStatus.CRAFTABLE
-                || status == ResourceStatus.AVAILABLE
-                || status == ResourceStatus.MISSING;
-    }
-
-    /**
-     * Version avec context warehouse : un item NO_PATTERN devient cliquable
-     * si le snapshot warehouse indique qu'il peut être couvert (viaCraft > 0 ou inWarehouse > 0).
-     */
-    private boolean isButtonClickable(ResourceStatus status, ItemStack stack)
-    {
-        if (isButtonClickable(status)) return true;
-        if (status == ResourceStatus.NO_PATTERN)
-        {
-            WarehouseResultPacket.WarehouseEntry we = getWarehouseEntry(stack);
-            return we != null && (we.inWarehouse() > 0 || we.viaCraft() > 0);
-        }
-        return false;
-    }
-
-    /**
-     * Texte du bouton tenant compte du snapshot warehouse.
-     */
-    private String getButtonTextWithWarehouse(ResourceStatus status, ItemStack stack)
-    {
-        if (status == ResourceStatus.NO_PATTERN)
-        {
-            WarehouseResultPacket.WarehouseEntry we = getWarehouseEntry(stack);
-            if (we != null && we.inWarehouse() > 0) return "Send (WH)";
-            if (we != null && we.viaCraft() > 0) return "Craft (WH)";
-        }
-        return getButtonText(status);
-    }
-
-    /**
-     * Couleur du bouton tenant compte du snapshot warehouse.
-     */
-    private int getButtonColorWithWarehouse(ResourceStatus status, ItemStack stack, boolean hovered)
-    {
-        if (status == ResourceStatus.NO_PATTERN)
-        {
-            WarehouseResultPacket.WarehouseEntry we = getWarehouseEntry(stack);
-            if (we != null && (we.inWarehouse() > 0 || we.viaCraft() > 0))
-                return hovered ? 0xFF336655 : 0xFF224433;
-        }
-        return hovered && isButtonClickable(status) ? getButtonHoverColor(status) : getButtonColor(status);
-    }
-
-    // ── Bounds boutons liste ──────────────────────────────────────────────
-
-    private void getBtnBounds(int i, int[] out)
-    {
-        int x = getGuiX();
-        int listWidth = GUI_WIDTH - 26;
-        int entryY = getListStartY() + i * ENTRY_HEIGHT;
-        out[0] = x + 7 + listWidth - 60;
-        out[1] = entryY + 2;
-        out[2] = 58;
-        out[3] = 16;
-    }
-
-    // ── Bounds boutons globaux ────────────────────────────────────────────
 
     private int getCraftAllBtnX() { return getGuiX() + 8; }
     private int getCraftAllBtnY() { return getGuiY() + GUI_HEIGHT - 22; }
@@ -326,604 +178,749 @@ public class ColonyLinkScreen extends Screen
     private int getRestartBtnW() { return 52; }
     private int getRestartBtnH() { return 14; }
 
+    private int getDeleteBtnX() { return getGuiX() + 8; }
+    private int getDeleteBtnY() { return getGuiY() + 4; }
+    private int getDeleteBtnW() { return 46; }
+    private int getDeleteBtnH() { return 14; }
+
     private int getReqBtnX() { return getGuiX() + GUI_WIDTH - 76; }
     private int getReqBtnY() { return getGuiY() + 92; }
     private int getReqBtnW() { return 64; }
     private int getReqBtnH() { return 16; }
 
-    // ── Helpers état ──────────────────────────────────────────────────────
+    private int getSwitchX() { return getGuiX() + GUI_WIDTH - 118; }
+    private int getSwitchY() { return getWareCheckBtnY(); }
+    private int getSwitchW() { return 110; }
+    private int getSwitchH() { return 14; }
+
+    private int getThumbHeight()
+    {
+        if (entries.size() <= MAX_VISIBLE) return getScrollbarHeight();
+        return Math.max(20, getScrollbarHeight() * MAX_VISIBLE / entries.size());
+    }
+
+    private int getThumbY()
+    {
+        if (entries.size() <= MAX_VISIBLE) return getScrollbarTop();
+        int maxOffset = entries.size() - MAX_VISIBLE;
+        return getScrollbarTop() + (getScrollbarHeight() - getThumbHeight()) * scrollOffset / maxOffset;
+    }
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+    @Override
+    protected void init()
+    {
+        super.init();
+        // isRS est fourni par le packet serveur (ColonyLinkPacket.isRS())
+        // On détecte la wand pour envoyer le bon GuiStatePacket d'ouverture
+        boolean hasWandRS = false;
+        if (this.minecraft != null && this.minecraft.player != null)
+        {
+            for (net.minecraft.world.item.ItemStack s : this.minecraft.player.getInventory().items)
+                if (s.getItem() instanceof ColonyLinkWandRS) { hasWandRS = true; break; }
+        }
+        // Si les deux wands sont présentes, on se fie à isRS reçu du serveur
+        // (défini par quel viewer a envoyé le GuiStatePacket)
+        // Pour l'ouverture initiale, on détecte quelle wand est tenue en main
+        if (this.minecraft != null && this.minecraft.player != null
+                && this.minecraft.player.getMainHandItem().getItem() instanceof ColonyLinkWandRS)
+        {
+            PacketDistributor.sendToServer(new GuiStatePacketRS(true, builderPos, activeTabIndex));
+        }
+        else if (hasWandRS && !isRS)
+        {
+            // RS2 dans l'inventaire mais GUI ouvert en AE2 → AE2
+            PacketDistributor.sendToServer(new GuiStatePacket(true, builderPos, activeTabIndex));
+        }
+        else if (hasWandRS)
+        {
+            PacketDistributor.sendToServer(new GuiStatePacketRS(true, builderPos, activeTabIndex));
+        }
+        else
+        {
+            PacketDistributor.sendToServer(new GuiStatePacket(true, builderPos, activeTabIndex));
+        }
+    }
+
+    @Override
+    public void onClose()
+    {
+        if (isRS)
+            PacketDistributor.sendToServer(new GuiStatePacketRS(false, builderPos, activeTabIndex));
+        else
+            PacketDistributor.sendToServer(new GuiStatePacket(false, builderPos, activeTabIndex));
+        super.onClose();
+    }
+
+    // ── Helpers boutons ───────────────────────────────────────────────────────
+    private int getButtonColor(ResourceStatus status)
+    {
+        return switch (status) {
+            case AVAILABLE  -> 0xFF004488;
+            case CRAFTABLE  -> 0xFF005500;
+            case NO_PATTERN -> 0xFF550000;
+            case CRAFTING   -> 0xFF885500;
+            case MISSING    -> 0xFF5D3A00;
+        };
+    }
+
+    private int getButtonHoverColor(ResourceStatus status)
+    {
+        return switch (status) {
+            case AVAILABLE  -> 0xFF0066CC;
+            case CRAFTABLE  -> 0xFF007700;
+            case NO_PATTERN -> 0xFF660000;
+            case CRAFTING   -> 0xFF885500;
+            case MISSING    -> 0xFF8B5E00;
+        };
+    }
+
+    private int getButtonTextColor(ResourceStatus status)
+    {
+        return switch (status) {
+            case AVAILABLE  -> 0x4488FF;
+            case CRAFTABLE  -> 0x00FF00;
+            case NO_PATTERN -> 0xFF4444;
+            case CRAFTING   -> 0xFFAA00;
+            case MISSING    -> 0xFFCC66;
+        };
+    }
+
+    private String getButtonText(ResourceStatus status)
+    {
+        return switch (status) {
+            case AVAILABLE  -> "Available";
+            case CRAFTABLE  -> "Craft";
+            case NO_PATTERN -> "No Pattern";
+            case CRAFTING   -> "Crafting...";
+            case MISSING    -> "Missing";
+        };
+    }
+
+    private String getRequestButtonText(ResourceStatus status)
+    {
+        return switch (status) {
+            case AVAILABLE  -> "Fulfill";
+            case CRAFTABLE  -> "Craft";
+            case NO_PATTERN -> "No Pattern";
+            case CRAFTING   -> "Crafting...";
+            case MISSING    -> "Missing";
+        };
+    }
+
+    private boolean isButtonClickable(ResourceStatus status)
+    {
+        if (isOutOfPower()) return false;
+        if (status == ResourceStatus.AVAILABLE && !redirectorReady()) return false;
+        return status == ResourceStatus.CRAFTABLE
+                || status == ResourceStatus.AVAILABLE
+                || status == ResourceStatus.MISSING;
+    }
+
+    private boolean isButtonClickable(ResourceStatus status, ItemStack stack)
+    {
+        if (isOutOfPower()) return false;
+        if (isButtonClickable(status)) return true;
+        if (status == ResourceStatus.NO_PATTERN)
+        {
+            WarehouseResultPacket.WarehouseEntry we = getWarehouseEntry(stack);
+            return we != null && (we.inWarehouse() > 0 || we.viaCraft() > 0);
+        }
+        return false;
+    }
+
+    private String getButtonTextWithWarehouse(ResourceStatus status, ItemStack stack)
+    {
+        if (status == ResourceStatus.NO_PATTERN)
+        {
+            WarehouseResultPacket.WarehouseEntry we = getWarehouseEntry(stack);
+            if (we != null && we.inWarehouse() > 0) return "Send (WH)";
+            if (we != null && we.viaCraft() > 0)    return "Craft (WH)";
+        }
+        return getButtonText(status);
+    }
+
+    private int getButtonColorWithWarehouse(ResourceStatus status, ItemStack stack, boolean hovered)
+    {
+        if (status == ResourceStatus.NO_PATTERN)
+        {
+            WarehouseResultPacket.WarehouseEntry we = getWarehouseEntry(stack);
+            if (we != null && (we.inWarehouse() > 0 || we.viaCraft() > 0))
+                return hovered ? 0xFF336655 : 0xFF224433;
+        }
+        return hovered && isButtonClickable(status) ? getButtonHoverColor(status) : getButtonColor(status);
+    }
+
+    private WarehouseResultPacket.WarehouseEntry getWarehouseEntry(ItemStack stack)
+    {
+        if (warehouseSnapshot == null) return null;
+        if (System.currentTimeMillis() - warehouseSnapshotReceivedMs > getSnapshotValidityMs())
+        {
+            warehouseSnapshot = null;
+            wareCheckState = WareCheckState.IDLE;
+            return null;
+        }
+        for (WarehouseResultPacket.WarehouseEntry entry : warehouseSnapshot.entries())
+            if (ItemStack.isSameItem(entry.stack(), stack)) return entry;
+        return null;
+    }
+
+    private boolean hasWarehouseCraft(ItemStack stack)
+    {
+        WarehouseResultPacket.WarehouseEntry e = getWarehouseEntry(stack);
+        return e != null && (e.viaCraft() > 0 || e.inWarehouse() > 0);
+    }
 
     private boolean hasCraftableItems()
     {
+        if (isOutOfPower()) return false;
         return entries.stream().anyMatch(e ->
                 e.status() == ResourceStatus.CRAFTABLE || e.status() == ResourceStatus.MISSING);
     }
 
     private boolean hasAvailableItems()
     {
+        if (isOutOfPower()) return false;
+        if (redirectorState.equals("N/A") || redirectorState.equals("NOT_LINKED")) return false;
         return entries.stream().anyMatch(e -> e.status() == ResourceStatus.AVAILABLE);
+    }
+
+    private boolean redirectorReady()
+    {
+        return redirectorState.equals("LINKED") || redirectorState.equals("STANDBY");
     }
 
     private int getWorkerStatusColor()
     {
         if (workerStatus == null) return 0x888888;
         if (workerStatus.contains("work") || workerStatus.contains("Working")) return 0x00FF00;
-        if (workerStatus.contains("sleep") || workerStatus.contains("Sleep")) return 0x4488FF;
-        if (workerStatus.contains("eat") || workerStatus.contains("Eat")) return 0xFFAA00;
-        if (workerStatus.contains("sick") || workerStatus.contains("Sick")) return 0xFF4444;
-        if (workerStatus.contains("Stuck") || workerStatus.contains("STUCK")) return 0xFF0000;
-        if (workerStatus.contains("Idle") || workerStatus.contains("IDLE")) return 0xFFFF00;
+        if (workerStatus.contains("sleep") || workerStatus.contains("Sleep"))  return 0x4488FF;
+        if (workerStatus.contains("eat")   || workerStatus.contains("Eat"))    return 0xFFAA00;
+        if (workerStatus.contains("sick")  || workerStatus.contains("Sick"))   return 0xFF4444;
+        if (workerStatus.contains("Stuck") || workerStatus.contains("STUCK"))  return 0xFF0000;
+        if (workerStatus.contains("Idle")  || workerStatus.contains("IDLE"))   return 0xFFFF00;
         return 0xCCCCCC;
     }
 
-    // ── Dessin panel info ─────────────────────────────────────────────────
-
-    private void drawInfoPanel(GuiGraphics graphics, int x, int y)
+    private void getBtnBounds(int i, int[] out)
     {
-        int panelH = 58;
-        graphics.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 22 + panelH, 0xFF3A3A3A);
-        graphics.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 23, 0xFF8B8B8B);
-        graphics.fill(x + 6, y + 22, x + 7, y + 22 + panelH, 0xFF8B8B8B);
-        graphics.fill(x + 6, y + 22 + panelH - 1, x + GUI_WIDTH - 6, y + 22 + panelH, 0xFF373737);
-        graphics.fill(x + GUI_WIDTH - 7, y + 22, x + GUI_WIDTH - 6, y + 22 + panelH, 0xFF373737);
-
-        graphics.drawString(this.font, "§7Builder: §f" + builderName, x + 10, y + 26, 0xFFFFFF, false);
-        graphics.drawString(this.font, "§7Building: §f" + buildingName, x + 10, y + 36, 0xFFFFFF, false);
-
-        String statusLabel = "§7Status: ";
-        graphics.drawString(this.font, statusLabel, x + 10, y + 46, 0xFFFFFF, false);
-        graphics.drawString(this.font, workerStatus,
-                x + 10 + this.font.width(statusLabel), y + 46, getWorkerStatusColor(), false);
-
-        graphics.drawString(this.font, "§7CPUs: §f" + availableCpus, x + 10, y + 58, 0xFFFFFF, false);
-
-        int redirectorColor = switch (redirectorState)
-        {
-            case "LINKED"      -> 0x00FF00;
-            case "STANDBY"     -> 0xFF8800;
-            case "NOT_LINKED"  -> 0xAAAAAA;
-            default            -> 0x888888;
-        };
-        String redirectorDisplay = switch (redirectorState)
-        {
-            case "LINKED"     -> "Linked";
-            case "STANDBY"    -> "Standby";
-            case "NOT_LINKED" -> "Not Linked";
-            default           -> redirectorState;
-        };
-        String redirectorLabel = "§7Redirector: ";
-        graphics.drawString(this.font, redirectorLabel, x + 100, y + 58, 0xFFFFFF, false);
-        graphics.drawString(this.font, redirectorDisplay,
-                x + 100 + this.font.width(redirectorLabel), y + 58, redirectorColor, false);
+        int x = getGuiX();
+        int listWidth = GUI_WIDTH - 26;
+        int entryY = getListStartY() + i * ENTRY_HEIGHT;
+        out[0] = x + 7 + listWidth - 60;
+        out[1] = entryY + 2;
+        out[2] = 58;
+        out[3] = 16;
     }
 
-    // ── Feature 1 : Dessin panel requête PNJ ─────────────────────────────
-
-    private void drawRequestPanel(GuiGraphics graphics, int x, int y, int mouseX, int mouseY)
+    // ── Tabs ──────────────────────────────────────────────────────────────────
+    private void drawTabs(GuiGraphics g, int mx, int my, List<Component> tip)
     {
-        int panelY = y + 80;
-        int panelH = 30;
-        graphics.fill(x + 6, panelY, x + GUI_WIDTH - 6, panelY + panelH, 0xFF2E2E4A);
-        graphics.fill(x + 6, panelY, x + GUI_WIDTH - 6, panelY + 1, 0xFF6666AA);
-        graphics.fill(x + 6, panelY, x + 7, panelY + panelH, 0xFF6666AA);
-        graphics.fill(x + 6, panelY + panelH - 1, x + GUI_WIDTH - 6, panelY + panelH, 0xFF1A1A3A);
-        graphics.fill(x + GUI_WIDTH - 7, panelY, x + GUI_WIDTH - 6, panelY + panelH, 0xFF1A1A3A);
-        graphics.fill(x + 7, panelY + 11, x + GUI_WIDTH - 7, panelY + 12, 0xFF3A3A6A);
-
-        graphics.drawString(this.font, "§9Priority Request:", x + 10, panelY + 3, 0xAAAAFF, false);
-
-        boolean hasRequest = builderRequest != null
-                && !builderRequest.stack().isEmpty()
-                && builderRequest.count() > 0;
-
-        if (!hasRequest)
+        for (int i = 0; i < tabMetas.size(); i++)
         {
-            graphics.drawString(this.font, "§8None", x + 10, panelY + 14, 0x666666, false);
-            return;
+            var meta = tabMetas.get(i);
+            boolean active = (i == activeTabIndex);
+            int tx = getTabX(i), ty = getTabY(i), tw = TAB_WIDTH, th = TAB_HEIGHT;
+
+            int bg, bl, bd;
+            if (active)
+            { bg = 0xFF8B8B8B; bl = 0xFFFFFFFF; bd = 0xFF555555; }
+            else if (!meta.hasRedirector())
+            { bg = 0xFF5A3A10; bl = 0xFF886633; bd = 0xFF221500; }
+            else
+            { bg = 0xFF4A4A4A; bl = 0xFF6B6B6B; bd = 0xFF222222; }
+
+            g.fill(tx, ty, tx + tw, ty + th, bg);
+            g.fill(tx, ty, tx + tw, ty + 1, bl);
+            g.fill(tx, ty, tx + 1, ty + th, bl);
+            g.fill(tx, ty + th - 1, tx + tw, ty + th, bd);
+            if (!active) g.fill(tx + tw - 1, ty, tx + tw, ty + th, bd);
+            drawGearIcon(g, tx + (tw - 10) / 2, ty + (th - 10) / 2, active, meta.hasRedirector());
+
+            if (mx >= tx && mx <= tx + tw && my >= ty && my <= ty + th)
+            {
+                tip.clear();
+                tip.add(Component.literal("§f" + meta.builderName()));
+                tip.add(Component.literal("§7" + meta.buildingLabel()));
+                tip.add(Component.literal("§8@ " + meta.builderPos().toShortString()));
+                tip.add(meta.hasRedirector()
+                        ? Component.literal("§aRedirector linked")
+                        : Component.literal("§e⚠ No Redirector linked"));
+            }
         }
 
-        int itemX = x + 10;
-        int itemY = panelY + 12;
-        graphics.renderItem(builderRequest.stack(), itemX, itemY);
-
-        String reqText = builderRequest.count() + "x " + builderRequest.stack().getDisplayName().getString();
-        graphics.drawString(this.font, reqText, itemX + 18, panelY + 17, 0xFFFFFF, false);
-
-        int rbX = getReqBtnX();
-        int rbY = getReqBtnY();
-        int rbW = getReqBtnW();
-        int rbH = getReqBtnH();
-        ResourceStatus reqStatus = builderRequest.status();
-
-        boolean hovered = mouseX >= rbX && mouseX <= rbX + rbW
-                && mouseY >= rbY && mouseY <= rbY + rbH;
-
-        int btnBg = hovered && isButtonClickable(reqStatus)
-                ? getButtonHoverColor(reqStatus)
-                : getButtonColor(reqStatus);
-
-        graphics.fill(rbX, rbY, rbX + rbW, rbY + rbH, btnBg);
-        graphics.fill(rbX, rbY, rbX + rbW, rbY + 1, 0xFFFFFFFF);
-        graphics.fill(rbX, rbY, rbX + 1, rbY + rbH, 0xFFFFFFFF);
-        graphics.fill(rbX, rbY + rbH - 1, rbX + rbW, rbY + rbH, 0xFF373737);
-        graphics.fill(rbX + rbW - 1, rbY, rbX + rbW, rbY + rbH, 0xFF373737);
-        graphics.drawCenteredString(this.font, getRequestButtonText(reqStatus),
-                rbX + rbW / 2, rbY + 4, getButtonTextColor(reqStatus));
-    }
-
-    // ── Dessin bouton (helper réutilisable) ───────────────────────────────
-
-    private void drawButton(GuiGraphics graphics, int bx, int by, int bw, int bh,
-                            int bgColor, String label, int textColor)
-    {
-        graphics.fill(bx, by, bx + bw, by + bh, bgColor);
-        graphics.fill(bx, by, bx + bw, by + 1, 0xFFFFFFFF);
-        graphics.fill(bx, by, bx + 1, by + bh, 0xFFFFFFFF);
-        graphics.fill(bx, by + bh - 1, bx + bw, by + bh, 0xFF373737);
-        graphics.fill(bx + bw - 1, by, bx + bw, by + bh, 0xFF373737);
-        graphics.drawCenteredString(this.font, label, bx + bw / 2, by + 3, textColor);
-    }
-
-    // ── Dessin switch priorité Warehouse/AE2 ─────────────────────────────
-
-    /**
-     * Switch visuel :
-     *   [ ● Warehouse    AE2 ]  ← warehousePriority = true
-     *   [ Warehouse    AE2 ● ]  ← warehousePriority = false
-     *
-     * Affiché uniquement si hasWarehouseCard.
-     * Placé à droite du bouton Check Warehouse sur la même ligne.
-     */
-    private void drawPrioritySwitch(GuiGraphics graphics, int mouseX, int mouseY)
-    {
-        if (!hasWarehouseCard) return;
-
-        int sw = 110; // largeur totale du switch
-        int sh = 14;  // hauteur
-        int sx = getGuiX() + GUI_WIDTH - sw - 8;
-        int sy = getWareCheckBtnY();
-
-        boolean hovered = mouseX >= sx && mouseX <= sx + sw
-                && mouseY >= sy && mouseY <= sy + sh;
-
-        // Fond du switch
-        graphics.fill(sx, sy, sx + sw, sy + sh, 0xFF2A2A2A);
-        graphics.fill(sx, sy, sx + sw, sy + 1, 0xFF555555);
-        graphics.fill(sx, sy, sx + 1, sy + sh, 0xFF555555);
-        graphics.fill(sx, sy + sh - 1, sx + sw, sy + sh, 0xFF111111);
-        graphics.fill(sx + sw - 1, sy, sx + sw, sy + sh, 0xFF111111);
-
-        // Moitié gauche = Warehouse, moitié droite = AE2
-        int half = sw / 2;
-
-        if (warehousePriority)
+        if (tabMetas.size() < ColonyLinkWandLinkableHandler.getMaxBuilders())
         {
-            // Warehouse actif : fond vert à gauche
-            graphics.fill(sx + 1, sy + 1, sx + half, sy + sh - 1, 0xFF224422);
-            // Indicateur (pastille) à gauche
-            graphics.fill(sx + 3, sy + 3, sx + 9, sy + sh - 3, 0xFF00FF88);
+            int tx = getGuiX() - TAB_WIDTH, ty = getAddTabY(), tw = TAB_WIDTH, th = TAB_HEIGHT;
+            boolean hov = mx >= tx && mx <= tx + tw && my >= ty && my <= ty + th;
+            g.fill(tx, ty, tx + tw, ty + th, hov ? 0xFF226622 : 0xFF1A4A1A);
+            g.fill(tx, ty, tx + tw, ty + 1, 0xFF44AA44);
+            g.fill(tx, ty, tx + 1, ty + th, 0xFF44AA44);
+            g.fill(tx, ty + th - 1, tx + tw, ty + th, 0xFF113311);
+            g.fill(tx + tw - 1, ty, tx + tw, ty + th, 0xFF113311);
+            int cx = tx + tw / 2, cy = ty + th / 2;
+            g.fill(cx - 3, cy - 1, cx + 4, cy + 2, 0xFF44FF44);
+            g.fill(cx - 1, cy - 3, cx + 2, cy + 4, 0xFF44FF44);
+            if (hov)
+            {
+                tip.clear();
+                tip.add(Component.literal("§aAdd a new builder"));
+                tip.add(Component.literal("§7Click to start pairing mode"));
+            }
+        }
+    }
+
+    private void drawGearIcon(GuiGraphics g, int ox, int oy, boolean active, boolean hasRedir)
+    {
+        int col  = active ? 0xFFE0E0E0 : (hasRedir ? 0xFF888888 : 0xFFBB7722);
+        int hole = active ? 0xFF8B8B8B : (hasRedir ? 0xFF4A4A4A : 0xFF5A3A10);
+        g.fill(ox + 3, oy + 1, ox + 7, oy + 9, col);
+        g.fill(ox + 1, oy + 3, ox + 9, oy + 7, col);
+        g.fill(ox + 4, oy,     ox + 6, oy + 2,  col);
+        g.fill(ox + 4, oy + 8, ox + 6, oy + 10, col);
+        g.fill(ox,     oy + 4, ox + 2, oy + 6,  col);
+        g.fill(ox + 8, oy + 4, ox + 10, oy + 6, col);
+        g.fill(ox + 4, oy + 4, ox + 6, oy + 6, hole);
+    }
+
+    // ── Info panel ────────────────────────────────────────────────────────────
+    private void drawInfoPanel(GuiGraphics g, int x, int y)
+    {
+        int panelH = 58;
+        g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 22 + panelH, 0xFF3A3A3A);
+        g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 23, 0xFF8B8B8B);
+        g.fill(x + 6, y + 22, x + 7, y + 22 + panelH, 0xFF8B8B8B);
+        g.fill(x + 6, y + 22 + panelH - 1, x + GUI_WIDTH - 6, y + 22 + panelH, 0xFF373737);
+        g.fill(x + GUI_WIDTH - 7, y + 22, x + GUI_WIDTH - 6, y + 22 + panelH, 0xFF373737);
+
+        if (!isOutOfPower())
+        {
+            g.drawString(this.font, "§7Builder: §f" + builderName,   x + 10, y + 26, 0xFFFFFF, false);
+            g.drawString(this.font, "§7Building: §f" + buildingName, x + 10, y + 36, 0xFFFFFF, false);
+
+            String sl = "§7Status: ";
+            g.drawString(this.font, sl, x + 10, y + 46, 0xFFFFFF, false);
+            g.drawString(this.font, workerStatus,
+                    x + 10 + this.font.width(sl), y + 46, getWorkerStatusColor(), false);
+
+            // v1.1.3 — Raison IDLE sous le statut
+            if (!workerIdleReason.isEmpty())
+            {
+                // Si plusieurs raisons (séparées par " | "), on les affiche sur une ligne condensée
+                String reasonDisplay = workerIdleReason.length() > 40
+                        ? workerIdleReason.substring(0, 38) + "…"
+                        : workerIdleReason;
+                g.drawString(this.font, reasonDisplay, x + 10, y + 56, 0xFFFFFF, false);
+            }
+
+            int cpuY = workerIdleReason.isEmpty() ? 58 : 66;
+            g.drawString(this.font, "§7CPUs: §f" + availableCpus, x + 10, y + cpuY, 0xFFFFFF, false);
+
+            int rColor = switch (redirectorState) {
+                case "LINKED"     -> 0x00FF00;
+                case "STANDBY"    -> 0xFF8800;
+                case "NOT_LINKED" -> 0xAAAAAA;
+                default           -> 0x888888;
+            };
+            String rDisplay = switch (redirectorState) {
+                case "LINKED"     -> "Linked";
+                case "STANDBY"    -> "Standby";
+                case "NOT_LINKED" -> "Not Linked";
+                default           -> redirectorState;
+            };
+            String rl = "§7Redirector: ";
+            g.drawString(this.font, rl, x + 100, y + cpuY, 0xFFFFFF, false);
+            g.drawString(this.font, rDisplay, x + 100 + this.font.width(rl), y + cpuY, rColor, false);
         }
         else
         {
-            // AE2 actif : fond bleu à droite
-            graphics.fill(sx + half, sy + 1, sx + sw - 1, sy + sh - 1, 0xFF112244);
-            // Indicateur (pastille) à droite
-            graphics.fill(sx + sw - 9, sy + 3, sx + sw - 3, sy + sh - 3, 0xFF4488FF);
+            // Out of Power
+            int cx = x + GUI_WIDTH / 2;
+            g.drawCenteredString(this.font, "§cOUT OF POWER",          cx, y + 30, 0xFF4444);
+            g.drawCenteredString(this.font, "§7Charge via any FE charger", cx, y + 42, 0xAAAAAA);
+            g.drawCenteredString(this.font, "§7(Powah, Mekanism, IE...)",  cx, y + 52, 0xAAAAAA);
         }
-
-        // Séparateur central
-        graphics.fill(sx + half, sy + 2, sx + half + 1, sy + sh - 2, 0xFF444444);
-
-        // Labels
-        int wareColor = warehousePriority ? 0x00FF88 : 0x556655;
-        int ae2Color  = warehousePriority ? 0x334466 : 0x4488FF;
-        graphics.drawCenteredString(this.font, "WH", sx + half / 2, sy + 3, wareColor);
-        graphics.drawCenteredString(this.font, "AE2", sx + half + half / 2, sy + 3, ae2Color);
     }
 
-    /** Bounds du switch (pour mouseClicked et tooltip). */
-    private int getSwitchX() { return getGuiX() + GUI_WIDTH - 118; }
-    private int getSwitchY() { return getWareCheckBtnY(); }
-    private int getSwitchW() { return 110; }
-    private int getSwitchH() { return 14; }
-
-    // ── Dessin bouton Check Warehouse ─────────────────────────────────────
-
-    private void drawWareCheckButton(GuiGraphics graphics, int mouseX, int mouseY)
+    // ── Request panel ─────────────────────────────────────────────────────────
+    private void drawRequestPanel(GuiGraphics g, int x, int y, int mx, int my,
+                                  List<Component> pendingTooltipOut)
     {
-        if (!hasWarehouseCard) return;
+        int pY = y + 80, pH = 30;
+        g.fill(x + 6, pY, x + GUI_WIDTH - 6, pY + pH, 0xFF2E2E4A);
+        g.fill(x + 6, pY, x + GUI_WIDTH - 6, pY + 1, 0xFF6666AA);
+        g.fill(x + 6, pY, x + 7, pY + pH, 0xFF6666AA);
+        g.fill(x + 6, pY + pH - 1, x + GUI_WIDTH - 6, pY + pH, 0xFF1A1A3A);
+        g.fill(x + GUI_WIDTH - 7, pY, x + GUI_WIDTH - 6, pY + pH, 0xFF1A1A3A);
+        g.fill(x + 7, pY + 11, x + GUI_WIDTH - 7, pY + 12, 0xFF3A3A6A);
+        g.drawString(this.font, "§9Priority Request:", x + 10, pY + 3, 0xAAAAFF, false);
 
-        int bx = getWareCheckBtnX();
-        int by = getWareCheckBtnY();
-        int bw = getWareCheckBtnW();
-        int bh = getWareCheckBtnH();
+        boolean hasReq = builderRequest != null && !builderRequest.stack().isEmpty()
+                && builderRequest.count() > 0;
 
-        boolean hovered = mouseX >= bx && mouseX <= bx + bw && mouseY >= by && mouseY <= by + bh;
+        if (!hasReq || isOutOfPower())
+        {
+            g.drawString(this.font, isOutOfPower() ? "§8— no power —" : "§8None",
+                    x + 10, pY + 14, 0x666666, false);
+            return;
+        }
 
-        String label;
-        int bgColor;
-        int textColor;
+        g.renderItem(builderRequest.stack(), x + 10, pY + 12);
+        g.drawString(this.font, builderRequest.count() + "x "
+                + builderRequest.stack().getDisplayName().getString(), x + 28, pY + 17, 0xFFFFFF, false);
 
+        int rbX = getReqBtnX(), rbY = getReqBtnY(), rbW = getReqBtnW(), rbH = getReqBtnH();
+        ResourceStatus rs = builderRequest.status();
+        boolean hov = mx >= rbX && mx <= rbX + rbW && my >= rbY && my <= rbY + rbH;
+        int bg = hov && isButtonClickable(rs) ? getButtonHoverColor(rs) : getButtonColor(rs);
+        g.fill(rbX, rbY, rbX + rbW, rbY + rbH, bg);
+        g.fill(rbX, rbY, rbX + rbW, rbY + 1, 0xFFFFFFFF);
+        g.fill(rbX, rbY, rbX + 1, rbY + rbH, 0xFFFFFFFF);
+        g.fill(rbX, rbY + rbH - 1, rbX + rbW, rbY + rbH, 0xFF373737);
+        g.fill(rbX + rbW - 1, rbY, rbX + rbW, rbY + rbH, 0xFF373737);
+        g.drawCenteredString(this.font, getRequestButtonText(rs), rbX + rbW / 2, rbY + 4, getButtonTextColor(rs));
+
+        // Tooltip survol bouton ou ligne item — affiche les infos de substitution si présentes
+        boolean lineHov = mx >= x + 10 && mx <= rbX - 2 && my >= pY + 10 && my <= pY + 30;
+        if ((hov || lineHov) && !builderRequest.tooltipLines().isEmpty())
+        {
+            pendingTooltipOut.clear();
+            for (String line : builderRequest.tooltipLines())
+                pendingTooltipOut.add(Component.literal(line));
+        }
+    }
+
+    private void drawButton(GuiGraphics g, int bx, int by, int bw, int bh,
+                            int bg, String label, int tc)
+    {
+        g.fill(bx, by, bx + bw, by + bh, bg);
+        g.fill(bx, by, bx + bw, by + 1, 0xFFFFFFFF);
+        g.fill(bx, by, bx + 1, by + bh, 0xFFFFFFFF);
+        g.fill(bx, by + bh - 1, bx + bw, by + bh, 0xFF373737);
+        g.fill(bx + bw - 1, by, bx + bw, by + bh, 0xFF373737);
+        g.drawCenteredString(this.font, label, bx + bw / 2, by + 3, tc);
+    }
+
+    private void drawPrioritySwitch(GuiGraphics g, int mx, int my)
+    {
+        if (!hasWarehouseCard || isOutOfPower()) return;
+        int sw = 110, sh = 14, sx = getGuiX() + GUI_WIDTH - sw - 8, sy = getWareCheckBtnY();
+        g.fill(sx, sy, sx + sw, sy + sh, 0xFF2A2A2A);
+        g.fill(sx, sy, sx + sw, sy + 1, 0xFF555555);
+        g.fill(sx, sy, sx + 1, sy + sh, 0xFF555555);
+        g.fill(sx, sy + sh - 1, sx + sw, sy + sh, 0xFF111111);
+        g.fill(sx + sw - 1, sy, sx + sw, sy + sh, 0xFF111111);
+        int half = sw / 2;
+        if (warehousePriority)
+        {
+            g.fill(sx + 1, sy + 1, sx + half, sy + sh - 1, 0xFF224422);
+            g.fill(sx + 3, sy + 3, sx + 9, sy + sh - 3, 0xFF00FF88);
+        }
+        else
+        {
+            g.fill(sx + half, sy + 1, sx + sw - 1, sy + sh - 1, 0xFF112244);
+            g.fill(sx + sw - 9, sy + 3, sx + sw - 3, sy + sh - 3, 0xFF4488FF);
+        }
+        g.fill(sx + half, sy + 2, sx + half + 1, sy + sh - 2, 0xFF444444);
+        String networkLabel = isRS ? "RS2" : "AE2";
+        g.drawCenteredString(this.font, "WH",          sx + half / 2,        sy + 3, warehousePriority ? 0x00FF88 : 0x556655);
+        g.drawCenteredString(this.font, networkLabel,  sx + half + half / 2, sy + 3, warehousePriority ? 0x334466 : 0x4488FF);
+    }
+
+    private void drawWareCheckButton(GuiGraphics g, int mx, int my)
+    {
+        if (!hasWarehouseCard || isOutOfPower()) return;
+        int bx = getWareCheckBtnX(), by = getWareCheckBtnY(), bw = getWareCheckBtnW(), bh = getWareCheckBtnH();
+        boolean hov = mx >= bx && mx <= bx + bw && my >= by && my <= by + bh;
+        String label; int bg, tc;
         switch (wareCheckState)
         {
-            case LOADING ->
-            {
-                label = "Scanning...";
-                bgColor = 0xFF554400;
-                textColor = 0xFFAA44;
-            }
+            case LOADING -> { label = "Scanning..."; bg = 0xFF554400; tc = 0xFFAA44; }
             case DONE ->
             {
-                boolean expired = System.currentTimeMillis() - warehouseSnapshotReceivedMs > SNAPSHOT_VALIDITY_MS;
-                if (expired)
+                boolean exp = System.currentTimeMillis() - warehouseSnapshotReceivedMs > getSnapshotValidityMs();
+                if (exp) { wareCheckState = WareCheckState.IDLE; warehouseSnapshot = null; }
+                label = exp ? "Check Warehouse" : "Warehouse ✔";
+                bg = exp ? (hov ? 0xFF336633 : 0xFF224422) : (hov ? 0xFF447744 : 0xFF335533);
+                tc = exp ? 0x88FF88 : 0x00FF88;
+            }
+            default -> { label = "Check Warehouse"; bg = hov ? 0xFF336633 : 0xFF224422; tc = 0x88FF88; }
+        }
+        g.fill(bx, by, bx + bw, by + bh, bg);
+        g.fill(bx, by, bx + bw, by + 1, 0xFFFFFFFF);
+        g.fill(bx, by, bx + 1, by + bh, 0xFFFFFFFF);
+        g.fill(bx, by + bh - 1, bx + bw, by + bh, 0xFF373737);
+        g.fill(bx + bw - 1, by, bx + bw, by + bh, 0xFF373737);
+        g.drawCenteredString(this.font, label, bx + bw / 2, by + 3, tc);
+    }
+
+    @Override
+    public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {}
+
+    // ── render() ──────────────────────────────────────────────────────────────
+    @Override
+    public void render(GuiGraphics g, int mx, int my, float pt)
+    {
+        int x = getGuiX(), y = getGuiY();
+
+        g.fill(x, y, x + GUI_WIDTH, y + GUI_HEIGHT, 0xFF8B8B8B);
+        g.fill(x, y, x + GUI_WIDTH, y + 2, 0xFFFFFFFF);
+        g.fill(x, y, x + 2, y + GUI_HEIGHT, 0xFFFFFFFF);
+        g.fill(x, y + GUI_HEIGHT - 2, x + GUI_WIDTH, y + GUI_HEIGHT, 0xFF373737);
+        g.fill(x + GUI_WIDTH - 2, y, x + GUI_WIDTH, y + GUI_HEIGHT, 0xFF373737);
+
+        g.fill(x + 2, y + 2, x + GUI_WIDTH - 2, y + 22, 0xFF6B6B6B);
+        g.fill(x + 2, y + 2, x + GUI_WIDTH - 2, y + 4, 0xFF8B8B8B);
+        g.drawString(this.font, this.title, x + 58, y + 7, 0x404040, false);
+
+        int dbX = getDeleteBtnX(), dbY = getDeleteBtnY(), dbW = getDeleteBtnW(), dbH = getDeleteBtnH();
+        boolean delHov = mx >= dbX && mx <= dbX + dbW && my >= dbY && my <= dbY + dbH;
+        boolean canDel = !tabMetas.isEmpty();
+        drawButton(g, dbX, dbY, dbW, dbH,
+                canDel ? (delHov ? 0xFF880000 : 0xFF550000) : 0xFF333333,
+                "Unlink", canDel ? 0xFF4444 : 0x888888);
+
+        int rbX = getRestartBtnX(), rbY = getRestartBtnY(), rbW = getRestartBtnW(), rbH = getRestartBtnH();
+        boolean restHov = mx >= rbX && mx <= rbX + rbW && my >= rbY && my <= rbY + rbH;
+        drawButton(g, rbX, rbY, rbW, rbH, restHov ? 0xFF885500 : 0xFF553300, "Restart", 0xFFAA44);
+
+        drawInfoPanel(g, x, y);
+
+        List<Component> tip = new ArrayList<>();
+
+        if (!isOutOfPower())
+            drawRequestPanel(g, x, y, mx, my, tip);
+
+        // Liste
+        int listW = GUI_WIDTH - 26, listY = getListStartY();
+        g.fill(x + 6, listY - 1, x + GUI_WIDTH - 18, listY - 1 + MAX_VISIBLE * ENTRY_HEIGHT + 1, 0xFF373737);
+        g.fill(x + 6, listY - 1, x + GUI_WIDTH - 18, listY, 0xFF8B8B8B);
+        g.fill(x + 6, listY - 1, x + 7, listY - 1 + MAX_VISIBLE * ENTRY_HEIGHT + 1, 0xFF8B8B8B);
+
+        if (isOutOfPower())
+        {
+            g.drawCenteredString(this.font, "§cOut of Power — charge wand to use",
+                    x + GUI_WIDTH / 2, listY + MAX_VISIBLE * ENTRY_HEIGHT / 2 - 4, 0xFF4444);
+        }
+        else
+        {
+            int vis = Math.min(MAX_VISIBLE, entries.size() - scrollOffset);
+            for (int i = 0; i < vis; i++)
+            {
+                int idx = i + scrollOffset;
+                var entry = entries.get(idx);
+                ItemStack stack = entry.stack();
+                ResourceStatus status = entry.status();
+                int rc = entry.realCount();
+                int ey = listY + i * ENTRY_HEIGHT;
+
+                g.fill(x + 7, ey, x + 7 + listW, ey + ENTRY_HEIGHT, (i % 2 == 0) ? 0xFF4A4A4A : 0xFF424242);
+                g.renderItem(stack, x + 9, ey + 2);
+
+                String text = rc + "x " + stack.getDisplayName().getString();
+                if (entry.isDomum()) text = "§b[DO] §r" + text;
+                g.drawString(this.font, text, x + 29, ey + 6, 0xFFFFFF, false);
+
+                var we = getWarehouseEntry(stack);
+                if (we != null)
                 {
-                    wareCheckState = WareCheckState.IDLE;
+                    long tot = we.inWarehouse() + we.viaCraft();
+                    String wt; int wc;
+                    if (tot >= rc)     { wt = "§aWH: " + tot;               wc = 0x00FF88; }
+                    else if (tot > 0)  { wt = "§eWH: " + tot + "/" + rc;   wc = 0xFFCC44; }
+                    else               { wt = "§cWH: 0";                    wc = 0xFF4444; }
+                    g.drawString(this.font, wt, x + 29, ey + 13, wc, false);
+
+                    boolean lineHov = mx >= x + 7 && mx <= x + 7 + listW - 65
+                            && my >= ey && my <= ey + ENTRY_HEIGHT;
+                    if (lineHov && !we.tooltipLines().isEmpty())
+                    {
+                        tip.clear();
+                        tip.add(Component.literal("§6Warehouse availability:"));
+                        tip.add(Component.literal("§7  Direct: §a" + we.inWarehouse() + "x"));
+                        tip.add(Component.literal("§7  Via craft: §e" + we.viaCraft() + "x"));
+                        tip.add(Component.literal("§8──────────"));
+                        for (String ln : we.tooltipLines()) tip.add(Component.literal(ln));
+                    }
+                }
+
+                int[] btn = new int[4];
+                getBtnBounds(i, btn);
+                int bx2 = btn[0], by2 = btn[1], bw2 = btn[2], bh2 = btn[3];
+                boolean hov = mx >= bx2 && mx <= bx2 + bw2 && my >= by2 && my <= by2 + bh2;
+
+                if (hov && !entry.tooltipLines().isEmpty())
+                {
+                    tip.clear();
+                    for (String ln : entry.tooltipLines()) tip.add(Component.literal(ln));
+                }
+
+                int bg2 = getButtonColorWithWarehouse(status, stack, hov && isButtonClickable(status, stack));
+                g.fill(bx2, by2, bx2 + bw2, by2 + bh2, bg2);
+                g.fill(bx2, by2, bx2 + bw2, by2 + 1, 0xFFFFFFFF);
+                g.fill(bx2, by2, bx2 + 1, by2 + bh2, 0xFFFFFFFF);
+                g.fill(bx2, by2 + bh2 - 1, bx2 + bw2, by2 + bh2, 0xFF373737);
+                g.fill(bx2 + bw2 - 1, by2, bx2 + bw2, by2 + bh2, 0xFF373737);
+                g.drawCenteredString(this.font, getButtonTextWithWarehouse(status, stack),
+                        bx2 + bw2 / 2, by2 + 4, getButtonTextColor(status));
+            }
+
+            if (entries.size() > MAX_VISIBLE)
+            {
+                int sbX = getScrollbarX(), sbT = getScrollbarTop(), sbB = getScrollbarBottom();
+                g.fill(sbX, sbT, sbX + SCROLLBAR_WIDTH, sbB, 0xFF373737);
+                g.fill(sbX, sbT, sbX + 1, sbB, 0xFF8B8B8B);
+                g.fill(sbX, sbT, sbX + SCROLLBAR_WIDTH, sbT + 1, 0xFF8B8B8B);
+                int ty2 = getThumbY(), th2 = getThumbHeight();
+                g.fill(sbX + 1, ty2, sbX + SCROLLBAR_WIDTH, ty2 + th2, 0xFF8B8B8B);
+                g.fill(sbX + 1, ty2, sbX + SCROLLBAR_WIDTH, ty2 + 1, 0xFFFFFFFF);
+                g.fill(sbX + 1, ty2, sbX + 2, ty2 + th2, 0xFFFFFFFF);
+                g.fill(sbX + 1, ty2 + th2 - 1, sbX + SCROLLBAR_WIDTH, ty2 + th2, 0xFF373737);
+                g.fill(sbX + SCROLLBAR_WIDTH - 1, ty2, sbX + SCROLLBAR_WIDTH, ty2 + th2, 0xFF373737);
+            }
+        }
+
+        g.fill(x + 6, y + GUI_HEIGHT - 44, x + GUI_WIDTH - 6, y + GUI_HEIGHT - 43, 0xFF555555);
+        drawWareCheckButton(g, mx, my);
+        drawPrioritySwitch(g, mx, my);
+        g.fill(x + 6, y + GUI_HEIGHT - 26, x + GUI_WIDTH - 6, y + GUI_HEIGHT - 25, 0xFF555555);
+
+        int caX = getCraftAllBtnX(), caY = getCraftAllBtnY(), caW = getCraftAllBtnW(), caH = getCraftAllBtnH();
+        boolean caHov = mx >= caX && mx <= caX + caW && my >= caY && my <= caY + caH;
+        boolean hasCraft = hasCraftableItems();
+        g.fill(caX, caY, caX + caW, caY + caH, hasCraft ? (caHov ? 0xFF007700 : 0xFF005500) : 0xFF333333);
+        g.fill(caX, caY, caX + caW, caY + 1, 0xFFFFFFFF); g.fill(caX, caY, caX + 1, caY + caH, 0xFFFFFFFF);
+        g.fill(caX, caY + caH - 1, caX + caW, caY + caH, 0xFF373737); g.fill(caX + caW - 1, caY, caX + caW, caY + caH, 0xFF373737);
+        g.drawCenteredString(this.font, "Craft All", caX + caW / 2, caY + 4, hasCraft ? 0x00FF00 : 0x888888);
+        if (caHov && hasCraft)
+        {
+            tip.clear();
+            tip.add(Component.literal("§aCraft All craftable items"));
+            tip.add(Component.literal("§7" + availableCpus + " CPU" + (availableCpus != 1 ? "s" : "") + " available"));
+        }
+
+        int saX = getSendAllBtnX(), saY = getSendAllBtnY(), saW = getSendAllBtnW(), saH = getSendAllBtnH();
+        boolean saHov = mx >= saX && mx <= saX + saW && my >= saY && my <= saY + saH;
+        boolean hasAvail = hasAvailableItems();
+        g.fill(saX, saY, saX + saW, saY + saH, hasAvail ? (saHov ? 0xFF0066CC : 0xFF004488) : 0xFF333333);
+        g.fill(saX, saY, saX + saW, saY + 1, 0xFFFFFFFF); g.fill(saX, saY, saX + 1, saY + saH, 0xFFFFFFFF);
+        g.fill(saX, saY + saH - 1, saX + saW, saY + saH, 0xFF373737); g.fill(saX + saW - 1, saY, saX + saW, saY + saH, 0xFF373737);
+        g.drawCenteredString(this.font, "Send All", saX + saW / 2, saY + 4, hasAvail ? 0x4488FF : 0x888888);
+
+        drawTabs(g, mx, my, tip);
+
+        if (hasWarehouseCard && !isOutOfPower())
+        {
+            int sx = getSwitchX(), sy = getSwitchY(), sw2 = getSwitchW(), sh2 = getSwitchH();
+            if (mx >= sx && mx <= sx + sw2 && my >= sy && my <= sy + sh2)
+            {
+                tip.clear();
+                tip.add(Component.literal("§6Send Priority"));
+                String netLabel = isRS ? "RS2" : "AE2";
+                String netDesc  = isRS ? "RS2 network" : "ME network";
+                tip.add(warehousePriority
+                        ? Component.literal("§a● Warehouse first\n§7Items pulled from Warehouse racks first.")
+                        : Component.literal("§9● " + netLabel + " first\n§7Items pulled from " + netDesc + " first."));
+                tip.add(Component.literal("§8Click to toggle."));
+            }
+        }
+        if (mx >= rbX && mx <= rbX + rbW && my >= rbY && my <= rbY + rbH)
+        {
+            tip.clear();
+            tip.add(Component.literal("§6Restart Builder"));
+            tip.add(Component.literal("§7Cancels current task and restarts the builder PNJ"));
+        }
+        if (mx >= dbX && mx <= dbX + dbW && my >= dbY && my <= dbY + dbH)
+        {
+            tip.clear();
+            tip.add(Component.literal("§cUnlink active builder"));
+            tip.add(Component.literal("§7Removes the current tab from the wand."));
+            tip.add(Component.literal("§8The Redirector itself is not affected."));
+        }
+
+        super.render(g, mx, my, pt);
+        if (!tip.isEmpty()) g.renderComponentTooltip(this.font, tip, mx, my);
+    }
+
+    // ── mouseClicked() ────────────────────────────────────────────────────────
+    @Override
+    public boolean mouseClicked(double mx, double my, int btn)
+    {
+        for (int i = 0; i < tabMetas.size(); i++)
+        {
+            int tx = getTabX(i), ty = getTabY(i);
+            if (mx >= tx && mx <= tx + TAB_WIDTH && my >= ty && my <= ty + TAB_HEIGHT)
+            {
+                if (i != activeTabIndex)
+                {
+                    activeTabIndex = i;
+                    BlockPos nb = tabMetas.get(i).builderPos();
+                    builderPos = nb;
+                    // Fix 2 : on garde les données précédentes affichées jusqu'à réception
+                    // du nouveau packet serveur — évite le GUI vide pendant le round-trip
+                    builderName   = tabMetas.get(i).builderName();
+                    buildingName  = tabMetas.get(i).buildingLabel();
+                    workerStatus  = "Loading...";
                     warehouseSnapshot = null;
-                    label = "Check Warehouse";
-                    bgColor = hovered ? 0xFF336633 : 0xFF224422;
-                    textColor = 0x88FF88;
+                    wareCheckState    = WareCheckState.IDLE;
+                    scrollOffset      = 0;
+                    if (isRS)
+                        PacketDistributor.sendToServer(new GuiStatePacketRS(true, nb, activeTabIndex));
+                    else
+                        PacketDistributor.sendToServer(new GuiStatePacket(true, nb, activeTabIndex));
                 }
+                return true;
+            }
+        }
+
+        if (tabMetas.size() < ColonyLinkWandLinkableHandler.getMaxBuilders())
+        {
+            int tx = getGuiX() - TAB_WIDTH, ty = getAddTabY();
+            if (mx >= tx && mx <= tx + TAB_WIDTH && my >= ty && my <= ty + TAB_HEIGHT)
+            {
+                if (isRS)
+                    PacketDistributor.sendToServer(new GuiStatePacketRS(false, builderPos, -1));
                 else
-                {
-                    label = "Warehouse ✔";
-                    bgColor = hovered ? 0xFF447744 : 0xFF335533;
-                    textColor = 0x00FF88;
-                }
-            }
-            default ->
-            {
-                label = "Check Warehouse";
-                bgColor = hovered ? 0xFF336633 : 0xFF224422;
-                textColor = 0x88FF88;
+                    PacketDistributor.sendToServer(new GuiStatePacket(false, builderPos, -1));
+                this.minecraft.setScreen(null);
+                return true;
             }
         }
 
-        graphics.fill(bx, by, bx + bw, by + bh, bgColor);
-        graphics.fill(bx, by, bx + bw, by + 1, 0xFFFFFFFF);
-        graphics.fill(bx, by, bx + 1, by + bh, 0xFFFFFFFF);
-        graphics.fill(bx, by + bh - 1, bx + bw, by + bh, 0xFF373737);
-        graphics.fill(bx + bw - 1, by, bx + bw, by + bh, 0xFF373737);
-        graphics.drawCenteredString(this.font, label, bx + bw / 2, by + 3, textColor);
-    }
-
-    // ── render() ─────────────────────────────────────────────────────────
-
-    @Override
-    public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick)
-    {
-        // Pas de blur
-    }
-
-    @Override
-    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick)
-    {
-        int x = getGuiX();
-        int y = getGuiY();
-
-        // Background
-        graphics.fill(x, y, x + GUI_WIDTH, y + GUI_HEIGHT, 0xFF8B8B8B);
-        graphics.fill(x, y, x + GUI_WIDTH, y + 2, 0xFFFFFFFF);
-        graphics.fill(x, y, x + 2, y + GUI_HEIGHT, 0xFFFFFFFF);
-        graphics.fill(x, y + GUI_HEIGHT - 2, x + GUI_WIDTH, y + GUI_HEIGHT, 0xFF373737);
-        graphics.fill(x + GUI_WIDTH - 2, y, x + GUI_WIDTH, y + GUI_HEIGHT, 0xFF373737);
-
-        // Title bar
-        graphics.fill(x + 2, y + 2, x + GUI_WIDTH - 2, y + 22, 0xFF6B6B6B);
-        graphics.fill(x + 2, y + 2, x + GUI_WIDTH - 2, y + 4, 0xFF8B8B8B);
-        graphics.drawString(this.font, this.title, x + 8, y + 7, 0x404040, false);
-
-        // Bouton Restart (haut droite)
-        int rbtnX = getRestartBtnX();
-        int rbtnY = getRestartBtnY();
-        int rbtnW = getRestartBtnW();
-        int rbtnH = getRestartBtnH();
-        boolean restartHovered = mouseX >= rbtnX && mouseX <= rbtnX + rbtnW
-                && mouseY >= rbtnY && mouseY <= rbtnY + rbtnH;
-        drawButton(graphics, rbtnX, rbtnY, rbtnW, rbtnH,
-                restartHovered ? 0xFF885500 : 0xFF553300,
-                "Restart", 0xFFAA44);
-
-        // Info panel
-        drawInfoPanel(graphics, x, y);
-
-        // Panel requête PNJ
-        drawRequestPanel(graphics, x, y, mouseX, mouseY);
-
-        // List area
-        int listWidth = GUI_WIDTH - 26;
-        int listStartY = getListStartY();
-        graphics.fill(x + 6, listStartY - 1, x + GUI_WIDTH - 18, listStartY - 1 + MAX_VISIBLE * ENTRY_HEIGHT + 1, 0xFF373737);
-        graphics.fill(x + 6, listStartY - 1, x + GUI_WIDTH - 18, listStartY, 0xFF8B8B8B);
-        graphics.fill(x + 6, listStartY - 1, x + 7, listStartY - 1 + MAX_VISIBLE * ENTRY_HEIGHT + 1, 0xFF8B8B8B);
-
-        int visibleCount = Math.min(MAX_VISIBLE, entries.size() - scrollOffset);
-
-        List<Component> pendingTooltip = null;
-
-        for (int i = 0; i < visibleCount; i++)
+        int dbX = getDeleteBtnX(), dbY = getDeleteBtnY(), dbW = getDeleteBtnW(), dbH = getDeleteBtnH();
+        if (!tabMetas.isEmpty() && mx >= dbX && mx <= dbX + dbW && my >= dbY && my <= dbY + dbH)
         {
-            int index = i + scrollOffset;
-            ColonyLinkPacket.ResourceEntry entry = entries.get(index);
-            ItemStack stack = entry.stack();
-            ResourceStatus status = entry.status();
-            int realCount = entry.realCount();
-            int entryY = listStartY + i * ENTRY_HEIGHT;
-
-            int rowColor = (i % 2 == 0) ? 0xFF4A4A4A : 0xFF424242;
-            graphics.fill(x + 7, entryY, x + 7 + listWidth, entryY + ENTRY_HEIGHT, rowColor);
-
-            graphics.renderItem(stack, x + 9, entryY + 2);
-
-            String text = realCount + "x " + stack.getDisplayName().getString();
-            if (entry.isDomum())
-                text = "§b[DO] §r" + text;
-            graphics.drawString(this.font, text, x + 29, entryY + 6, 0xFFFFFF, false);
-
-            // ── Ligne warehouse sous le nom ──────────────────────────────────
-            WarehouseResultPacket.WarehouseEntry wareEntry = getWarehouseEntry(stack);
-            if (wareEntry != null)
-            {
-                long total = wareEntry.inWarehouse() + wareEntry.viaCraft();
-                String wareText;
-                int wareColor;
-                if (total >= realCount)
-                {
-                    wareText = "§aWH: " + total;
-                    wareColor = 0x00FF88;
-                }
-                else if (total > 0)
-                {
-                    wareText = "§eWH: " + total + "/" + realCount;
-                    wareColor = 0xFFCC44;
-                }
-                else
-                {
-                    wareText = "§cWH: 0";
-                    wareColor = 0xFF4444;
-                }
-                // Affichage compact sous le nom (entryY + 13)
-                graphics.drawString(this.font, wareText, x + 29, entryY + 13, wareColor, false);
-
-                // Tooltip warehouse sur hover de la ligne (pas du bouton)
-                boolean lineHovered = mouseX >= x + 7 && mouseX <= x + 7 + listWidth - 65
-                        && mouseY >= entryY && mouseY <= entryY + ENTRY_HEIGHT;
-                if (lineHovered && !wareEntry.tooltipLines().isEmpty())
-                {
-                    List<Component> wareTooltip = new ArrayList<>();
-                    wareTooltip.add(Component.literal("§6Warehouse availability:"));
-                    wareTooltip.add(Component.literal("§7  Direct: §a" + wareEntry.inWarehouse() + "x"));
-                    wareTooltip.add(Component.literal("§7  Via craft: §e" + wareEntry.viaCraft() + "x"));
-                    wareTooltip.add(Component.literal("§8──────────"));
-                    for (String line : wareEntry.tooltipLines())
-                        wareTooltip.add(Component.literal(line));
-                    pendingTooltip = wareTooltip;
-                }
-            }
-
-            int[] btn = new int[4];
-            getBtnBounds(i, btn);
-            int btnX = btn[0], btnY = btn[1], btnW = btn[2], btnH = btn[3];
-
-            boolean hovered = mouseX >= btnX && mouseX <= btnX + btnW
-                    && mouseY >= btnY && mouseY <= btnY + btnH;
-
-            if (hovered && !entry.tooltipLines().isEmpty())
-            {
-                List<Component> tooltipComponents = new ArrayList<>();
-                for (String line : entry.tooltipLines())
-                    tooltipComponents.add(Component.literal(line));
-                pendingTooltip = tooltipComponents;
-            }
-
-            int bgColor = getButtonColorWithWarehouse(status, stack, hovered && isButtonClickable(status, stack));
-
-            graphics.fill(btnX, btnY, btnX + btnW, btnY + btnH, bgColor);
-            graphics.fill(btnX, btnY, btnX + btnW, btnY + 1, 0xFFFFFFFF);
-            graphics.fill(btnX, btnY, btnX + 1, btnY + btnH, 0xFFFFFFFF);
-            graphics.fill(btnX, btnY + btnH - 1, btnX + btnW, btnY + btnH, 0xFF373737);
-            graphics.fill(btnX + btnW - 1, btnY, btnX + btnW, btnY + btnH, 0xFF373737);
-
-            graphics.drawCenteredString(this.font, getButtonTextWithWarehouse(status, stack),
-                    btnX + btnW / 2, btnY + 4, getButtonTextColor(status));
+            if (isRS)
+                PacketDistributor.sendToServer(new RemoveBuilderPacketRS(activeTabIndex));
+            else
+                PacketDistributor.sendToServer(new RemoveBuilderPacket(activeTabIndex));
+            return true;
         }
 
-        // Scrollbar
-        if (entries.size() > MAX_VISIBLE)
-        {
-            int sbX = getScrollbarX();
-            int sbTop = getScrollbarTop();
-            int sbBottom = getScrollbarBottom();
-
-            graphics.fill(sbX, sbTop, sbX + SCROLLBAR_WIDTH, sbBottom, 0xFF373737);
-            graphics.fill(sbX, sbTop, sbX + 1, sbBottom, 0xFF8B8B8B);
-            graphics.fill(sbX, sbTop, sbX + SCROLLBAR_WIDTH, sbTop + 1, 0xFF8B8B8B);
-
-            int thumbY = getThumbY();
-            int thumbH = getThumbHeight();
-
-            graphics.fill(sbX + 1, thumbY, sbX + SCROLLBAR_WIDTH, thumbY + thumbH, 0xFF8B8B8B);
-            graphics.fill(sbX + 1, thumbY, sbX + SCROLLBAR_WIDTH, thumbY + 1, 0xFFFFFFFF);
-            graphics.fill(sbX + 1, thumbY, sbX + 2, thumbY + thumbH, 0xFFFFFFFF);
-            graphics.fill(sbX + 1, thumbY + thumbH - 1, sbX + SCROLLBAR_WIDTH, thumbY + thumbH, 0xFF373737);
-            graphics.fill(sbX + SCROLLBAR_WIDTH - 1, thumbY, sbX + SCROLLBAR_WIDTH, thumbY + thumbH, 0xFF373737);
-        }
-
-        // Separator
-        graphics.fill(x + 6, y + GUI_HEIGHT - 44, x + GUI_WIDTH - 6, y + GUI_HEIGHT - 43, 0xFF555555);
-
-        // Bouton Check Warehouse (ligne -40)
-        drawWareCheckButton(graphics, mouseX, mouseY);
-
-        // Switch priorité Warehouse/AE2 (même ligne, côté droit)
-        drawPrioritySwitch(graphics, mouseX, mouseY);
-
-        // Separator avant boutons principaux
-        graphics.fill(x + 6, y + GUI_HEIGHT - 26, x + GUI_WIDTH - 6, y + GUI_HEIGHT - 25, 0xFF555555);
-
-        // Craft All
-        int caX = getCraftAllBtnX();
-        int caY = getCraftAllBtnY();
-        int caW = getCraftAllBtnW();
-        int caH = getCraftAllBtnH();
-
-        boolean craftAllHovered = mouseX >= caX && mouseX <= caX + caW
-                && mouseY >= caY && mouseY <= caY + caH;
-        boolean hasCraftable = hasCraftableItems();
-
-        int craftAllBg = hasCraftable ? (craftAllHovered ? 0xFF007700 : 0xFF005500) : 0xFF333333;
-        graphics.fill(caX, caY, caX + caW, caY + caH, craftAllBg);
-        graphics.fill(caX, caY, caX + caW, caY + 1, 0xFFFFFFFF);
-        graphics.fill(caX, caY, caX + 1, caY + caH, 0xFFFFFFFF);
-        graphics.fill(caX, caY + caH - 1, caX + caW, caY + caH, 0xFF373737);
-        graphics.fill(caX + caW - 1, caY, caX + caW, caY + caH, 0xFF373737);
-        graphics.drawCenteredString(this.font, "Craft All",
-                caX + caW / 2, caY + 4, hasCraftable ? 0x00FF00 : 0x888888);
-
-        if (craftAllHovered && hasCraftable)
-        {
-            List<Component> craftAllTooltip = new ArrayList<>();
-            craftAllTooltip.add(Component.literal("§aCraft All craftable items"));
-            craftAllTooltip.add(Component.literal("§7" + availableCpus + " CPU"
-                    + (availableCpus != 1 ? "s" : "") + " available"));
-            craftAllTooltip.add(Component.literal("§8" + availableCpus
-                    + " craft" + (availableCpus != 1 ? "s" : "") + " will run simultaneously"));
-            pendingTooltip = craftAllTooltip;
-        }
-
-        // Send All
-        int saX = getSendAllBtnX();
-        int saY = getSendAllBtnY();
-        int saW = getSendAllBtnW();
-        int saH = getSendAllBtnH();
-
-        boolean sendAllHovered = mouseX >= saX && mouseX <= saX + saW
-                && mouseY >= saY && mouseY <= saY + saH;
-        boolean hasAvailable = hasAvailableItems();
-
-        int sendAllBg = hasAvailable ? (sendAllHovered ? 0xFF0066CC : 0xFF004488) : 0xFF333333;
-        graphics.fill(saX, saY, saX + saW, saY + saH, sendAllBg);
-        graphics.fill(saX, saY, saX + saW, saY + 1, 0xFFFFFFFF);
-        graphics.fill(saX, saY, saX + 1, saY + saH, 0xFFFFFFFF);
-        graphics.fill(saX, saY + saH - 1, saX + saW, saY + saH, 0xFF373737);
-        graphics.fill(saX + saW - 1, saY, saX + saW, saY + saH, 0xFF373737);
-        graphics.drawCenteredString(this.font, "Send All",
-                saX + saW / 2, saY + 4, hasAvailable ? 0x4488FF : 0x888888);
-
-        // Tooltip switch priorité
-        if (hasWarehouseCard)
-        {
-            int sx = getSwitchX(), sy = getSwitchY(), sw = getSwitchW(), sh = getSwitchH();
-            if (mouseX >= sx && mouseX <= sx + sw && mouseY >= sy && mouseY <= sy + sh)
-            {
-                List<Component> switchTooltip = new ArrayList<>();
-                switchTooltip.add(Component.literal("§6Send Priority"));
-                if (warehousePriority)
-                {
-                    switchTooltip.add(Component.literal("§a● Warehouse first"));
-                    switchTooltip.add(Component.literal("§7Items pulled from Warehouse racks first,"));
-                    switchTooltip.add(Component.literal("§7then ME network for the remainder."));
-                }
-                else
-                {
-                    switchTooltip.add(Component.literal("§9● AE2 first"));
-                    switchTooltip.add(Component.literal("§7Items pulled from ME network first"));
-                    switchTooltip.add(Component.literal("§7(default behaviour)."));
-                }
-                switchTooltip.add(Component.literal("§8Click to toggle."));
-                pendingTooltip = switchTooltip;
-            }
-        }
-
-        // Tooltip bouton Restart
-        if (mouseX >= getRestartBtnX() && mouseX <= getRestartBtnX() + getRestartBtnW()
-                && mouseY >= getRestartBtnY() && mouseY <= getRestartBtnY() + getRestartBtnH())
-        {
-            List<Component> restartTooltip = new ArrayList<>();
-            restartTooltip.add(Component.literal("§6Restart Builder"));
-            restartTooltip.add(Component.literal("§7Cancels current task and restarts the builder PNJ"));
-            pendingTooltip = restartTooltip;
-        }
-
-        // Tooltip bouton Check Warehouse
-        if (hasWarehouseCard)
-        {
-            int bx = getWareCheckBtnX();
-            int by = getWareCheckBtnY();
-            int bw = getWareCheckBtnW();
-            int bh = getWareCheckBtnH();
-            if (mouseX >= bx && mouseX <= bx + bw && mouseY >= by && mouseY <= by + bh)
-            {
-                List<Component> wareTooltip = new ArrayList<>();
-                wareTooltip.add(Component.literal("§6Check Warehouse"));
-                wareTooltip.add(Component.literal("§7Scans all Warehouse racks for available items."));
-                wareTooltip.add(Component.literal("§7Resolves AE2 craft patterns recursively."));
-                wareTooltip.add(Component.literal("§8Cooldown: 400 ticks (20s) between scans."));
-                if (warehouseSnapshot != null)
-                {
-                    long ageMs = System.currentTimeMillis() - warehouseSnapshotReceivedMs;
-                    long remainMs = Math.max(0, SNAPSHOT_VALIDITY_MS - ageMs);
-                    wareTooltip.add(Component.literal("§7Snapshot expires in: §f" + (remainMs / 1000) + "s"));
-                }
-                pendingTooltip = wareTooltip;
-            }
-        }
-
-        super.render(graphics, mouseX, mouseY, partialTick);
-
-        if (pendingTooltip != null && !pendingTooltip.isEmpty())
-            graphics.renderComponentTooltip(this.font, pendingTooltip, mouseX, mouseY);
-    }
-
-    /**
-     * Retourne true si le snapshot warehouse actif couvre cet item via craft
-     * (viaCraft > 0), ce qui signifie qu'on doit router vers WarehouseCraftPacket.
-     */
-    private boolean hasWarehouseCraft(ItemStack stack)
-    {
-        WarehouseResultPacket.WarehouseEntry entry = getWarehouseEntry(stack);
-        return entry != null && (entry.viaCraft() > 0 || entry.inWarehouse() > 0);
-    }
-
-    // ── mouseClicked() ────────────────────────────────────────────────────
-
-    @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button)
-    {
-        // Bouton Restart
-        int rbtnX = getRestartBtnX();
-        int rbtnY = getRestartBtnY();
-        int rbtnW = getRestartBtnW();
-        int rbtnH = getRestartBtnH();
-
-        if (mouseX >= rbtnX && mouseX <= rbtnX + rbtnW
-                && mouseY >= rbtnY && mouseY <= rbtnY + rbtnH)
+        int rbX = getRestartBtnX(), rbY = getRestartBtnY(), rbW = getRestartBtnW(), rbH = getRestartBtnH();
+        if (mx >= rbX && mx <= rbX + rbW && my >= rbY && my <= rbY + rbH)
         {
             PacketDistributor.sendToServer(new RestartBuilderPacket(builderPos));
             return true;
         }
 
-        // Switch priorité Warehouse/AE2
+        if (isOutOfPower()) return super.mouseClicked(mx, my, btn);
+
         if (hasWarehouseCard && !redirectorPos.equals(BlockPos.ZERO))
         {
-            int sx = getSwitchX(), sy = getSwitchY(), sw = getSwitchW(), sh = getSwitchH();
-            if (mouseX >= sx && mouseX <= sx + sw && mouseY >= sy && mouseY <= sy + sh)
+            int sx = getSwitchX(), sy = getSwitchY(), sw2 = getSwitchW(), sh2 = getSwitchH();
+            if (mx >= sx && mx <= sx + sw2 && my >= sy && my <= sy + sh2)
             {
                 PacketDistributor.sendToServer(new WarehousePriorityPacket(redirectorPos));
-                // Mise à jour optimiste locale pour feedback immédiat sans attendre le ticker
                 warehousePriority = !warehousePriority;
                 return true;
             }
         }
 
-        // Bouton Check Warehouse
         if (hasWarehouseCard && wareCheckState != WareCheckState.LOADING)
         {
-            int bx = getWareCheckBtnX();
-            int by = getWareCheckBtnY();
-            int bw = getWareCheckBtnW();
-            int bh = getWareCheckBtnH();
-
-            if (mouseX >= bx && mouseX <= bx + bw && mouseY >= by && mouseY <= by + bh)
+            int bx = getWareCheckBtnX(), by = getWareCheckBtnY(), bw = getWareCheckBtnW(), bh = getWareCheckBtnH();
+            if (mx >= bx && mx <= bx + bw && my >= by && my <= by + bh)
             {
                 wareCheckState = WareCheckState.LOADING;
                 PacketDistributor.sendToServer(new WarehouseCheckPacket(builderPos));
@@ -931,154 +928,158 @@ public class ColonyLinkScreen extends Screen
             }
         }
 
-        // Bouton requête PNJ
-        boolean hasRequest = builderRequest != null
-                && !builderRequest.stack().isEmpty()
-                && builderRequest.count() > 0;
-
-        if (hasRequest)
+        boolean hasReq = builderRequest != null && !builderRequest.stack().isEmpty() && builderRequest.count() > 0;
+        if (hasReq)
         {
-            int reqBtnX = getReqBtnX();
-            int reqBtnY = getReqBtnY();
-            int reqBtnW = getReqBtnW();
-            int reqBtnH = getReqBtnH();
-
-            if (mouseX >= reqBtnX && mouseX <= reqBtnX + reqBtnW
-                    && mouseY >= reqBtnY && mouseY <= reqBtnY + reqBtnH
+            int rbX2 = getReqBtnX(), rbY2 = getReqBtnY(), rbW2 = getReqBtnW(), rbH2 = getReqBtnH();
+            if (mx >= rbX2 && mx <= rbX2 + rbW2 && my >= rbY2 && my <= rbY2 + rbH2
                     && isButtonClickable(builderRequest.status()))
             {
                 switch (builderRequest.status())
                 {
                     case AVAILABLE ->
+                    {
+                        if (isRS)
+                            PacketDistributor.sendToServer(new SendToBuilderPacketRS(
+                                    builderRequest.stack(), builderPos, builderRequest.count()));
+                        else
                             PacketDistributor.sendToServer(new SendToBuilderPacket(
                                     builderRequest.stack(), builderPos, builderRequest.count()));
+                    }
                     case CRAFTABLE ->
+                    {
+                        // Domum CRAFTABLE → craft virtuel via composants (AE2 et RS2)
+                        if (DomumCraftHandler.isDomumItem(builderRequest.stack()))
+                            PacketDistributor.sendToServer(new CraftRequestPacket(
+                                    builderRequest.stack(), builderRequest.count(),
+                                    true, builderRequest.redirectorPos(), ResourceStatus.CRAFTABLE));
+                        else if (isRS)
+                            PacketDistributor.sendToServer(new CraftRequestPacketRS(
+                                    builderRequest.stack(), builderRequest.count()));
+                        else
                             PacketDistributor.sendToServer(new CraftRequestPacket(
                                     builderRequest.stack(), builderRequest.count(),
                                     false, BlockPos.ZERO, ResourceStatus.CRAFTABLE));
+                    }
                     case MISSING ->
+                    {
+                        if (DomumCraftHandler.isDomumItem(builderRequest.stack()) || !isRS)
                             PacketDistributor.sendToServer(new CraftRequestPacket(
                                     builderRequest.stack(), builderRequest.count(),
-                                    true, builderRequest.redirectorPos(), ResourceStatus.MISSING));
+                                    DomumCraftHandler.isDomumItem(builderRequest.stack()), builderRequest.redirectorPos(), ResourceStatus.MISSING));
+                        else
+                            PacketDistributor.sendToServer(new CraftRequestPacketRS(
+                                    builderRequest.stack(), builderRequest.count()));
+                    }
                     default -> {}
                 }
                 return true;
             }
         }
 
-        // Craft All
-        int caX = getCraftAllBtnX();
-        int caY = getCraftAllBtnY();
-        int caW = getCraftAllBtnW();
-        int caH = getCraftAllBtnH();
-
-        if (mouseX >= caX && mouseX <= caX + caW && mouseY >= caY && mouseY <= caY + caH
-                && hasCraftableItems())
+        int caX = getCraftAllBtnX(), caY = getCraftAllBtnY(), caW = getCraftAllBtnW(), caH = getCraftAllBtnH();
+        if (mx >= caX && mx <= caX + caW && my >= caY && my <= caY + caH && hasCraftableItems())
         {
             List<ItemStack> toCraft = new ArrayList<>();
             List<Integer> counts = new ArrayList<>();
-
-            for (ColonyLinkPacket.ResourceEntry entry : entries)
+            for (var entry : entries)
             {
                 if (entry.status() == ResourceStatus.CRAFTABLE)
                 {
                     if (entry.isDomum())
+                        // Domum CRAFTABLE → craft virtuel via composants (AE2 et RS2)
                         PacketDistributor.sendToServer(new CraftRequestPacket(
-                                entry.stack(), entry.realCount(), true,
-                                entry.redirectorPos(), ResourceStatus.CRAFTABLE));
-                    else
-                    {
-                        toCraft.add(entry.stack());
-                        counts.add(entry.realCount());
-                    }
+                                entry.stack(), entry.realCount(), true, entry.redirectorPos(), ResourceStatus.CRAFTABLE));
+                    else if (isRS)
+                        PacketDistributor.sendToServer(new CraftRequestPacketRS(
+                                entry.stack(), entry.realCount()));
+                    else { toCraft.add(entry.stack()); counts.add(entry.realCount()); }
                 }
                 else if (entry.status() == ResourceStatus.MISSING)
                 {
-                    PacketDistributor.sendToServer(new CraftRequestPacket(
-                            entry.stack(), entry.realCount(), true,
-                            entry.redirectorPos(), ResourceStatus.MISSING));
+                    if (isRS)
+                        PacketDistributor.sendToServer(new CraftRequestPacketRS(
+                                entry.stack(), entry.realCount()));
+                    else
+                        PacketDistributor.sendToServer(new CraftRequestPacket(
+                                entry.stack(), entry.realCount(), true, entry.redirectorPos(), ResourceStatus.MISSING));
                 }
             }
-
             if (!toCraft.isEmpty())
                 PacketDistributor.sendToServer(new CraftAllRequestPacket(toCraft, counts));
-
             return true;
         }
 
-        // Send All
-        int saX = getSendAllBtnX();
-        int saY = getSendAllBtnY();
-        int saW = getSendAllBtnW();
-        int saH = getSendAllBtnH();
-
-        if (mouseX >= saX && mouseX <= saX + saW && mouseY >= saY && mouseY <= saY + saH
-                && hasAvailableItems())
+        int saX = getSendAllBtnX(), saY = getSendAllBtnY(), saW = getSendAllBtnW(), saH = getSendAllBtnH();
+        if (mx >= saX && mx <= saX + saW && my >= saY && my <= saY + saH && hasAvailableItems())
         {
-            for (ColonyLinkPacket.ResourceEntry entry : entries)
-            {
+            for (var entry : entries)
                 if (entry.status() == ResourceStatus.AVAILABLE)
-                    PacketDistributor.sendToServer(new SendToBuilderPacket(
-                            entry.stack(), builderPos, entry.realCount()));
-            }
+                {
+                    if (isRS)
+                        PacketDistributor.sendToServer(new SendToBuilderPacketRS(
+                                entry.stack(), builderPos, entry.realCount()));
+                    else
+                        PacketDistributor.sendToServer(new SendToBuilderPacket(
+                                entry.stack(), builderPos, entry.realCount()));
+                }
             return true;
         }
 
-        // Boutons individuels de la liste
-        int visibleCount = Math.min(MAX_VISIBLE, entries.size() - scrollOffset);
-        for (int i = 0; i < visibleCount; i++)
+        int vis = Math.min(MAX_VISIBLE, entries.size() - scrollOffset);
+        for (int i = 0; i < vis; i++)
         {
-            int index = i + scrollOffset;
-            ColonyLinkPacket.ResourceEntry entry = entries.get(index);
-
+            int idx = i + scrollOffset;
+            var entry = entries.get(idx);
             if (!isButtonClickable(entry.status(), entry.stack())) continue;
-
-            int[] btn = new int[4];
-            getBtnBounds(i, btn);
-            int btnX = btn[0], btnY = btn[1], btnW = btn[2], btnH = btn[3];
-
-            if (mouseX >= btnX && mouseX <= btnX + btnW
-                    && mouseY >= btnY && mouseY <= btnY + btnH)
+            int[] b = new int[4]; getBtnBounds(i, b);
+            if (mx >= b[0] && mx <= b[0] + b[2] && my >= b[1] && my <= b[1] + b[3])
             {
                 if (entry.status() == ResourceStatus.CRAFTABLE && entry.isDomum())
                 {
-                    // Domum : si snapshot warehouse couvre les composants → craft depuis warehouse
+                    // Domum CRAFTABLE = les composants bruts sont en stock (AE2 ou RS2)
+                    // → craft virtuel via WarehouseCraftPacket (extrait composants → buffer redirector)
+                    // Pas de CraftRequestPacket/RS car il n'y a pas de pattern pour les items DO
                     if (hasWarehouseCraft(entry.stack()))
                         PacketDistributor.sendToServer(new WarehouseCraftPacket(
                                 entry.stack(), entry.realCount(), true, entry.redirectorPos()));
                     else
+                        // Fallback : composants pas en WH mais en réseau → craft direct
                         PacketDistributor.sendToServer(new CraftRequestPacket(
-                                entry.stack(), entry.realCount(), true,
-                                entry.redirectorPos(), ResourceStatus.CRAFTABLE));
+                                entry.stack(), entry.realCount(), true, entry.redirectorPos(), ResourceStatus.CRAFTABLE));
                 }
                 else if (entry.status() == ResourceStatus.CRAFTABLE)
                 {
-                    // AE2 : si snapshot warehouse couvre les composants → injection ME avant craft
-                    if (hasWarehouseCraft(entry.stack()))
-                        PacketDistributor.sendToServer(new WarehouseCraftPacket(
-                                entry.stack(), entry.realCount(), false, entry.redirectorPos()));
+                    if (isRS)
+                        PacketDistributor.sendToServer(new CraftRequestPacketRS(
+                                entry.stack(), entry.realCount()));
                     else
-                        PacketDistributor.sendToServer(new CraftRequestPacket(
-                                entry.stack(), entry.realCount(), false,
-                                BlockPos.ZERO, ResourceStatus.CRAFTABLE));
+                        PacketDistributor.sendToServer(hasWarehouseCraft(entry.stack())
+                                ? new WarehouseCraftPacket(entry.stack(), entry.realCount(), false, entry.redirectorPos())
+                                : new CraftRequestPacket(entry.stack(), entry.realCount(), false, BlockPos.ZERO, ResourceStatus.CRAFTABLE));
                 }
                 else if (entry.status() == ResourceStatus.MISSING)
-                    PacketDistributor.sendToServer(new CraftRequestPacket(
-                            entry.stack(), entry.realCount(), true,
-                            entry.redirectorPos(), ResourceStatus.MISSING));
+                {
+                    if (isRS)
+                        PacketDistributor.sendToServer(new CraftRequestPacketRS(
+                                entry.stack(), entry.realCount()));
+                    else
+                        PacketDistributor.sendToServer(new CraftRequestPacket(
+                                entry.stack(), entry.realCount(), true, entry.redirectorPos(), ResourceStatus.MISSING));
+                }
                 else if (entry.status() == ResourceStatus.AVAILABLE)
-                    PacketDistributor.sendToServer(new SendToBuilderPacket(
-                            entry.stack(), builderPos, entry.realCount()));
+                {
+                    if (isRS)
+                        PacketDistributor.sendToServer(new SendToBuilderPacketRS(
+                                entry.stack(), builderPos, entry.realCount()));
+                    else
+                        PacketDistributor.sendToServer(new SendToBuilderPacket(
+                                entry.stack(), builderPos, entry.realCount()));
+                }
                 else if (entry.status() == ResourceStatus.NO_PATTERN)
                 {
-                    // NO_PATTERN mais couvert par warehouse
-                    WarehouseResultPacket.WarehouseEntry we = getWarehouseEntry(entry.stack());
-                    if (we != null && we.inWarehouse() > 0)
-                        // Item directement disponible en warehouse → Send depuis warehouse
-                        PacketDistributor.sendToServer(new WarehouseCraftPacket(
-                                entry.stack(), entry.realCount(), entry.isDomum(), entry.redirectorPos()));
-                    else if (we != null && we.viaCraft() > 0)
-                        // Craft possible depuis composants warehouse
+                    var we = getWarehouseEntry(entry.stack());
+                    if (we != null && (we.inWarehouse() > 0 || we.viaCraft() > 0))
                         PacketDistributor.sendToServer(new WarehouseCraftPacket(
                                 entry.stack(), entry.realCount(), entry.isDomum(), entry.redirectorPos()));
                 }
@@ -1086,56 +1087,42 @@ public class ColonyLinkScreen extends Screen
             }
         }
 
-        // Scrollbar drag
         if (entries.size() > MAX_VISIBLE)
         {
-            int sbX = getScrollbarX();
-            int thumbY = getThumbY();
-            int thumbH = getThumbHeight();
-
-            if (mouseX >= sbX && mouseX <= sbX + SCROLLBAR_WIDTH
-                    && mouseY >= thumbY && mouseY <= thumbY + thumbH)
+            int sbX = getScrollbarX(), ty = getThumbY(), th = getThumbHeight();
+            if (mx >= sbX && mx <= sbX + SCROLLBAR_WIDTH && my >= ty && my <= ty + th)
             {
-                isDraggingScrollbar = true;
-                dragStartY = mouseY;
-                dragStartOffset = scrollOffset;
+                isDraggingScrollbar = true; dragStartY = my; dragStartOffset = scrollOffset;
                 return true;
             }
         }
 
-        return super.mouseClicked(mouseX, mouseY, button);
+        return super.mouseClicked(mx, my, btn);
     }
 
     @Override
-    public boolean mouseReleased(double mouseX, double mouseY, int button)
-    {
-        isDraggingScrollbar = false;
-        return super.mouseReleased(mouseX, mouseY, button);
-    }
+    public boolean mouseReleased(double mx, double my, int btn)
+    { isDraggingScrollbar = false; return super.mouseReleased(mx, my, btn); }
 
     @Override
-    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY)
+    public boolean mouseDragged(double mx, double my, int btn, double dx, double dy)
     {
         if (isDraggingScrollbar && entries.size() > MAX_VISIBLE)
         {
-            int maxOffset = entries.size() - MAX_VISIBLE;
-            double dragDelta = mouseY - dragStartY;
-            double trackHeight = getScrollbarHeight() - getThumbHeight();
-            int newOffset = (int) (dragStartOffset + dragDelta / trackHeight * maxOffset);
-            scrollOffset = Math.max(0, Math.min(maxOffset, newOffset));
+            int max = entries.size() - MAX_VISIBLE;
+            scrollOffset = Math.max(0, Math.min(max,
+                    (int)(dragStartOffset + (my - dragStartY) / (getScrollbarHeight() - getThumbHeight()) * max)));
             return true;
         }
-        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+        return super.mouseDragged(mx, my, btn, dx, dy);
     }
 
     @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY)
+    public boolean mouseScrolled(double mx, double my, double sx, double sy)
     {
-        int maxOffset = entries.size() - MAX_VISIBLE;
-        if (scrollY < 0 && scrollOffset < maxOffset)
-            scrollOffset++;
-        else if (scrollY > 0 && scrollOffset > 0)
-            scrollOffset--;
+        int max = entries.size() - MAX_VISIBLE;
+        if (sy < 0 && scrollOffset < max) scrollOffset++;
+        else if (sy > 0 && scrollOffset > 0) scrollOffset--;
         return true;
     }
 

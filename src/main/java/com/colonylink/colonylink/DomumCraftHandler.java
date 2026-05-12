@@ -198,6 +198,16 @@ public class DomumCraftHandler
 
     public static void handleDomumCraft(ServerPlayer player, ItemStack domumStack, int needed, BlockPos redirectorPos)
     {
+        // Détection wand RS2 — route vers le handler RS2 si présent
+        for (ItemStack s : player.getInventory().items)
+        {
+            if (s.getItem() instanceof ColonyLinkWandRS)
+            {
+                handleDomumCraftRS(player, domumStack, needed, redirectorPos);
+                return;
+            }
+        }
+
         ItemStack wandStack = findWandInInventory(player);
         if (wandStack == null || !ColonyLinkWandLinkableHandler.isLinked(wandStack)) return;
 
@@ -307,6 +317,153 @@ public class DomumCraftHandler
     {
         for (int i = 0; i < keys.size(); i++)
             storageService.getInventory().insert(keys.get(i), counts.get(i), Actionable.MODULATE, actionSource);
+    }
+
+    // ── RS2 variant ──────────────────────────────────────────────────────────
+
+    /**
+     * Craft virtuel DO en mode RS2.
+     * Extrait les composants bruts depuis le réseau RS2 et insère l'item DO
+     * assemblé dans le buffer du redirector — même logique que AE2 mais via RS2.
+     */
+    private static void handleDomumCraftRS(ServerPlayer player, ItemStack domumStack,
+                                           int needed, BlockPos redirectorPos)
+    {
+        ItemStack wandStack = null;
+        for (ItemStack s : player.getInventory().items)
+            if (s.getItem() instanceof ColonyLinkWandRS) { wandStack = s; break; }
+        if (wandStack == null || !ColonyLinkWandRSLinkableHandler.isLinked(wandStack))
+        {
+            player.sendSystemMessage(Component.literal("§c[ColonyLink RS] Wand not linked!"));
+            return;
+        }
+
+        net.minecraft.server.level.ServerLevel level = player.serverLevel();
+        com.refinedmods.refinedstorage.api.network.Network network =
+                ColonyLinkWandRSLinkableHandler.getNetwork(wandStack, level);
+        if (network == null)
+        {
+            player.sendSystemMessage(Component.literal("§c[ColonyLink RS] Cannot connect to RS2 network!"));
+            return;
+        }
+
+        com.refinedmods.refinedstorage.api.network.storage.StorageNetworkComponent storage =
+                network.getComponent(com.refinedmods.refinedstorage.api.network.storage.StorageNetworkComponent.class);
+        if (storage == null)
+        {
+            player.sendSystemMessage(Component.literal("§c[ColonyLink RS] RS2 network has no storage!"));
+            return;
+        }
+
+        var be = level.getBlockEntity(redirectorPos);
+        net.neoforged.neoforge.items.IItemHandler buffer = null;
+        if (be instanceof ColonyLinkRedirectorBlockEntityRS redirectorRS)
+            buffer = redirectorRS.buffer;
+        else if (be instanceof ColonyLinkRedirectorBlockEntity redirectorAE2)
+            buffer = redirectorAE2.buffer;
+
+        if (buffer == null)
+        {
+            player.sendSystemMessage(Component.literal("§c[ColonyLink RS] Redirector not found!"));
+            return;
+        }
+
+        Item item = domumStack.getItem();
+        if (!(item instanceof BlockItem blockItem)) return;
+        Block block = blockItem.getBlock();
+        if (!(block instanceof IMateriallyTexturedBlock texturedBlock)) return;
+
+        MaterialTextureData textureData = MaterialTextureData.readFromItemStack(domumStack);
+
+        // Extrait les composants bruts depuis RS2
+        List<com.refinedmods.refinedstorage.common.support.resource.ItemResource> extractedKeys = new ArrayList<>();
+        List<Long> extractedCounts = new ArrayList<>();
+
+        for (IMateriallyTexturedBlockComponent component : texturedBlock.getComponents())
+        {
+            Block materialBlock = textureData.getTexturedComponents().get(component.getId());
+            if (materialBlock == null)
+            {
+                if (!component.isOptional())
+                {
+                    player.sendSystemMessage(Component.literal(
+                            "§c[ColonyLink RS] Missing required material for component: " + component.getId()));
+                    refundExtractedRS(storage, extractedKeys, extractedCounts);
+                    return;
+                }
+                continue;
+            }
+
+            com.refinedmods.refinedstorage.common.support.resource.ItemResource rsKey =
+                    com.refinedmods.refinedstorage.common.support.resource.ItemResource.ofItemStack(
+                            new ItemStack(materialBlock));
+
+            long extracted = storage.extract(rsKey, needed,
+                    com.refinedmods.refinedstorage.api.core.Action.EXECUTE,
+                    com.refinedmods.refinedstorage.api.storage.Actor.EMPTY);
+
+            if (extracted < needed)
+            {
+                player.sendSystemMessage(Component.literal(
+                        "§c[ColonyLink RS] Could not extract enough "
+                                + new ItemStack(materialBlock).getDisplayName().getString()
+                                + " from RS2! Got " + extracted + "/" + needed));
+                if (extracted > 0)
+                {
+                    extractedKeys.add(rsKey);
+                    extractedCounts.add(extracted);
+                }
+                refundExtractedRS(storage, extractedKeys, extractedCounts);
+                return;
+            }
+
+            extractedKeys.add(rsKey);
+            extractedCounts.add(extracted);
+        }
+
+        // Assemble l'item DO avec le bon MaterialTextureData
+        MaterialTextureData.Builder builder = MaterialTextureData.builder();
+        for (IMateriallyTexturedBlockComponent component : texturedBlock.getComponents())
+        {
+            Block materialBlock = textureData.getTexturedComponents().get(component.getId());
+            if (materialBlock != null)
+                builder.setComponent(component.getId(), materialBlock);
+        }
+
+        // Copie l'ItemStack original complet puis réécrit le MaterialTextureData
+        ItemStack result = domumStack.copy();
+        result.setCount(needed);
+        builder.writeToItemStack(result);
+
+        // Insère dans le buffer du redirector
+        net.neoforged.neoforge.items.IItemHandler bufferFinal = buffer;
+        ItemStack remainder = result.copy();
+        for (int slot = 0; slot < bufferFinal.getSlots() && !remainder.isEmpty(); slot++)
+            remainder = bufferFinal.insertItem(slot, remainder, false);
+
+        if (!remainder.isEmpty())
+        {
+            refundExtractedRS(storage, extractedKeys, extractedCounts);
+            player.sendSystemMessage(Component.literal(
+                    "§c[ColonyLink RS] Redirector buffer is full! Could not insert DO blocks."));
+            return;
+        }
+
+        player.sendSystemMessage(Component.literal(
+                "§a[ColonyLink RS] Crafted " + needed + "x "
+                        + domumStack.getDisplayName().getString()
+                        + " → inserted into redirector buffer!"));
+    }
+
+    private static void refundExtractedRS(
+            com.refinedmods.refinedstorage.api.network.storage.StorageNetworkComponent storage,
+            List<com.refinedmods.refinedstorage.common.support.resource.ItemResource> keys,
+            List<Long> counts)
+    {
+        for (int i = 0; i < keys.size(); i++)
+            storage.insert(keys.get(i), counts.get(i),
+                    com.refinedmods.refinedstorage.api.core.Action.EXECUTE,
+                    com.refinedmods.refinedstorage.api.storage.Actor.EMPTY);
     }
 
     private static ItemStack findWandInInventory(ServerPlayer player)

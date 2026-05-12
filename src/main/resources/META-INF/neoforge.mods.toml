@@ -72,3 +72,10 @@ type="optional"
 versionRange="[15.0.0,)"
 ordering="AFTER"
 side="CLIENT"
+
+[[dependencies.${mod_id}]]
+modId="refinedstorage"
+type="optional"
+versionRange="[2.0.5,)"
+ordering="AFTER"
+side="BOTH"

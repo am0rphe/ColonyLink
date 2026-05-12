@@ -27,14 +27,17 @@ public class ClearNbtRecipe extends CustomRecipe
         {
             ItemStack stack = input.getItem(i);
             if (stack.isEmpty()) continue;
-            if (stack.getItem() == targetItem)
-                found++;
-            else
-                return false;
+            if (stack.getItem() == targetItem) found++;
+            else return false;
         }
         return found == 1;
     }
 
+    /**
+     * v1.1.3 : Le RF stocké dans la wand (clé "wand_rf" en NBT) est préservé
+     * au reset de la recette. Toutes les autres données NBT sont effacées
+     * (link AE2, builder entries, tab active).
+     */
     @Override
     public ItemStack assemble(CraftingInput input, HolderLookup.Provider provider)
     {
@@ -42,16 +45,25 @@ public class ClearNbtRecipe extends CustomRecipe
         {
             ItemStack stack = input.getItem(i);
             if (!stack.isEmpty() && stack.getItem() == targetItem)
-                return new ItemStack(targetItem, 1);
+            {
+                // Récupère le RF stocké avant reset
+                long storedRf = WandEnergyStorage.getStoredRF(stack);
+
+                // Crée un item propre (sans NBT)
+                ItemStack result = new ItemStack(targetItem, 1);
+
+                // Réinjecte le RF si non nul
+                if (storedRf > 0)
+                    WandEnergyStorage.setStoredRF(result, storedRf);
+
+                return result;
+            }
         }
         return ItemStack.EMPTY;
     }
 
     @Override
-    public boolean canCraftInDimensions(int width, int height)
-    {
-        return width * height >= 1;
-    }
+    public boolean canCraftInDimensions(int width, int height) { return width * height >= 1; }
 
     @Override
     public RecipeSerializer<?> getSerializer()

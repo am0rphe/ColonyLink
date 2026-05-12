@@ -74,6 +74,7 @@ dependencies {
     compileOnly files("run/client/mods/domum-ornamentum-1.0.233-snapshot-main.jar")
     compileOnly files("run/client/mods/minecolonies-1.1.1299-1.21.1-snapshot.jar")
     compileOnly "curse.maven:applied-energistics-2-223794:6626602"
+    compileOnly files("run/client/mods/refinedstorage-neoforge-2.0.5.jar")
     compileOnly "maven.modrinth:jade:15.10.5+neoforge"
 }
 

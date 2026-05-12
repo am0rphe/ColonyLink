@@ -1,6 +1,7 @@
 package com.colonylink.colonylink;
 
 import appeng.api.implementations.blockentities.IWirelessAccessPoint;
+import com.refinedmods.refinedstorage.api.network.Network;
 import appeng.api.networking.IGrid;
 import appeng.api.networking.crafting.ICraftingService;
 import appeng.api.stacks.AEItemKey;
@@ -81,9 +82,9 @@ public class WarehouseScanHandler
 
         // Récupère la wand et le réseau AE2
         ItemStack wandStack = findWandInInventory(player);
-        if (wandStack == null || !ColonyLinkWandLinkableHandler.isLinked(wandStack))
+        if (wandStack == null || !isWandLinked(wandStack))
         {
-            player.sendSystemMessage(Component.literal("§cWand not linked to AE2!"));
+            player.sendSystemMessage(Component.literal("§c[ColonyLink] Wand not linked to a network!"));
             sendFailure(player, currentTick);
             return;
         }
@@ -91,7 +92,7 @@ public class WarehouseScanHandler
         ServerLevel level = player.serverLevel();
 
         // Vérifie que le redirector a bien une WarehouseLinkCard
-        BlockPos redirectorPos = getLinkedRedirectorPos(wandStack);
+        BlockPos redirectorPos = getActiveRedirectorPos(wandStack);
         if (redirectorPos == null)
         {
             player.sendSystemMessage(Component.literal("§cNo Redirector linked to this wand!"));
@@ -100,7 +101,10 @@ public class WarehouseScanHandler
         }
 
         var be = level.getBlockEntity(redirectorPos);
-        if (!(be instanceof ColonyLinkRedirectorBlockEntity redirector) || !redirector.hasWarehouseCard())
+        boolean hasCard = false;
+        if (be instanceof ColonyLinkRedirectorBlockEntity redirector) hasCard = redirector.hasWarehouseCard();
+        else if (be instanceof ColonyLinkRedirectorBlockEntityRS redirectorRS) hasCard = redirectorRS.hasWarehouseCard();
+        if (!hasCard)
         {
             player.sendSystemMessage(Component.literal(
                     "§c[ColonyLink] No Warehouse Link Card in the Redirector!"));
@@ -125,23 +129,40 @@ public class WarehouseScanHandler
             return;
         }
 
-        // Récupère le réseau AE2
-        IWirelessAccessPoint wap = getWap(wandStack, level);
-        if (wap == null)
-        {
-            player.sendSystemMessage(Component.literal("§cCannot connect to AE2 network!"));
-            sendFailure(player, currentTick);
-            return;
-        }
+        // Récupère le service de craft — AE2 ou RS2 selon la wand
+        ICraftingService craftingService = null;
 
-        IGrid grid = wap.getGrid();
-        if (grid == null)
+        if (wandStack.getItem() instanceof ColonyLinkWandRS)
         {
-            sendFailure(player, currentTick);
-            return;
+            com.refinedmods.refinedstorage.api.network.Network network =
+                    ColonyLinkWandRSLinkableHandler.getNetwork(wandStack, level);
+            if (network == null)
+            {
+                player.sendSystemMessage(Component.literal("§c[ColonyLink] Cannot connect to RS2 network!"));
+                sendFailure(player, currentTick);
+                return;
+            }
+            // RS2 : pas de ICraftingService AE2 — on passe null,
+            // computeStandardWarehouseEntry gère le cas craftingService == null
+            // (pas de résolution récursive via patterns AE2 en mode RS2)
         }
-
-        ICraftingService craftingService = grid.getCraftingService();
+        else
+        {
+            IWirelessAccessPoint wap = getWap(wandStack, level);
+            if (wap == null)
+            {
+                player.sendSystemMessage(Component.literal("§cCannot connect to AE2 network!"));
+                sendFailure(player, currentTick);
+                return;
+            }
+            IGrid grid = wap.getGrid();
+            if (grid == null)
+            {
+                sendFailure(player, currentTick);
+                return;
+            }
+            craftingService = grid.getCraftingService();
+        }
 
         // ── Scan des racks warehouse ─────────────────────────────────────────
         // Stock warehouse agrégé : Item → quantité totale dans les racks
@@ -318,7 +339,7 @@ public class WarehouseScanHandler
         if (depth >= MAX_RECURSION_DEPTH || visitedItems.contains(item))
             return new WarehouseEntry(directUsed, 0L);
 
-        if (!craftingService.isCraftable(AEItemKey.of(stack)))
+        if (craftingService == null || !craftingService.isCraftable(AEItemKey.of(stack)))
             return new WarehouseEntry(directUsed, 0L);
 
         // Récupère le pattern AE2 pour cet item
@@ -556,23 +577,31 @@ public class WarehouseScanHandler
         return null;
     }
 
-    private static BlockPos getLinkedRedirectorPos(ItemStack wandStack)
-    {
-        var data = wandStack.get(net.minecraft.core.component.DataComponents.CUSTOM_DATA);
-        if (data == null) return null;
-        var tag = data.copyTag();
-        if (!tag.contains("redirector_x")) return null;
-        return new BlockPos(
-                tag.getInt("redirector_x"),
-                tag.getInt("redirector_y"),
-                tag.getInt("redirector_z"));
-    }
-
+    /**
+     * Cherche d'abord la wand AE2, puis la wand RS2.
+     * Retourne la première trouvée, ou null.
+     */
     private static ItemStack findWandInInventory(ServerPlayer player)
     {
         for (ItemStack stack : player.getInventory().items)
             if (stack.getItem() instanceof ColonyLinkWand) return stack;
+        for (ItemStack stack : player.getInventory().items)
+            if (stack.getItem() instanceof ColonyLinkWandRS) return stack;
         return null;
+    }
+
+    private static boolean isWandLinked(ItemStack wand)
+    {
+        if (wand.getItem() instanceof ColonyLinkWandRS)
+            return ColonyLinkWandRSLinkableHandler.isLinked(wand);
+        return ColonyLinkWandLinkableHandler.isLinked(wand);
+    }
+
+    private static BlockPos getActiveRedirectorPos(ItemStack wand)
+    {
+        if (wand.getItem() instanceof ColonyLinkWandRS)
+            return ColonyLinkWandRSLinkableHandler.getActiveRedirectorPos(wand);
+        return ColonyLinkWandLinkableHandler.getActiveRedirectorPos(wand);
     }
 
     private static IWirelessAccessPoint getWap(ItemStack wandStack, ServerLevel level)

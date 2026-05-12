@@ -33,12 +33,18 @@ public record WarehousePriorityPacket(BlockPos redirectorPos) implements CustomP
 
             ServerPlayer player = serverPlayer;
             var be = player.serverLevel().getBlockEntity(packet.redirectorPos());
-            if (!(be instanceof ColonyLinkRedirectorBlockEntity redirector)) return;
 
-            // N'autorise le toggle que si la WarehouseLinkCard est présente
-            if (!redirector.hasWarehouseCard()) return;
-
-            redirector.toggleWarehousePriority();
+            // Supporte AE2 et RS2
+            if (be instanceof ColonyLinkRedirectorBlockEntity redirector)
+            {
+                if (!redirector.hasWarehouseCard()) return;
+                redirector.toggleWarehousePriority();
+            }
+            else if (be instanceof ColonyLinkRedirectorBlockEntityRS redirectorRS)
+            {
+                if (!redirectorRS.hasWarehouseCard()) return;
+                redirectorRS.toggleWarehousePriority();
+            }
         });
     }
 }

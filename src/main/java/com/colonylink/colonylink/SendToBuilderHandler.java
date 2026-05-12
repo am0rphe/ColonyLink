@@ -25,6 +25,15 @@ public class SendToBuilderHandler
     public static void handleSendToBuilder(ServerPlayer player, ItemStack stack,
                                            BlockPos builderPos, int realCount)
     {
+        // ── v1.1.3 : Coût RF ──────────────────────────────────────────────────
+        long sendCost = ColonyLinkConfig.SEND_COST_RF.get();
+        if (sendCost > 0 && !ColonyLinkServerTicker.tryConsumeRF(player, sendCost))
+        {
+            player.sendSystemMessage(Component.literal(
+                    "§c[ColonyLink] Not enough power! Need " + sendCost + " RF to send."));
+            return;
+        }
+
         ItemStack wandStack = findWandInInventory(player);
         if (wandStack == null || !ColonyLinkWandLinkableHandler.isLinked(wandStack))
         {
@@ -34,8 +43,63 @@ public class SendToBuilderHandler
 
         ServerLevel level = player.serverLevel();
 
-        // Vérifie que la wand a un redirector lié
-        BlockPos redirectorPos = getLinkedRedirectorPos(wandStack);
+        // ── v1.1.3 : Substitution d'outils ───────────────────────────────────
+        // Si l'item est un outil, on cherche le meilleur tier disponible
+        // selon le niveau du bâtiment du builder avant d'extraire du ME.
+        if (BuilderToolHelper.isTool(stack))
+        {
+            IWirelessAccessPoint wap = getWap(wandStack, level);
+            if (wap != null && wap.getGrid() != null)
+            {
+                IGrid grid = wap.getGrid();
+                appeng.api.stacks.KeyCounter inv =
+                        grid.getStorageService().getCachedInventory();
+                appeng.api.networking.crafting.ICraftingService cs =
+                        grid.getCraftingService();
+
+                // Cherche le niveau du bâtiment
+                int buildingLevel = 0;
+                com.minecolonies.api.colony.IColony colony =
+                        com.minecolonies.api.colony.IColonyManager.getInstance()
+                                .getClosestColony(level, builderPos);
+                if (colony != null)
+                {
+                    for (com.minecolonies.api.colony.buildings.IBuilding b :
+                            colony.getServerBuildingManager().getBuildings().values())
+                    {
+                        if (b.getPosition().equals(builderPos))
+                        {
+                            buildingLevel = b.getBuildingLevel();
+                            break;
+                        }
+                    }
+                }
+
+                BuilderToolHelper.SubstituteResult sub =
+                        BuilderToolHelper.findBestTool(stack, buildingLevel, inv, cs);
+
+                if (sub.action() == BuilderToolHelper.SubstituteAction.SEND)
+                {
+                    // Substitue l'item par le meilleur trouvé en ME
+                    stack = sub.displayStack().copyWithCount(stack.getCount());
+                    player.sendSystemMessage(Component.literal(
+                            "§6[ColonyLink] Tool upgraded: §f"
+                                    + stack.getDisplayName().getString()));
+                }
+                else if (sub.action() == BuilderToolHelper.SubstituteAction.CRAFT)
+                {
+                    // Lance le craft du meilleur tier disponible
+                    CraftHandler.handleCraftRequest(player, sub.displayStack(), 1);
+                    player.sendSystemMessage(Component.literal(
+                            "§a[ColonyLink] Crafting best tool: §f"
+                                    + sub.displayStack().getDisplayName().getString()));
+                    return;
+                }
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
+        BlockPos redirectorPos = ColonyLinkWandLinkableHandler.getActiveRedirectorPos(wandStack);
         if (redirectorPos == null)
         {
             player.sendSystemMessage(Component.literal("§cNo Redirector linked to this wand!"));
@@ -43,11 +107,9 @@ public class SendToBuilderHandler
             return;
         }
 
-        // Récupère le redirector
         ColonyLinkRedirectorBlockEntity redirector = null;
         var be = level.getBlockEntity(redirectorPos);
-        if (be instanceof ColonyLinkRedirectorBlockEntity r)
-            redirector = r;
+        if (be instanceof ColonyLinkRedirectorBlockEntity r) redirector = r;
 
         if (redirector == null)
         {
@@ -55,7 +117,6 @@ public class SendToBuilderHandler
             return;
         }
 
-        // Vérifie que le redirector est actif sur le réseau AE2
         var node = redirector.getManagedGridNode().getNode();
         if (node == null || !node.isActive())
         {
@@ -63,7 +124,6 @@ public class SendToBuilderHandler
             return;
         }
 
-        // Vérifie l'inventaire cible
         BlockPos targetPos = redirector.getTargetInventoryPos();
         if (targetPos == null)
         {
@@ -71,33 +131,22 @@ public class SendToBuilderHandler
             return;
         }
 
-        IItemHandler targetHandler = level.getCapability(
-                Capabilities.ItemHandler.BLOCK, targetPos, null);
+        IItemHandler targetHandler = level.getCapability(Capabilities.ItemHandler.BLOCK, targetPos, null);
         if (targetHandler == null)
         {
-            player.sendSystemMessage(Component.literal(
-                    "§cTarget inventory not found at " + targetPos.toShortString()));
+            player.sendSystemMessage(Component.literal("§cTarget inventory not found at " + targetPos.toShortString()));
             return;
         }
 
         IWirelessAccessPoint wap = getWap(wandStack, level);
-        if (wap == null)
-        {
-            player.sendSystemMessage(Component.literal("§cCannot connect to AE2 network!"));
-            return;
-        }
+        if (wap == null) { player.sendSystemMessage(Component.literal("§cCannot connect to AE2 network!")); return; }
 
         IGrid grid = wap.getGrid();
-        if (grid == null)
-        {
-            player.sendSystemMessage(Component.literal("§cAE2 network is offline!"));
-            return;
-        }
+        if (grid == null) { player.sendSystemMessage(Component.literal("§cAE2 network is offline!")); return; }
 
         if (redirector.getState() == ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY)
         {
-            player.sendSystemMessage(Component.literal(
-                    "§6Redirector is in STANDBY - target inventory is full!"));
+            player.sendSystemMessage(Component.literal("§6Redirector is in STANDBY - target inventory is full!"));
             return;
         }
 
@@ -112,7 +161,7 @@ public class SendToBuilderHandler
         long totalInserted = 0;
         int remaining = realCount;
 
-        // ── Étape 1 : puise dans le buffer DO si applicable ──────────────────
+        // ── Étape 1 : buffer DO si applicable ────────────────────────────────
         if (isDomum)
         {
             MaterialTextureData targetData = MaterialTextureData.readFromItemStack(stack);
@@ -121,16 +170,14 @@ public class SendToBuilderHandler
             for (int slot = 0; slot < buffer.getSlots() && remaining > 0; slot++)
             {
                 ItemStack inSlot = buffer.getStackInSlot(slot);
-                if (inSlot.isEmpty()) continue;
-                if (inSlot.getItem() != stack.getItem()) continue;
+                if (inSlot.isEmpty() || inSlot.getItem() != stack.getItem()) continue;
 
                 MaterialTextureData slotData = MaterialTextureData.readFromItemStack(inSlot);
                 net.minecraft.world.item.component.BlockItemStateProperties slotBsp =
                         inSlot.get(net.minecraft.core.component.DataComponents.BLOCK_STATE);
                 net.minecraft.world.item.component.BlockItemStateProperties targetBsp =
                         stack.get(net.minecraft.core.component.DataComponents.BLOCK_STATE);
-                if (!slotData.equals(targetData)) continue;
-                if (!java.util.Objects.equals(slotBsp, targetBsp)) continue;
+                if (!slotData.equals(targetData) || !java.util.Objects.equals(slotBsp, targetBsp)) continue;
 
                 int toExtract = Math.min(inSlot.getCount(), remaining);
                 ItemStack took = buffer.extractItem(slot, toExtract, false);
@@ -150,26 +197,21 @@ public class SendToBuilderHandler
             }
         }
 
-        // ── Étape 2 : extraction selon la priorité configurée ─────────────────
+        // ── Étape 2 : extraction selon priorité ───────────────────────────────
         boolean warehousePriority = redirector.hasWarehouseCard() && redirector.isWarehousePriority();
 
         if (warehousePriority && !isDomum)
         {
-            // Prio Warehouse : extrait d'abord des racks, complète depuis ME
-            remaining = extractFromWarehouseThenMe(
-                    level, stack, aeKey, remaining,
-                    inventory, actionSource,
-                    redirector, targetPos);
+            remaining = extractFromWarehouseThenMe(level, stack, aeKey, remaining,
+                    inventory, actionSource, redirector, targetPos);
             totalInserted = realCount - remaining;
         }
         else
         {
-            // Prio AE2 (défaut) : comportement original
             while (remaining > 0)
             {
                 int batchSize = Math.min(remaining, 64);
                 long extracted = inventory.extract(aeKey, batchSize, Actionable.MODULATE, actionSource);
-
                 if (extracted <= 0) break;
 
                 ItemStack toInsert = aeKey.toStack((int) extracted);
@@ -187,7 +229,7 @@ public class SendToBuilderHandler
             }
         }
 
-        // ── Feedback ─────────────────────────────────────────────────────────
+        // ── Feedback ──────────────────────────────────────────────────────────
         if (totalInserted > 0)
         {
             player.sendSystemMessage(Component.literal(
@@ -206,45 +248,25 @@ public class SendToBuilderHandler
         }
     }
 
-    // ── Extraction Warehouse → ME ─────────────────────────────────────────────
-
-    /**
-     * Extraction prio Warehouse : parcourt les racks de la Warehouse de la colonie
-     * via l'API MineColonies (BuildingWareHouse.getContainers()),
-     * extrait ce qui est disponible, puis complète depuis le ME pour le reste.
-     *
-     * @return quantité encore non envoyée après extraction (0 si tout a été envoyé)
-     */
     private static int extractFromWarehouseThenMe(
-            ServerLevel level,
-            ItemStack stack,
-            AEItemKey aeKey,
-            int remaining,
-            MEStorage inventory,
-            IActionSource actionSource,
-            ColonyLinkRedirectorBlockEntity redirector,
-            BlockPos targetPos)
+            ServerLevel level, ItemStack stack, AEItemKey aeKey, int remaining,
+            MEStorage inventory, IActionSource actionSource,
+            ColonyLinkRedirectorBlockEntity redirector, BlockPos targetPos)
     {
-        IColony colony = IColonyManager.getInstance().getClosestColony(
-                level, redirector.getBlockPos());
-
+        IColony colony = IColonyManager.getInstance().getClosestColony(level, redirector.getBlockPos());
         if (colony != null)
         {
             for (IBuilding building : colony.getServerBuildingManager().getBuildings().values())
             {
-                // BuildingWareHouse expose getContainerList() via son API interne
                 if (!(building instanceof BuildingWareHouse warehouse)) continue;
-
                 try
                 {
-                    // getContainers() retourne la liste des BlockPos des racks
                     var containerList = warehouse.getContainers();
                     if (containerList == null || containerList.isEmpty()) continue;
 
                     for (BlockPos rackPos : containerList)
                     {
                         if (remaining <= 0) break;
-
                         IItemHandler rackHandler = level.getCapability(
                                 Capabilities.ItemHandler.BLOCK, rackPos, null);
                         if (rackHandler == null) continue;
@@ -252,8 +274,7 @@ public class SendToBuilderHandler
                         for (int slot = 0; slot < rackHandler.getSlots() && remaining > 0; slot++)
                         {
                             ItemStack inSlot = rackHandler.getStackInSlot(slot);
-                            if (inSlot.isEmpty()) continue;
-                            if (!ItemStack.isSameItemSameComponents(inSlot, stack)) continue;
+                            if (inSlot.isEmpty() || !ItemStack.isSameItemSameComponents(inSlot, stack)) continue;
 
                             int toExtract = Math.min(inSlot.getCount(), remaining);
                             ItemStack took = rackHandler.extractItem(slot, toExtract, false);
@@ -263,7 +284,6 @@ public class SendToBuilderHandler
                                     Capabilities.ItemHandler.BLOCK, targetPos, null);
                             if (targetHandler == null)
                             {
-                                // Remet dans le rack si on ne peut plus insérer
                                 for (int s = 0; s < rackHandler.getSlots() && !took.isEmpty(); s++)
                                     took = rackHandler.insertItem(s, took, false);
                                 return remaining;
@@ -275,7 +295,6 @@ public class SendToBuilderHandler
 
                             if (!leftOver.isEmpty())
                             {
-                                // Inventaire cible plein — remet le surplus dans le rack
                                 for (int s2 = 0; s2 < rackHandler.getSlots() && !leftOver.isEmpty(); s2++)
                                     leftOver = rackHandler.insertItem(s2, leftOver, false);
                                 redirector.setState(ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY);
@@ -288,11 +307,10 @@ public class SendToBuilderHandler
                 {
                     ColonyLink.LOGGER.debug("[ColonyLink] Warehouse extraction error: {}", e.getMessage());
                 }
-                break; // une seule Warehouse traitée par colonie
+                break;
             }
         }
 
-        // Complément depuis ME pour le reste
         while (remaining > 0)
         {
             int batchSize = Math.min(remaining, 64);
@@ -319,26 +337,12 @@ public class SendToBuilderHandler
         return remaining;
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
     private static ItemStack insertIntoHandler(IItemHandler handler, ItemStack stack)
     {
         ItemStack remainder = stack.copy();
         for (int slot = 0; slot < handler.getSlots() && !remainder.isEmpty(); slot++)
             remainder = handler.insertItem(slot, remainder, false);
         return remainder;
-    }
-
-    private static BlockPos getLinkedRedirectorPos(ItemStack wandStack)
-    {
-        var data = wandStack.get(net.minecraft.core.component.DataComponents.CUSTOM_DATA);
-        if (data == null) return null;
-        var tag = data.copyTag();
-        if (!tag.contains("redirector_x")) return null;
-        return new BlockPos(
-                tag.getInt("redirector_x"),
-                tag.getInt("redirector_y"),
-                tag.getInt("redirector_z"));
     }
 
     private static ItemStack findWandInInventory(ServerPlayer player)
