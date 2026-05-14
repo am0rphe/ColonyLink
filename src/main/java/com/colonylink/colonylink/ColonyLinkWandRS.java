@@ -279,6 +279,7 @@ public class ColonyLinkWandRS extends Item
             BuilderEntry target = entries.get(targetIndex);
             redirector.setTargetInventoryPos(target.builderPos());
             redirector.setLinkedBuilderPos(target.builderPos());
+            redirector.setLinkedBuilderName(target.builderName());
             redirector.updateState();
             entries.set(targetIndex, target.withRedirector(pos));
             ColonyLinkWandRSLinkableHandler.setBuilderEntries(wandStack, entries);

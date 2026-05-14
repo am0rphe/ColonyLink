@@ -17,7 +17,7 @@ import java.util.List;
 public class ColonyLinkRedirectorScreenRS extends AbstractContainerScreen<ColonyLinkRedirectorMenuRS>
 {
     private static final int GUI_WIDTH  = 230;
-    private static final int GUI_HEIGHT = 319;
+    private static final int GUI_HEIGHT = 204;
 
     public ColonyLinkRedirectorScreenRS(ColonyLinkRedirectorMenuRS menu,
                                         Inventory playerInventory, Component title)
@@ -34,7 +34,7 @@ public class ColonyLinkRedirectorScreenRS extends AbstractContainerScreen<Colony
         this.titleLabelX     = 8;
         this.titleLabelY     = 6;
         this.inventoryLabelX = 8;
-        this.inventoryLabelY = 227;
+        this.inventoryLabelY = 113;
     }
 
     @Override
@@ -47,11 +47,11 @@ public class ColonyLinkRedirectorScreenRS extends AbstractContainerScreen<Colony
         graphics.fill(x, y, x + imageWidth, y + imageHeight, 0xFF8B8B8B);
         graphics.fill(x, y, x + imageWidth, y + 2, 0xFFFFFFFF);
         graphics.fill(x, y, x + 2, y + imageHeight, 0xFFFFFFFF);
-        graphics.fill(x, y + imageHeight - 2, x + imageWidth, y + imageHeight, 0xFF373737);
-        graphics.fill(x + imageWidth - 2, y, x + imageWidth, y + imageHeight, 0xFF373737);
+        graphics.fill(x, y + imageHeight - 2, x + imageWidth, y + imageHeight, 0xFF111111);
+        graphics.fill(x + imageWidth - 2, y, x + imageWidth, y + imageHeight, 0xFF111111);
 
         // Barre de titre — teinte légèrement différente pour distinguer RS2 vs AE2
-        graphics.fill(x + 2, y + 2, x + imageWidth - 2, y + 36, 0xFF5B6B5B);
+        graphics.fill(x + 2, y + 2, x + imageWidth - 2, y + 48, 0xFF5B6B5B);
         graphics.fill(x + 2, y + 2, x + imageWidth - 2, y + 4, 0xFF7B8B7B);
 
         // Statut wand RS
@@ -70,14 +70,22 @@ public class ColonyLinkRedirectorScreenRS extends AbstractContainerScreen<Colony
                     }
                 }
             }
+            // Nom du builder lié
+            ColonyLinkRedirectorBlockEntityRS _beRS = menu.getBlockEntity();
+            if (_beRS != null && _beRS.getLinkedBuilderPos() != null)
+            {
+                String bName = _beRS.getLinkedBuilderName();
+                if (!bName.isEmpty() && !bName.equals("N/A"))
+                    graphics.drawString(this.font, "§7Builder: §f" + bName, x + 8, y + 18, 0xFFFFFF, false);
+            }
             String wandText = "RS Wand: " + (wandLinked ? "Linked" : "Unlinked");
             int wandColor = wandLinked ? 0x00FF00 : 0xFF4444;
-            graphics.drawString(this.font, wandText, x + 8, y + 22, wandColor, false);
+            graphics.drawString(this.font, wandText, x + 8, y + 34, wandColor, false);
         }
 
         // Slot Warehouse Link Card
         int cardSlotX = x + 170;
-        int cardSlotY = y + 10;
+        int cardSlotY = y + 20;
         graphics.fill(cardSlotX - 1, cardSlotY - 1, cardSlotX + 17, cardSlotY + 17, 0xFF665500);
         graphics.fill(cardSlotX, cardSlotY, cardSlotX + 16, cardSlotY + 16, 0xFF4A3A00);
         graphics.fill(cardSlotX, cardSlotY, cardSlotX + 16, cardSlotY + 1, 0xFF332800);
@@ -90,16 +98,16 @@ public class ColonyLinkRedirectorScreenRS extends AbstractContainerScreen<Colony
         graphics.drawString(this.font, hasCard ? "W✔" : "W?", cardSlotX + 20, cardSlotY + 4, cardTextColor);
 
         // Zone buffer
-        graphics.fill(x + 6, y + 40, x + imageWidth - 6, y + 220, 0xFF373737);
-        graphics.fill(x + 6, y + 40, x + imageWidth - 6, y + 41, 0xFF8B8B8B);
-        graphics.fill(x + 6, y + 40, x + 7, y + 220, 0xFF8B8B8B);
+        graphics.fill(x + 6, y + 50, x + imageWidth - 6, y + 109, 0xFF373737);
+        graphics.fill(x + 6, y + 50, x + imageWidth - 6, y + 51, 0xFF8B8B8B);
+        graphics.fill(x + 6, y + 50, x + 7, y + 109, 0xFF8B8B8B);
 
         for (int row = 0; row < ColonyLinkRedirectorBlockEntityRS.BUFFER_ROWS; row++)
         {
             for (int col = 0; col < ColonyLinkRedirectorBlockEntityRS.BUFFER_COLS; col++)
             {
                 int slotX = x + 8 + col * 18;
-                int slotY = y + 42 + row * 18;
+                int slotY = y + 52 + row * 18;
                 graphics.fill(slotX, slotY, slotX + 16, slotY + 16, 0xFF4A4A4A);
                 graphics.fill(slotX, slotY, slotX + 16, slotY + 1, 0xFF373737);
                 graphics.fill(slotX, slotY, slotX + 1, slotY + 16, 0xFF373737);
@@ -109,15 +117,16 @@ public class ColonyLinkRedirectorScreenRS extends AbstractContainerScreen<Colony
         }
 
         // Séparateur + inventaire joueur
-        graphics.fill(x + 6, y + 222, x + imageWidth - 6, y + 223, 0xFF555555);
-        graphics.fill(x + 6, y + 224, x + imageWidth - 6, y + 316, 0xFF373737);
+        graphics.fill(x + 6, y + 110, x + imageWidth - 6, y + 111, 0xFF555555);
+        graphics.fill(x + 6, y + 112, x + imageWidth - 6, y + 202, 0xFF373737);
+        graphics.fill(x + 6, y + 179, x + imageWidth - 6, y + 180, 0xFF555555);
 
         for (int row = 0; row < 3; row++)
         {
             for (int col = 0; col < 9; col++)
             {
                 int slotX = x + 8 + col * 18;
-                int slotY = y + 234 + row * 18;
+                int slotY = y + 123 + row * 18;
                 graphics.fill(slotX, slotY, slotX + 16, slotY + 16, 0xFF4A4A4A);
                 graphics.fill(slotX, slotY, slotX + 16, slotY + 1, 0xFF373737);
                 graphics.fill(slotX, slotY, slotX + 1, slotY + 16, 0xFF373737);
@@ -129,7 +138,7 @@ public class ColonyLinkRedirectorScreenRS extends AbstractContainerScreen<Colony
         for (int col = 0; col < 9; col++)
         {
             int slotX = x + 8 + col * 18;
-            int slotY = y + 292;
+            int slotY = y + 181;
             graphics.fill(slotX, slotY, slotX + 16, slotY + 16, 0xFF4A4A4A);
             graphics.fill(slotX, slotY, slotX + 16, slotY + 1, 0xFF373737);
             graphics.fill(slotX, slotY, slotX + 1, slotY + 16, 0xFF373737);
@@ -145,7 +154,7 @@ public class ColonyLinkRedirectorScreenRS extends AbstractContainerScreen<Colony
         this.renderTooltip(graphics, mouseX, mouseY);
 
         int cardSlotX = this.leftPos + 170;
-        int cardSlotY = this.topPos + 10;
+        int cardSlotY = this.topPos + 20;
         if (mouseX >= cardSlotX && mouseX <= cardSlotX + 16
                 && mouseY >= cardSlotY && mouseY <= cardSlotY + 16)
         {

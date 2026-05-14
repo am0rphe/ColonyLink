@@ -120,7 +120,7 @@ public class CraftHandlerRS
                                 + stacks.get(0).getDisplayName().getString()));
             else
                 player.sendSystemMessage(Component.literal(
-                        "§c[ColonyLink RS] Missing resources: "
+                        "§c[ColonyLink RS] Missing primary ingredients for: "
                                 + stacks.get(0).getDisplayName().getString()));
         }
         else

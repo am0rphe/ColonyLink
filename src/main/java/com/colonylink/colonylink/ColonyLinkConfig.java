@@ -192,12 +192,12 @@ public class ColonyLinkConfig
         REDIRECTOR_BUFFER_ROWS = builder
                 .comment("Number of rows in the Redirector item buffer.",
                         "Total slots = rows × cols. Default: 10 (= 120 slots with default cols)")
-                .defineInRange("redirector_buffer_rows", 10, 1, 20);
+                .defineInRange("redirector_buffer_rows", 3, 1, 20);
 
         REDIRECTOR_BUFFER_COLS = builder
                 .comment("Number of columns in the Redirector item buffer.",
                         "Total slots = rows × cols. Default: 12 (= 120 slots with default rows)")
-                .defineInRange("redirector_buffer_cols", 12, 6, 18);
+                .defineInRange("redirector_buffer_cols", 9, 6, 18);
 
         builder.pop();
 

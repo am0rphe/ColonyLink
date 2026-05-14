@@ -61,6 +61,17 @@ public class ColonyLinkScreen extends Screen
     private double  dragStartY          = 0;
     private int     dragStartOffset     = 0;
 
+    // ── Draggable GUI ─────────────────────────────────────────────────────────
+    // dragOffsetX/Y = décalage par rapport à la position centrée par défaut.
+    // Initialisé à 0 → le GUI s'ouvre centré, puis peut être déplacé.
+    private int     dragOffsetX    = 0;
+    private int     dragOffsetY    = 0;
+    private boolean isDraggingGui  = false;
+    private double  guiDragStartX  = 0;
+    private double  guiDragStartY  = 0;
+    private int     guiDragOriginX = 0;
+    private int     guiDragOriginY = 0;
+
     private WarehouseResultPacket warehouseSnapshot       = null;
     private long warehouseSnapshotReceivedMs              = 0;
     private static final long SNAPSHOT_VALIDITY_MS        = 20_000L; // fallback si config non chargée
@@ -145,8 +156,8 @@ public class ColonyLinkScreen extends Screen
     private boolean isOutOfPower() { return rfStored <= 0; }
 
     // ── Coordonnées ───────────────────────────────────────────────────────────
-    private int getGuiX() { return (this.width - GUI_WIDTH - TAB_WIDTH) / 2 + TAB_WIDTH; }
-    private int getGuiY() { return (this.height - GUI_HEIGHT) / 2; }
+    private int getGuiX() { return (this.width - GUI_WIDTH - TAB_WIDTH) / 2 + TAB_WIDTH + dragOffsetX; }
+    private int getGuiY() { return (this.height - GUI_HEIGHT) / 2 + dragOffsetY; }
 
     private int getListStartY()      { return getGuiY() + 112; }
     private int getScrollbarX()      { return getGuiX() + GUI_WIDTH - 16; }
@@ -157,6 +168,12 @@ public class ColonyLinkScreen extends Screen
     private int getTabX(int i) { return getGuiX() - TAB_WIDTH + (i == activeTabIndex ? TAB_OVERLAP : 0); }
     private int getTabY(int i) { return getGuiY() + TAB_Y_OFFSET + i * (TAB_HEIGHT + TAB_SPACING); }
     private int getAddTabY()   { return getTabY(tabMetas.size()); }
+
+    // Bouton config — juste à gauche du bouton Restart, dans la barre de titre
+    private static final int CFG_BTN_W = 16;
+    private static final int CFG_BTN_H = 14;
+    private int getCfgBtnX() { return getRestartBtnX() - CFG_BTN_W - 2; }
+    private int getCfgBtnY() { return getRestartBtnY(); }
 
     private int getWareCheckBtnX() { return getGuiX() + 8; }
     private int getWareCheckBtnY() { return getGuiY() + GUI_HEIGHT - 40; }
@@ -240,6 +257,38 @@ public class ColonyLinkScreen extends Screen
         {
             PacketDistributor.sendToServer(new GuiStatePacket(true, builderPos, activeTabIndex));
         }
+    }
+
+    /**
+     * Transforme une coordonnée X écran → coordonnée dans l'espace du GUI scalé.
+     * Quand scale=1, retourne la valeur inchangée.
+     */
+    private int toGuiX(double screenX)
+    {
+        float s = ColonyLinkGuiConfig.get().scale;
+        if (s == 1.0f) return (int) screenX;
+        float cx = this.width / 2f;
+        return (int)((screenX - cx) / s + cx);
+    }
+
+    private int toGuiY(double screenY)
+    {
+        float s = ColonyLinkGuiConfig.get().scale;
+        if (s == 1.0f) return (int) screenY;
+        float cy = this.height / 2f;
+        return (int)((screenY - cy) / s + cy);
+    }
+
+    /** Zone handle drag : entre le bouton Unlink (fin) et le bouton Restart (début), dans la barre de titre. */
+    private boolean isInDragHandle(double mx, double my)
+    {
+        int x = getGuiX(), y = getGuiY();
+        int handleX1 = x + getDeleteBtnW() + 12; // juste après Unlink
+        // Exclut zone bouton cfg (à gauche de Restart) + Restart lui-même
+        int handleX2 = getCfgBtnX() - 4;
+        int handleY1 = y + 2;
+        int handleY2 = y + 20;
+        return mx >= handleX1 && mx <= handleX2 && my >= handleY1 && my <= handleY2;
     }
 
     @Override
@@ -393,12 +442,21 @@ public class ColonyLinkScreen extends Screen
     private int getWorkerStatusColor()
     {
         if (workerStatus == null) return 0x888888;
-        if (workerStatus.contains("work") || workerStatus.contains("Working")) return 0x00FF00;
-        if (workerStatus.contains("sleep") || workerStatus.contains("Sleep"))  return 0x4488FF;
-        if (workerStatus.contains("eat")   || workerStatus.contains("Eat"))    return 0xFFAA00;
-        if (workerStatus.contains("sick")  || workerStatus.contains("Sick"))   return 0xFF4444;
-        if (workerStatus.contains("Stuck") || workerStatus.contains("STUCK"))  return 0xFF0000;
-        if (workerStatus.contains("Idle")  || workerStatus.contains("IDLE"))   return 0xFFFF00;
+        if (workerStatus.equals("Working"))                                    return 0x00FF00;
+        if (workerStatus.equals("Idle"))                                       return 0xFFFF00;
+        if (workerStatus.equals("Hungry"))                                     return 0xFFAA00;
+        if (workerStatus.equals("Sleeping"))                                   return 0x4488FF;
+        if (workerStatus.equals("Bad weather"))                                return 0x88AACC;
+        if (workerStatus.equals("Sick"))                                       return 0xFF4444;
+        if (workerStatus.equals("Mourning"))                                   return 0x888888;
+        if (workerStatus.equals("Raided!"))                                    return 0xFF0000;
+        if (workerStatus.equals("No home"))                                    return 0xFFCC44;
+        // Fallback pour statuts traduits inconnus
+        if (workerStatus.toLowerCase().contains("work"))                       return 0x00FF00;
+        if (workerStatus.toLowerCase().contains("sleep"))                      return 0x4488FF;
+        if (workerStatus.toLowerCase().contains("eat") || workerStatus.toLowerCase().contains("food")) return 0xFFAA00;
+        if (workerStatus.toLowerCase().contains("sick"))                       return 0xFF4444;
+        if (workerStatus.toLowerCase().contains("idle"))                       return 0xFFFF00;
         return 0xCCCCCC;
     }
 
@@ -423,8 +481,14 @@ public class ColonyLinkScreen extends Screen
             int tx = getTabX(i), ty = getTabY(i), tw = TAB_WIDTH, th = TAB_HEIGHT;
 
             int bg, bl, bd;
+            ColonyLinkGuiConfig _tabCfg = ColonyLinkGuiConfig.get();
             if (active)
-            { bg = 0xFF8B8B8B; bl = 0xFFFFFFFF; bd = 0xFF555555; }
+            {
+                // Tab active : utilise la couleur fond config légèrement éclaircie
+                bg = lighten(_tabCfg.bgColor, 1.1f) | 0xFF000000;
+                bl = _tabCfg.border();
+                bd = _tabCfg.borderShadow();
+            }
             else if (!meta.hasRedirector())
             { bg = 0xFF5A3A10; bl = 0xFF886633; bd = 0xFF221500; }
             else
@@ -470,6 +534,72 @@ public class ColonyLinkScreen extends Screen
         }
     }
 
+    /** Éclaircit une couleur ARGB par un facteur (ex: 1.3f). */
+    private static int lighten(int argb, float f)
+    {
+        int a  = (argb >> 24) & 0xFF;
+        int r  = Math.min(255, (int)(((argb >> 16) & 0xFF) * f));
+        int gv = Math.min(255, (int)(((argb >> 8)  & 0xFF) * f));
+        int b  = Math.min(255, (int)(( argb        & 0xFF) * f));
+        return (a << 24) | (r << 16) | (gv << 8) | b;
+    }
+
+    private static int darken(int argb, float f)
+    {
+        int a  = (argb >> 24) & 0xFF;
+        int r  = Math.max(0, (int)(((argb >> 16) & 0xFF) * f));
+        int gv = Math.max(0, (int)(((argb >> 8)  & 0xFF) * f));
+        int b  = Math.max(0, (int)(( argb        & 0xFF) * f));
+        return (a << 24) | (r << 16) | (gv << 8) | b;
+    }
+
+    /** Mélange deux couleurs (r/g/b seulement, ignore alpha source). */
+    private static int blendColor(int base, int blueHint, float blueWeight)
+    {
+        int r  = (int)(((base >> 16) & 0xFF) * (1 - blueWeight));
+        int gv = (int)(((base >> 8)  & 0xFF) * (1 - blueWeight));
+        int b  = Math.min(255, (int)(((base & 0xFF) * (1 - blueWeight)) + (blueHint * blueWeight)));
+        return 0xFF000000 | (r << 16) | (gv << 8) | b;
+    }
+
+    /** Dessine le bouton config — intégré dans la barre de titre, fond cohérent. */
+    private void drawCfgButton(GuiGraphics g, int mx, int my, List<Component> tip)
+    {
+        int bx = getCfgBtnX(), by = getCfgBtnY();
+        int bw = CFG_BTN_W, bh = CFG_BTN_H;
+        boolean hov = mx >= bx && mx <= bx + bw && my >= by && my <= by + bh;
+
+        // Fond — légèrement différent de la barre de titre pour être visible
+        int bg = hov ? 0xFF505070 : 0xFF404060;
+        g.fill(bx, by, bx + bw, by + bh, bg);
+        // Bordure fine cohérente avec le reste du GUI
+        g.fill(bx, by, bx + bw, by + 1, 0xFF8888AA);
+        g.fill(bx, by, bx + 1, by + bh, 0xFF8888AA);
+        g.fill(bx, by + bh - 1, bx + bw, by + bh, 0xFF222244);
+        g.fill(bx + bw - 1, by, bx + bw, by + bh, 0xFF222244);
+
+        // Icône "settings" : 3 lignes horizontales avec un carré (≠ engrenage des tabs)
+        int ic = hov ? 0xFFDDDDFF : 0xFF9999CC;
+        int ox = bx + 3, oy = by + 3;
+        // Ligne 1 : ─ ■ ─
+        g.fill(ox,     oy,     ox + 4, oy + 1, ic);
+        g.fill(ox + 5, oy,     ox + 9, oy + 1, ic);
+        g.fill(ox + 4, oy - 1, ox + 6, oy + 2, ic); // curseur carré
+        // Ligne 2 : ─ ─ ■
+        g.fill(ox,     oy + 4, ox + 7, oy + 5, ic);
+        g.fill(ox + 7, oy + 3, ox + 9, oy + 6, ic);
+        // Ligne 3 : ■ ─ ─
+        g.fill(ox + 2, oy + 7, ox + 9, oy + 8, ic);
+        g.fill(ox,     oy + 7, ox + 3, oy + 9, ic);
+
+        if (hov)
+        {
+            tip.clear();
+            tip.add(Component.literal("§eGUI Config"));
+            tip.add(Component.literal("§7Customize colors, borders, opacity and scale"));
+        }
+    }
+
     private void drawGearIcon(GuiGraphics g, int ox, int oy, boolean active, boolean hasRedir)
     {
         int col  = active ? 0xFFE0E0E0 : (hasRedir ? 0xFF888888 : 0xFFBB7722);
@@ -486,12 +616,13 @@ public class ColonyLinkScreen extends Screen
     // ── Info panel ────────────────────────────────────────────────────────────
     private void drawInfoPanel(GuiGraphics g, int x, int y)
     {
+        ColonyLinkGuiConfig _c = ColonyLinkGuiConfig.get();
         int panelH = 58;
-        g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 22 + panelH, 0xFF3A3A3A);
-        g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 23, 0xFF8B8B8B);
-        g.fill(x + 6, y + 22, x + 7, y + 22 + panelH, 0xFF8B8B8B);
-        g.fill(x + 6, y + 22 + panelH - 1, x + GUI_WIDTH - 6, y + 22 + panelH, 0xFF373737);
-        g.fill(x + GUI_WIDTH - 7, y + 22, x + GUI_WIDTH - 6, y + 22 + panelH, 0xFF373737);
+        g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 22 + panelH, _c.applyOpacity(0xFF3A3A3A));
+        g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 23, _c.applyOpacity(0xFF8B8B8B));
+        g.fill(x + 6, y + 22, x + 7, y + 22 + panelH, _c.applyOpacity(0xFF8B8B8B));
+        g.fill(x + 6, y + 22 + panelH - 1, x + GUI_WIDTH - 6, y + 22 + panelH, _c.applyOpacity(0xFF373737));
+        g.fill(x + GUI_WIDTH - 7, y + 22, x + GUI_WIDTH - 6, y + 22 + panelH, _c.applyOpacity(0xFF373737));
 
         if (!isOutOfPower())
         {
@@ -546,13 +677,14 @@ public class ColonyLinkScreen extends Screen
     private void drawRequestPanel(GuiGraphics g, int x, int y, int mx, int my,
                                   List<Component> pendingTooltipOut)
     {
+        ColonyLinkGuiConfig _cr = ColonyLinkGuiConfig.get();
         int pY = y + 80, pH = 30;
-        g.fill(x + 6, pY, x + GUI_WIDTH - 6, pY + pH, 0xFF2E2E4A);
-        g.fill(x + 6, pY, x + GUI_WIDTH - 6, pY + 1, 0xFF6666AA);
-        g.fill(x + 6, pY, x + 7, pY + pH, 0xFF6666AA);
-        g.fill(x + 6, pY + pH - 1, x + GUI_WIDTH - 6, pY + pH, 0xFF1A1A3A);
-        g.fill(x + GUI_WIDTH - 7, pY, x + GUI_WIDTH - 6, pY + pH, 0xFF1A1A3A);
-        g.fill(x + 7, pY + 11, x + GUI_WIDTH - 7, pY + 12, 0xFF3A3A6A);
+        g.fill(x + 6, pY, x + GUI_WIDTH - 6, pY + pH, _cr.applyOpacity(0xFF2E2E4A));
+        g.fill(x + 6, pY, x + GUI_WIDTH - 6, pY + 1, _cr.applyOpacity(0xFF6666AA));
+        g.fill(x + 6, pY, x + 7, pY + pH, _cr.applyOpacity(0xFF6666AA));
+        g.fill(x + 6, pY + pH - 1, x + GUI_WIDTH - 6, pY + pH, _cr.applyOpacity(0xFF1A1A3A));
+        g.fill(x + GUI_WIDTH - 7, pY, x + GUI_WIDTH - 6, pY + pH, _cr.applyOpacity(0xFF1A1A3A));
+        g.fill(x + 7, pY + 11, x + GUI_WIDTH - 7, pY + 12, _cr.applyOpacity(0xFF3A3A6A));
         g.drawString(this.font, "§9Priority Request:", x + 10, pY + 3, 0xAAAAFF, false);
 
         boolean hasReq = builderRequest != null && !builderRequest.stack().isEmpty()
@@ -572,7 +704,7 @@ public class ColonyLinkScreen extends Screen
         int rbX = getReqBtnX(), rbY = getReqBtnY(), rbW = getReqBtnW(), rbH = getReqBtnH();
         ResourceStatus rs = builderRequest.status();
         boolean hov = mx >= rbX && mx <= rbX + rbW && my >= rbY && my <= rbY + rbH;
-        int bg = hov && isButtonClickable(rs) ? getButtonHoverColor(rs) : getButtonColor(rs);
+        int bg = _cr.applyOpacity(hov && isButtonClickable(rs) ? getButtonHoverColor(rs) : getButtonColor(rs));
         g.fill(rbX, rbY, rbX + rbW, rbY + rbH, bg);
         g.fill(rbX, rbY, rbX + rbW, rbY + 1, 0xFFFFFFFF);
         g.fill(rbX, rbY, rbX + 1, rbY + rbH, 0xFFFFFFFF);
@@ -659,19 +791,55 @@ public class ColonyLinkScreen extends Screen
 
     // ── render() ──────────────────────────────────────────────────────────────
     @Override
-    public void render(GuiGraphics g, int mx, int my, float pt)
+    public void render(GuiGraphics g, int rawMx, int rawMy, float pt)
     {
+        // ── Scale config ──────────────────────────────────────────────────────
+        float _scale = ColonyLinkGuiConfig.get().scale;
+        if (_scale != 1.0f)
+        {
+            float cx = this.width / 2f, cy = this.height / 2f;
+            g.pose().pushPose();
+            g.pose().translate(cx, cy, 0);
+            g.pose().scale(_scale, _scale, 1f);
+            g.pose().translate(-cx, -cy, 0);
+        }
+        // Transformer mx/my dans l'espace du GUI scalé pour les hover effects
+        int mx = toGuiX(rawMx), my = toGuiY(rawMy);
         int x = getGuiX(), y = getGuiY();
 
-        g.fill(x, y, x + GUI_WIDTH, y + GUI_HEIGHT, 0xFF8B8B8B);
-        g.fill(x, y, x + GUI_WIDTH, y + 2, 0xFFFFFFFF);
-        g.fill(x, y, x + 2, y + GUI_HEIGHT, 0xFFFFFFFF);
-        g.fill(x, y + GUI_HEIGHT - 2, x + GUI_WIDTH, y + GUI_HEIGHT, 0xFF373737);
-        g.fill(x + GUI_WIDTH - 2, y, x + GUI_WIDTH, y + GUI_HEIGHT, 0xFF373737);
+        // ── Couleurs depuis ColonyLinkGuiConfig ──────────────────────────────
+        ColonyLinkGuiConfig _cfg = ColonyLinkGuiConfig.get();
 
-        g.fill(x + 2, y + 2, x + GUI_WIDTH - 2, y + 22, 0xFF6B6B6B);
-        g.fill(x + 2, y + 2, x + GUI_WIDTH - 2, y + 4, 0xFF8B8B8B);
+        // Fond
+        g.fill(x, y, x + GUI_WIDTH, y + GUI_HEIGHT, _cfg.bg());
+
+        // Bordures via config (épaisseur variable)
+        _cfg.drawBorders(g, x, y, GUI_WIDTH, GUI_HEIGHT);
+
+        // Barre de titre
+        g.fill(x + _cfg.borderWidth, y + _cfg.borderWidth,
+                x + GUI_WIDTH - _cfg.borderWidth, y + 22, _cfg.title());
+        // Liseré haut de titre
+        int _tc2 = _cfg.applyOpacity(lighten(_cfg.titleColor, 1.3f));
+        g.fill(x + _cfg.borderWidth, y + _cfg.borderWidth,
+                x + GUI_WIDTH - _cfg.borderWidth, y + _cfg.borderWidth + 2, _tc2);
         g.drawString(this.font, this.title, x + 58, y + 7, 0x404040, false);
+
+        // ── Curseur handle drag ✥ — centré entre Unlink et Restart ──────────
+        {
+            int handleX1 = x + getDeleteBtnW() + 12;
+            int handleX2 = x + GUI_WIDTH - getRestartBtnW() - 12;
+            int handleCX = (handleX1 + handleX2) / 2;
+            int handleCY = y + 11;
+            boolean hoverHandle = isInDragHandle(mx, my);
+            int dotColor = hoverHandle ? 0xFFCCCCCC : 0xFF888888;
+            // Motif ⠿ : 3 colonnes × 2 lignes de points espacés
+            int[] dotsX = { -4, 0, 4, -4, 0, 4 };
+            int[] dotsY = { -3, -3, -3,  3,  3,  3 };
+            for (int d = 0; d < dotsX.length; d++)
+                g.fill(handleCX + dotsX[d], handleCY + dotsY[d],
+                        handleCX + dotsX[d] + 2, handleCY + dotsY[d] + 2, dotColor);
+        }
 
         int dbX = getDeleteBtnX(), dbY = getDeleteBtnY(), dbW = getDeleteBtnW(), dbH = getDeleteBtnH();
         boolean delHov = mx >= dbX && mx <= dbX + dbW && my >= dbY && my <= dbY + dbH;
@@ -692,10 +860,11 @@ public class ColonyLinkScreen extends Screen
             drawRequestPanel(g, x, y, mx, my, tip);
 
         // Liste
+        ColonyLinkGuiConfig _cl = ColonyLinkGuiConfig.get();
         int listW = GUI_WIDTH - 26, listY = getListStartY();
-        g.fill(x + 6, listY - 1, x + GUI_WIDTH - 18, listY - 1 + MAX_VISIBLE * ENTRY_HEIGHT + 1, 0xFF373737);
-        g.fill(x + 6, listY - 1, x + GUI_WIDTH - 18, listY, 0xFF8B8B8B);
-        g.fill(x + 6, listY - 1, x + 7, listY - 1 + MAX_VISIBLE * ENTRY_HEIGHT + 1, 0xFF8B8B8B);
+        g.fill(x + 6, listY - 1, x + GUI_WIDTH - 18, listY - 1 + MAX_VISIBLE * ENTRY_HEIGHT + 1, _cl.applyOpacity(0xFF373737));
+        g.fill(x + 6, listY - 1, x + GUI_WIDTH - 18, listY, _cl.applyOpacity(0xFF8B8B8B));
+        g.fill(x + 6, listY - 1, x + 7, listY - 1 + MAX_VISIBLE * ENTRY_HEIGHT + 1, _cl.applyOpacity(0xFF8B8B8B));
 
         if (isOutOfPower())
         {
@@ -714,7 +883,8 @@ public class ColonyLinkScreen extends Screen
                 int rc = entry.realCount();
                 int ey = listY + i * ENTRY_HEIGHT;
 
-                g.fill(x + 7, ey, x + 7 + listW, ey + ENTRY_HEIGHT, (i % 2 == 0) ? 0xFF4A4A4A : 0xFF424242);
+                int _rowBg = _cl.applyOpacity((i % 2 == 0) ? 0xFF4A4A4A : 0xFF424242);
+                g.fill(x + 7, ey, x + 7 + listW, ey + ENTRY_HEIGHT, _rowBg);
                 g.renderItem(stack, x + 9, ey + 2);
 
                 String text = rc + "x " + stack.getDisplayName().getString();
@@ -755,7 +925,7 @@ public class ColonyLinkScreen extends Screen
                     for (String ln : entry.tooltipLines()) tip.add(Component.literal(ln));
                 }
 
-                int bg2 = getButtonColorWithWarehouse(status, stack, hov && isButtonClickable(status, stack));
+                int bg2 = _cl.applyOpacity(getButtonColorWithWarehouse(status, stack, hov && isButtonClickable(status, stack)));
                 g.fill(bx2, by2, bx2 + bw2, by2 + bh2, bg2);
                 g.fill(bx2, by2, bx2 + bw2, by2 + 1, 0xFFFFFFFF);
                 g.fill(bx2, by2, bx2 + 1, by2 + bh2, 0xFFFFFFFF);
@@ -780,15 +950,16 @@ public class ColonyLinkScreen extends Screen
             }
         }
 
-        g.fill(x + 6, y + GUI_HEIGHT - 44, x + GUI_WIDTH - 6, y + GUI_HEIGHT - 43, 0xFF555555);
+        g.fill(x + 6, y + GUI_HEIGHT - 44, x + GUI_WIDTH - 6, y + GUI_HEIGHT - 43, ColonyLinkGuiConfig.get().applyOpacity(0xFF555555));
         drawWareCheckButton(g, mx, my);
         drawPrioritySwitch(g, mx, my);
-        g.fill(x + 6, y + GUI_HEIGHT - 26, x + GUI_WIDTH - 6, y + GUI_HEIGHT - 25, 0xFF555555);
+        g.fill(x + 6, y + GUI_HEIGHT - 26, x + GUI_WIDTH - 6, y + GUI_HEIGHT - 25, ColonyLinkGuiConfig.get().applyOpacity(0xFF555555));
 
+        ColonyLinkGuiConfig _cBtn = ColonyLinkGuiConfig.get();
         int caX = getCraftAllBtnX(), caY = getCraftAllBtnY(), caW = getCraftAllBtnW(), caH = getCraftAllBtnH();
         boolean caHov = mx >= caX && mx <= caX + caW && my >= caY && my <= caY + caH;
         boolean hasCraft = hasCraftableItems();
-        g.fill(caX, caY, caX + caW, caY + caH, hasCraft ? (caHov ? 0xFF007700 : 0xFF005500) : 0xFF333333);
+        g.fill(caX, caY, caX + caW, caY + caH, _cBtn.applyOpacity(hasCraft ? (caHov ? 0xFF007700 : 0xFF005500) : 0xFF333333));
         g.fill(caX, caY, caX + caW, caY + 1, 0xFFFFFFFF); g.fill(caX, caY, caX + 1, caY + caH, 0xFFFFFFFF);
         g.fill(caX, caY + caH - 1, caX + caW, caY + caH, 0xFF373737); g.fill(caX + caW - 1, caY, caX + caW, caY + caH, 0xFF373737);
         g.drawCenteredString(this.font, "Craft All", caX + caW / 2, caY + 4, hasCraft ? 0x00FF00 : 0x888888);
@@ -802,11 +973,12 @@ public class ColonyLinkScreen extends Screen
         int saX = getSendAllBtnX(), saY = getSendAllBtnY(), saW = getSendAllBtnW(), saH = getSendAllBtnH();
         boolean saHov = mx >= saX && mx <= saX + saW && my >= saY && my <= saY + saH;
         boolean hasAvail = hasAvailableItems();
-        g.fill(saX, saY, saX + saW, saY + saH, hasAvail ? (saHov ? 0xFF0066CC : 0xFF004488) : 0xFF333333);
+        g.fill(saX, saY, saX + saW, saY + saH, _cBtn.applyOpacity(hasAvail ? (saHov ? 0xFF0066CC : 0xFF004488) : 0xFF333333));
         g.fill(saX, saY, saX + saW, saY + 1, 0xFFFFFFFF); g.fill(saX, saY, saX + 1, saY + saH, 0xFFFFFFFF);
         g.fill(saX, saY + saH - 1, saX + saW, saY + saH, 0xFF373737); g.fill(saX + saW - 1, saY, saX + saW, saY + saH, 0xFF373737);
         g.drawCenteredString(this.font, "Send All", saX + saW / 2, saY + 4, hasAvail ? 0x4488FF : 0x888888);
 
+        drawCfgButton(g, mx, my, tip);
         drawTabs(g, mx, my, tip);
 
         if (hasWarehouseCard && !isOutOfPower())
@@ -838,14 +1010,39 @@ public class ColonyLinkScreen extends Screen
             tip.add(Component.literal("§8The Redirector itself is not affected."));
         }
 
-        super.render(g, mx, my, pt);
+        if (ColonyLinkGuiConfig.get().scale != 1.0f)
+            g.pose().popPose();
+
+        super.render(g, rawMx, rawMy, pt);
         if (!tip.isEmpty()) g.renderComponentTooltip(this.font, tip, mx, my);
     }
 
     // ── mouseClicked() ────────────────────────────────────────────────────────
     @Override
-    public boolean mouseClicked(double mx, double my, int btn)
+    public boolean mouseClicked(double rawMx, double rawMy, int btn)
     {
+        double mx = toGuiX(rawMx), my = toGuiY(rawMy);
+        // ── Bouton config engrenage ───────────────────────────────────────────
+        if (btn == 0)
+        {
+            int bx = getCfgBtnX(), by = getCfgBtnY();
+            if (mx >= bx && mx <= bx + CFG_BTN_W && my >= by && my <= by + CFG_BTN_H)
+            {
+                this.minecraft.setScreen(new ColonyLinkConfigScreen(this));
+                return true;
+            }
+        }
+
+        // ── Drag GUI : clic dans la zone handle de la barre de titre ──────────
+        if (btn == 0 && isInDragHandle(mx, my))
+        {
+            isDraggingGui  = true;
+            guiDragStartX  = mx;
+            guiDragStartY  = my;
+            guiDragOriginX = dragOffsetX;
+            guiDragOriginY = dragOffsetY;
+            return true;
+        }
         for (int i = 0; i < tabMetas.size(); i++)
         {
             int tx = getTabX(i), ty = getTabY(i);
@@ -1101,12 +1298,30 @@ public class ColonyLinkScreen extends Screen
     }
 
     @Override
-    public boolean mouseReleased(double mx, double my, int btn)
-    { isDraggingScrollbar = false; return super.mouseReleased(mx, my, btn); }
+    public boolean mouseReleased(double rawMx, double rawMy, int btn)
+    {
+        if (isDraggingGui) { isDraggingGui = false; return true; }
+        isDraggingScrollbar = false;
+        return super.mouseReleased(rawMx, rawMy, btn);
+    }
 
     @Override
-    public boolean mouseDragged(double mx, double my, int btn, double dx, double dy)
+    public boolean mouseDragged(double rawMx, double rawMy, int btn, double dx, double dy)
     {
+        double mx = toGuiX(rawMx), my = toGuiY(rawMy);
+        if (isDraggingGui)
+        {
+            dragOffsetX = guiDragOriginX + (int)(mx - guiDragStartX);
+            dragOffsetY = guiDragOriginY + (int)(my - guiDragStartY);
+            // Contrainte : garder le GUI dans les limites de l'écran
+            int guiX = (this.width - GUI_WIDTH - TAB_WIDTH) / 2 + TAB_WIDTH + dragOffsetX;
+            int guiY = (this.height - GUI_HEIGHT) / 2 + dragOffsetY;
+            if (guiX < 0) dragOffsetX -= guiX;
+            if (guiY < 0) dragOffsetY -= guiY;
+            if (guiX + GUI_WIDTH > this.width)  dragOffsetX -= (guiX + GUI_WIDTH - this.width);
+            if (guiY + GUI_HEIGHT > this.height) dragOffsetY -= (guiY + GUI_HEIGHT - this.height);
+            return true;
+        }
         if (isDraggingScrollbar && entries.size() > MAX_VISIBLE)
         {
             int max = entries.size() - MAX_VISIBLE;
@@ -1114,11 +1329,11 @@ public class ColonyLinkScreen extends Screen
                     (int)(dragStartOffset + (my - dragStartY) / (getScrollbarHeight() - getThumbHeight()) * max)));
             return true;
         }
-        return super.mouseDragged(mx, my, btn, dx, dy);
+        return super.mouseDragged(rawMx, rawMy, btn, dx, dy);
     }
 
     @Override
-    public boolean mouseScrolled(double mx, double my, double sx, double sy)
+    public boolean mouseScrolled(double rawMx, double rawMy, double sx, double sy)
     {
         int max = entries.size() - MAX_VISIBLE;
         if (sy < 0 && scrollOffset < max) scrollOffset++;

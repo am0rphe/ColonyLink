@@ -39,12 +39,13 @@ public class ColonyLinkRedirectorBlockEntityRS
         extends AbstractBaseNetworkNodeContainerBlockEntity<SimpleNetworkNode>
         implements MenuProvider
 {
-    public static final int BUFFER_ROWS = 10;
-    public static final int BUFFER_COLS = 12;
+    public static final int BUFFER_ROWS = 3;
+    public static final int BUFFER_COLS = 9;
     public static final int BUFFER_SIZE = BUFFER_ROWS * BUFFER_COLS;
 
     private BlockPos targetInventoryPos = null;
     private BlockPos linkedBuilderPos   = null;
+    private String  linkedBuilderName  = "N/A";
     private boolean  warehousePriority  = false;
 
     // Cache client
@@ -187,6 +188,32 @@ public class ColonyLinkRedirectorBlockEntityRS
             setState(RedirectorState.STANDBY);
         else
             setState(RedirectorState.LINKED);
+
+        // Résolution lazy du nom du builder pour les redirectors linkés avant ce patch
+        if ((linkedBuilderName == null || linkedBuilderName.equals("N/A"))
+                && linkedBuilderPos != null && level != null && !level.isClientSide())
+        {
+            try
+            {
+                var colony = com.minecolonies.api.colony.IColonyManager.getInstance()
+                        .getClosestColony(level, linkedBuilderPos);
+                if (colony != null)
+                {
+                    for (var b : colony.getServerBuildingManager().getBuildings().values())
+                    {
+                        if (b.getPosition().equals(linkedBuilderPos)
+                                && b instanceof com.minecolonies.core.colony.buildings.AbstractBuildingStructureBuilder bb
+                                && !bb.getAllAssignedCitizen().isEmpty())
+                        {
+                            linkedBuilderName = bb.getAllAssignedCitizen().iterator().next().getName();
+                            setChanged();
+                            break;
+                        }
+                    }
+                }
+            }
+            catch (Exception ignored) {}
+        }
     }
 
     public boolean isTargetInventoryFull()
@@ -230,6 +257,10 @@ public class ColonyLinkRedirectorBlockEntityRS
     public void setLinkedBuilderPos(BlockPos pos)
     { this.linkedBuilderPos = pos; markDirtyAndUpdate(); }
 
+    public String getLinkedBuilderName() { return linkedBuilderName; }
+    public void setLinkedBuilderName(String name)
+    { this.linkedBuilderName = (name != null && !name.isBlank()) ? name : "N/A"; markDirtyAndUpdate(); }
+
     public RedirectorState getState() { return state; }
     public void setState(RedirectorState s) { this.state = s; markDirtyAndUpdate(); }
 
@@ -262,6 +293,7 @@ public class ColonyLinkRedirectorBlockEntityRS
             tag.putInt("builder_y", linkedBuilderPos.getY());
             tag.putInt("builder_z", linkedBuilderPos.getZ());
         }
+        tag.putString("linked_builder_name", linkedBuilderName);
         return tag;
     }
 
@@ -282,6 +314,8 @@ public class ColonyLinkRedirectorBlockEntityRS
         if (tag.contains("builder_x"))
             linkedBuilderPos = new BlockPos(
                     tag.getInt("builder_x"), tag.getInt("builder_y"), tag.getInt("builder_z"));
+        if (tag.contains("linked_builder_name"))
+            linkedBuilderName = tag.getString("linked_builder_name");
     }
 
     // ── NBT persistance ───────────────────────────────────────────────────────
@@ -306,6 +340,7 @@ public class ColonyLinkRedirectorBlockEntityRS
             tag.putInt("builder_y", linkedBuilderPos.getY());
             tag.putInt("builder_z", linkedBuilderPos.getZ());
         }
+        tag.putString("linked_builder_name", linkedBuilderName);
     }
 
     @Override
@@ -327,5 +362,7 @@ public class ColonyLinkRedirectorBlockEntityRS
         if (tag.contains("builder_x"))
             linkedBuilderPos = new BlockPos(
                     tag.getInt("builder_x"), tag.getInt("builder_y"), tag.getInt("builder_z"));
+        if (tag.contains("linked_builder_name"))
+            linkedBuilderName = tag.getString("linked_builder_name");
     }
 }

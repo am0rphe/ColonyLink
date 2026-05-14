@@ -185,10 +185,23 @@ public record ColonyLinkPacket(
             // → pas de ClientboundContainerSetSlotPacket → pas de pop visuel hotbar
             ClientRFCache.update(packet.rfStored(), packet.rfMax());
 
-            if (Minecraft.getInstance().screen instanceof ColonyLinkScreen screen)
-                screen.updateFromPacket(packet);
+            var screen = Minecraft.getInstance().screen;
+
+            if (screen instanceof ColonyLinkScreen cls)
+            {
+                // Cas normal : GUI wand ouvert → update en place
+                cls.updateFromPacket(packet);
+            }
+            else if (screen instanceof ColonyLinkConfigScreen cfgScreen)
+            {
+                // Config screen ouvert par-dessus → mettre à jour le parent
+                // sans fermer la fenêtre de config.
+                cfgScreen.updateParentPacket(packet);
+            }
             else
+            {
                 Minecraft.getInstance().setScreen(new ColonyLinkScreen(packet));
+            }
         });
     }
 }

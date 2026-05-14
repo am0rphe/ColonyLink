@@ -198,10 +198,12 @@ public class DomumCraftHandler
 
     public static void handleDomumCraft(ServerPlayer player, ItemStack domumStack, int needed, BlockPos redirectorPos)
     {
-        // Détection wand RS2 — route vers le handler RS2 si présent
-        for (ItemStack s : player.getInventory().items)
+        // Routing basé sur le type réel du redirector lié — pas sur la présence de la wand dans
+        // l'inventaire (qui causerait un mauvais routage si le joueur a les deux wands).
+        if (redirectorPos != null && !redirectorPos.equals(BlockPos.ZERO))
         {
-            if (s.getItem() instanceof ColonyLinkWandRS)
+            var be = player.serverLevel().getBlockEntity(redirectorPos);
+            if (be instanceof ColonyLinkRedirectorBlockEntityRS)
             {
                 handleDomumCraftRS(player, domumStack, needed, redirectorPos);
                 return;

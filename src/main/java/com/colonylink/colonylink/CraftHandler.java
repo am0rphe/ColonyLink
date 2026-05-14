@@ -118,7 +118,7 @@ public class CraftHandler
                                         + stacks.get(0).getDisplayName().getString()));
                     else
                         player.sendSystemMessage(Component.literal(
-                                "§cMissing primary ingredients: " + stacks.get(0).getDisplayName().getString()));
+                                "§cMissing primary ingredients for: " + stacks.get(0).getDisplayName().getString()));
                 }
                 else
                 {

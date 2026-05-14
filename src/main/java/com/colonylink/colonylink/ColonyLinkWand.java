@@ -300,6 +300,7 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
             BuilderEntry target = entries.get(targetIndex);
             redirector.setTargetInventoryPos(target.builderPos());
             redirector.setLinkedBuilderPos(target.builderPos());
+            redirector.setLinkedBuilderName(target.builderName());
             redirector.updateState();
             entries.set(targetIndex, target.withRedirector(pos));
             ColonyLinkWandLinkableHandler.setBuilderEntries(wandStack, entries);

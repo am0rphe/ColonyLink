@@ -37,7 +37,7 @@ public class ColonyLinkRedirectorMenu extends AbstractContainerMenu
         // ── Slot Warehouse Link Card ─────────────────────────────────────────
         // Positionné en haut à droite du GUI, visuellement distinct du buffer.
         // Coordonnées : x=170, y=10 — dans la barre de titre élargie
-        this.addSlot(new SlotItemHandler(blockEntity.warehouseCardSlot, 0, 170, 10)
+        this.addSlot(new SlotItemHandler(blockEntity.warehouseCardSlot, 0, 170, 20)
         {
             @Override
             public boolean mayPlace(ItemStack stack)
@@ -55,7 +55,7 @@ public class ColonyLinkRedirectorMenu extends AbstractContainerMenu
                         blockEntity.buffer,
                         row * BUFFER_COLS + col,
                         8 + col * 18,
-                        42 + row * 18
+                        52 + row * 18
                 ));
             }
         }
@@ -65,14 +65,14 @@ public class ColonyLinkRedirectorMenu extends AbstractContainerMenu
         {
             for (int col = 0; col < 9; col++)
             {
-                this.addSlot(new Slot(playerInventory, col + row * 9 + 9, 8 + col * 18, 234 + row * 18));
+                this.addSlot(new Slot(playerInventory, col + row * 9 + 9, 8 + col * 18, 123 + row * 18));
             }
         }
 
         // ── Hotbar joueur ────────────────────────────────────────────────────
         for (int col = 0; col < 9; col++)
         {
-            this.addSlot(new Slot(playerInventory, col, 8 + col * 18, 292));
+            this.addSlot(new Slot(playerInventory, col, 8 + col * 18, 181));
         }
     }
 

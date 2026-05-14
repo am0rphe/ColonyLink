@@ -43,12 +43,13 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
     public static int BUFFER_SIZE() { return BUFFER_ROWS() * BUFFER_COLS(); }
 
     // Constantes statiques conservées pour compatibilité avec ColonyLinkRedirectorMenu
-    public static final int BUFFER_ROWS = 10;
-    public static final int BUFFER_COLS = 12;
+    public static final int BUFFER_ROWS = 3;
+    public static final int BUFFER_COLS = 9;
     public static final int BUFFER_SIZE = BUFFER_ROWS * BUFFER_COLS;
 
     private BlockPos targetInventoryPos = null;
-    private BlockPos linkedBuilderPos = null;
+    private BlockPos linkedBuilderPos   = null;
+    private String  linkedBuilderName  = "N/A";  // Nom du builder lié, affiché dans le GUI
     private final Set<ICraftingLink> craftingLinks = new HashSet<>();
 
     // Etat AE2 synchronisé côté client via getUpdateTag/handleUpdateTag
@@ -344,6 +345,32 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
             setState(RedirectorState.STANDBY);
         else
             setState(RedirectorState.LINKED);
+
+        // Résolution lazy du nom du builder — pour les redirectors linkés avant ce patch
+        if ((linkedBuilderName == null || linkedBuilderName.equals("N/A"))
+                && linkedBuilderPos != null && level != null && !level.isClientSide())
+        {
+            try
+            {
+                var colony = com.minecolonies.api.colony.IColonyManager.getInstance()
+                        .getClosestColony(level, linkedBuilderPos);
+                if (colony != null)
+                {
+                    for (var b : colony.getServerBuildingManager().getBuildings().values())
+                    {
+                        if (b.getPosition().equals(linkedBuilderPos)
+                                && b instanceof com.minecolonies.core.colony.buildings.AbstractBuildingStructureBuilder bb
+                                && !bb.getAllAssignedCitizen().isEmpty())
+                        {
+                            linkedBuilderName = bb.getAllAssignedCitizen().iterator().next().getName();
+                            setChanged();
+                            break;
+                        }
+                    }
+                }
+            }
+            catch (Exception ignored) {}
+        }
     }
 
     public BlockPos getTargetInventoryPos() { return targetInventoryPos; }
@@ -351,6 +378,10 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
 
     public BlockPos getLinkedBuilderPos() { return linkedBuilderPos; }
     public void setLinkedBuilderPos(BlockPos pos) { this.linkedBuilderPos = pos; markDirtyAndUpdate(); }
+
+    public String getLinkedBuilderName() { return linkedBuilderName; }
+    public void setLinkedBuilderName(String name)
+    { this.linkedBuilderName = (name != null && !name.isBlank()) ? name : "N/A"; markDirtyAndUpdate(); }
 
     public RedirectorState getState() { return state; }
     public void setState(RedirectorState state) { this.state = state; markDirtyAndUpdate(); }
@@ -389,6 +420,7 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
             tag.putInt("builder_y", linkedBuilderPos.getY());
             tag.putInt("builder_z", linkedBuilderPos.getZ());
         }
+        tag.putString("linked_builder_name", linkedBuilderName);
         return tag;
     }
 
@@ -409,6 +441,8 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
             targetInventoryPos = new BlockPos(tag.getInt("target_x"), tag.getInt("target_y"), tag.getInt("target_z"));
         if (tag.contains("builder_x"))
             linkedBuilderPos = new BlockPos(tag.getInt("builder_x"), tag.getInt("builder_y"), tag.getInt("builder_z"));
+        if (tag.contains("linked_builder_name"))
+            linkedBuilderName = tag.getString("linked_builder_name");
     }
 
     // ── NBT persistance ───────────────────────────────────────────────────────
@@ -433,6 +467,7 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
             tag.putInt("builder_y", linkedBuilderPos.getY());
             tag.putInt("builder_z", linkedBuilderPos.getZ());
         }
+        tag.putString("linked_builder_name", linkedBuilderName);
         tag.putString("state", state.name());
     }
 
@@ -451,6 +486,8 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
             targetInventoryPos = new BlockPos(tag.getInt("target_x"), tag.getInt("target_y"), tag.getInt("target_z"));
         if (tag.contains("builder_x"))
             linkedBuilderPos = new BlockPos(tag.getInt("builder_x"), tag.getInt("builder_y"), tag.getInt("builder_z"));
+        if (tag.contains("linked_builder_name"))
+            linkedBuilderName = tag.getString("linked_builder_name");
         if (tag.contains("state"))
         {
             try { state = RedirectorState.valueOf(tag.getString("state")); }
