@@ -48,7 +48,7 @@ public class CraftHandler
         ItemStack wandStack = findWandInInventory(player);
         if (wandStack == null || !ColonyLinkWandLinkableHandler.isLinked(wandStack))
         {
-            player.sendSystemMessage(Component.literal("§cWand not found or not linked!"));
+            player.sendSystemMessage(Component.literal("§cClipboard not found or not linked!"));
             return;
         }
 
@@ -68,22 +68,32 @@ public class CraftHandler
             if (!cpu.isBusy()) freeCpus++;
         final int freeCpusFinal = freeCpus;
 
+        // #9 : limiter le nb de crafts simultanés au nb de CPUs libres
+        // Si freeCpus == 0, on tente quand même 1 craft (cas CPU unique occupé partiellement)
+        final int maxCrafts = freeCpusFinal > 0 ? freeCpusFinal : 1;
+        final int totalRequested = stacks.size();
+
         CRAFT_EXECUTOR.submit(() ->
         {
             int successCount = 0;
-            int failCount = 0;
+            int failCount    = 0;
+            int skipped      = 0;
+            int cpuSlot      = 0; // nb de CPUs utilisés par ce batch
 
             for (int idx = 0; idx < stacks.size(); idx++)
             {
-                ItemStack stack = stacks.get(idx);
-                int realCount = realCounts.get(idx);
-                AEItemKey aeKey = AEItemKey.of(stack);
+                ItemStack stack    = stacks.get(idx);
+                int realCount      = realCounts.get(idx);
+                AEItemKey aeKey    = AEItemKey.of(stack);
 
                 if (!craftingService.isCraftable(aeKey)) { failCount++; continue; }
 
+                // #9 : on s'arrête quand on a rempli tous les CPUs libres
+                if (cpuSlot >= maxCrafts) { skipped += (stacks.size() - idx); break; }
+
                 try
                 {
-                    long batchSize = getBatchSize(craftingService, aeKey);
+                    long batchSize    = getBatchSize(craftingService, aeKey);
                     long batchesNeeded = batchSize > 0 ? (long) Math.ceil((double) realCount / batchSize) : 1;
                     long totalToCraft = batchSize > 0 ? batchesNeeded * batchSize : realCount;
 
@@ -99,18 +109,19 @@ public class CraftHandler
                     });
 
                     boolean success = submitFuture.get(5, TimeUnit.SECONDS);
-                    if (success) successCount++;
+                    if (success) { successCount++; cpuSlot++; }
                     else failCount++;
                 }
                 catch (Exception e) { ColonyLink.LOGGER.error("Craft error", e); failCount++; }
             }
 
-            final int finalSuccess = successCount;
-            final int finalFail = failCount;
+            final int finalSuccess  = successCount;
+            final int finalFail     = failCount;
+            final int finalSkipped  = skipped;
             final int finalRealCount = realCounts.get(0);
 
             level.getServer().execute(() -> {
-                if (stacks.size() == 1)
+                if (totalRequested == 1)
                 {
                     if (finalSuccess > 0)
                         player.sendSystemMessage(Component.literal(
@@ -122,9 +133,14 @@ public class CraftHandler
                 }
                 else
                 {
-                    player.sendSystemMessage(Component.literal(
-                            "§aCraft All: " + finalSuccess + " started, " + finalFail + " failed."
-                                    + " (" + freeCpusFinal + " CPUs were available)"));
+                    StringBuilder msg = new StringBuilder("§aCraft All: §f" + finalSuccess + " §astarted");
+                    if (finalFail > 0)
+                        msg.append("§c, ").append(finalFail).append(" failed");
+                    if (finalSkipped > 0)
+                        msg.append("§e, ").append(finalSkipped).append(" queued (no free CPU)");
+                    msg.append("§7 (").append(freeCpusFinal).append(" CPU")
+                            .append(freeCpusFinal != 1 ? "s" : "").append(" available)");
+                    player.sendSystemMessage(Component.literal(msg.toString()));
                 }
             });
         });

@@ -32,84 +32,54 @@ import net.neoforged.neoforge.items.IItemHandler;
 import net.neoforged.neoforge.items.ItemStackHandler;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInWorldGridNodeHost, ICraftingRequester, MenuProvider
 {
-    /** Lu depuis la config. Nécessite de replacer le Redirector pour prendre effet. */
     public static int BUFFER_ROWS() { return ColonyLinkConfig.REDIRECTOR_BUFFER_ROWS.get(); }
     public static int BUFFER_COLS() { return ColonyLinkConfig.REDIRECTOR_BUFFER_COLS.get(); }
     public static int BUFFER_SIZE() { return BUFFER_ROWS() * BUFFER_COLS(); }
 
-    // Constantes statiques conservées pour compatibilité avec ColonyLinkRedirectorMenu
     public static final int BUFFER_ROWS = 3;
     public static final int BUFFER_COLS = 9;
     public static final int BUFFER_SIZE = BUFFER_ROWS * BUFFER_COLS;
 
     private BlockPos targetInventoryPos = null;
     private BlockPos linkedBuilderPos   = null;
-    private String  linkedBuilderName  = "N/A";  // Nom du builder lié, affiché dans le GUI
+    private String  linkedBuilderName  = "N/A";
     private final Set<ICraftingLink> craftingLinks = new HashSet<>();
 
-    // Etat AE2 synchronisé côté client via getUpdateTag/handleUpdateTag
     private boolean ae2ActiveClientCache = false;
-
-    /**
-     * Priorité d'extraction pour le Send.
-     * true  = Warehouse en premier, complément depuis ME si insuffisant
-     * false = AE2 en premier (comportement par défaut)
-     *
-     * Persisté en NBT. Réinitialisé à false si la WarehouseLinkCard est retirée.
-     * Synchronisé vers le client via getUpdateTag pour affichage du switch.
-     */
     private boolean warehousePriority = false;
-
-    // Cache client de warehousePriority (lu côté client depuis handleUpdateTag)
     private boolean warehousePriorityClientCache = false;
 
     public final ItemStackHandler buffer = new ItemStackHandler(BUFFER_SIZE())
     {
         @Override
-        protected void onContentsChanged(int slot)
-        {
-            setChanged();
-        }
+        protected void onContentsChanged(int slot) { setChanged(); }
     };
 
-    /**
-     * Slot unique pour la Warehouse Link Card.
-     * N'accepte que des WarehouseLinkCard items.
-     * Quand la carte est retirée, remet warehousePriority à false.
-     */
     public final ItemStackHandler warehouseCardSlot = new ItemStackHandler(1)
     {
         @Override
         public boolean isItemValid(int slot, ItemStack stack)
-        {
-            return stack.getItem() instanceof WarehouseLinkCard;
-        }
+        { return stack.getItem() instanceof WarehouseLinkCard; }
 
         @Override
         protected void onContentsChanged(int slot)
         {
-            // Si la carte est retirée, remet la priorité à AE2 par défaut
             if (warehouseCardSlot.getStackInSlot(0).isEmpty())
                 warehousePriority = false;
-
             setChanged();
             if (level != null)
                 level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
         }
     };
 
-    public enum RedirectorState
-    {
-        NOT_LINKED,
-        LINKED,
-        STANDBY,
-        NO_CONTROLLER
-    }
+    public enum RedirectorState { NOT_LINKED, LINKED, STANDBY, NO_CONTROLLER }
 
     private RedirectorState state = RedirectorState.NO_CONTROLLER;
 
@@ -117,15 +87,11 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
             {
                 @Override
                 public void onSaveChanges(ColonyLinkRedirectorBlockEntity owner, IGridNode node)
-                {
-                    owner.setChanged();
-                }
+                { owner.setChanged(); }
 
                 @Override
                 public void onStateChanged(ColonyLinkRedirectorBlockEntity owner, IGridNode node, IGridNodeListener.State state)
-                {
-                    owner.onGridStateChanged();
-                }
+                { owner.onGridStateChanged(); }
             })
             .setInWorldNode(true)
             .setFlags(GridFlags.REQUIRE_CHANNEL)
@@ -139,41 +105,21 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
     }
 
     @Override
-    public Component getDisplayName()
-    {
-        return Component.literal("Colony Link Redirector");
-    }
+    public Component getDisplayName() { return Component.literal("Colony Link Redirector"); }
 
     @Override
     public @Nullable AbstractContainerMenu createMenu(int containerId, Inventory playerInventory, Player player)
-    {
-        return new ColonyLinkRedirectorMenu(containerId, playerInventory, this);
-    }
+    { return new ColonyLinkRedirectorMenu(containerId, playerInventory, this); }
 
-    /**
-     * Retourne true si une WarehouseLinkCard est insérée dans le slot dédié.
-     */
     public boolean hasWarehouseCard()
-    {
-        return !warehouseCardSlot.getStackInSlot(0).isEmpty();
-    }
+    { return !warehouseCardSlot.getStackInSlot(0).isEmpty(); }
 
-    /**
-     * Retourne l'état de priorité warehouse.
-     * Côté serveur : valeur réelle.
-     * Côté client  : cache synchronisé via getUpdateTag/handleUpdateTag.
-     */
     public boolean isWarehousePriority()
     {
-        if (level != null && !level.isClientSide())
-            return warehousePriority;
+        if (level != null && !level.isClientSide()) return warehousePriority;
         return warehousePriorityClientCache;
     }
 
-    /**
-     * Toggle la priorité warehouse/AE2.
-     * Appelé par WarehousePriorityPacket côté serveur uniquement.
-     */
     public void toggleWarehousePriority()
     {
         warehousePriority = !warehousePriority;
@@ -199,30 +145,17 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
     }
 
     @Override
-    public void onChunkUnloaded()
-    {
-        super.onChunkUnloaded();
-        gridNode.destroy();
-    }
+    public void onChunkUnloaded() { super.onChunkUnloaded(); gridNode.destroy(); }
 
     @Override
-    public void setRemoved()
-    {
-        super.setRemoved();
-        gridNode.destroy();
-    }
+    public void setRemoved() { super.setRemoved(); gridNode.destroy(); }
 
     @Override
-    public @Nullable IGridNode getGridNode(Direction dir)
-    {
-        return gridNode.getNode();
-    }
+    public @Nullable IGridNode getGridNode(Direction dir) { return gridNode.getNode(); }
 
     @Override
     public ImmutableSet<ICraftingLink> getRequestedJobs()
-    {
-        return ImmutableSet.copyOf(craftingLinks);
-    }
+    { return ImmutableSet.copyOf(craftingLinks); }
 
     @Override
     public long insertCraftedItems(ICraftingLink link, AEKey what, long amount, Actionable mode)
@@ -230,18 +163,20 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
         if (!(what instanceof AEItemKey itemKey)) return 0;
         if (targetInventoryPos == null || level == null) return 0;
 
-        IItemHandler handler = level.getCapability(Capabilities.ItemHandler.BLOCK, targetInventoryPos, null);
-        if (handler == null) return 0;
-
         ItemStack toInsert = itemKey.toStack((int) Math.min(amount, Integer.MAX_VALUE));
         long inserted = 0;
 
-        for (int i = 0; i < handler.getSlots(); i++)
+        // Utilise les racks MineColonies pour l'insertion
+        List<IItemHandler> handlers = getBuildingHandlers();
+        for (IItemHandler handler : handlers)
         {
             if (toInsert.isEmpty()) break;
-            ItemStack remainder = handler.insertItem(i, toInsert, mode == Actionable.SIMULATE);
-            inserted += toInsert.getCount() - remainder.getCount();
-            toInsert = remainder;
+            for (int i = 0; i < handler.getSlots() && !toInsert.isEmpty(); i++)
+            {
+                ItemStack remainder = handler.insertItem(i, toInsert, mode == Actionable.SIMULATE);
+                inserted += toInsert.getCount() - remainder.getCount();
+                toInsert = remainder;
+            }
         }
 
         if (!toInsert.isEmpty() && mode == Actionable.MODULATE)
@@ -253,23 +188,15 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
     @Override
     public void jobStateChange(ICraftingLink link)
     {
-        if (link.isCanceled() || link.isDone())
-            craftingLinks.remove(link);
+        if (link.isCanceled() || link.isDone()) craftingLinks.remove(link);
     }
 
     @Override
-    public IGridNode getActionableNode()
-    {
-        return gridNode.getNode();
-    }
+    public IGridNode getActionableNode() { return gridNode.getNode(); }
 
-    public void addCraftingLink(ICraftingLink link)
-    {
-        craftingLinks.add(link);
-    }
+    public void addCraftingLink(ICraftingLink link) { craftingLinks.add(link); }
 
-    public static <T extends BlockEntity> BlockEntityTicker<T> createTicker(
-            Level level, BlockEntityType<T> serverType)
+    public static <T extends BlockEntity> BlockEntityTicker<T> createTicker(Level level, BlockEntityType<T> serverType)
     {
         if (level.isClientSide()) return null;
         return (lvl, pos, blockState, be) ->
@@ -296,34 +223,109 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
         return ae2ActiveClientCache;
     }
 
-    public boolean isAdjacentToController()
+    public boolean isAdjacentToController() { return isAe2Active(); }
+
+    // ── Fix #3 : accès aux inventaires via MineColonies IBuilding ─────────────
+    //
+    // DIAGNOSTIC :
+    // Le Builder's Hut MineColonies n'expose PAS d'IItemHandler via la capability
+    // NeoForge standard sur sa position de bloc. level.getCapability(...hut...) = null.
+    // Les vrais inventaires sont dans les RACKS enregistrés via IBuilding.getContainers().
+    // Ces racks exposent bien un IItemHandler via capability sur leur propre position.
+    //
+    // SOLUTION :
+    // getBuildingHandlers() résout les handlers réels via IBuilding.getContainers().
+    // isTargetInventoryFull() et insertItem() utilisent ces handlers.
+    // SendToBuilderHandler.java doit aussi être patché pour utiliser la même logique.
+
+    /**
+     * Retourne la liste de tous les IItemHandler des racks du bâtiment MineColonies
+     * lié à targetInventoryPos. Retourne une liste vide si rien n'est trouvé.
+     */
+    public List<IItemHandler> getBuildingHandlers()
     {
-        return isAe2Active();
+        List<IItemHandler> handlers = new ArrayList<>();
+        if (targetInventoryPos == null || level == null) return handlers;
+
+        try
+        {
+            var colony = com.minecolonies.api.colony.IColonyManager.getInstance()
+                    .getClosestColony(level, targetInventoryPos);
+            if (colony == null) return handlers;
+
+            for (var b : colony.getServerBuildingManager().getBuildings().values())
+            {
+                if (!b.getPosition().equals(targetInventoryPos)) continue;
+
+                for (BlockPos containerPos : b.getContainers())
+                {
+                    IItemHandler h = level.getCapability(
+                            Capabilities.ItemHandler.BLOCK, containerPos, null);
+                    if (h != null) handlers.add(h);
+                }
+                break;
+            }
+        }
+        catch (Exception ignored) {}
+
+        return handlers;
     }
 
+    /**
+     * Retourne true si tous les racks du bâtiment sont pleins.
+     * Retourne false si au moins un slot est libre, ou si aucun rack n'est trouvé
+     * (hut vide = on peut tenter d'envoyer).
+     */
     public boolean isTargetInventoryFull()
     {
         if (targetInventoryPos == null || level == null) return false;
-        IItemHandler handler = level.getCapability(Capabilities.ItemHandler.BLOCK, targetInventoryPos, null);
-        if (handler == null) return true;
-        for (int i = 0; i < handler.getSlots(); i++)
-        {
-            if (handler.getStackInSlot(i).isEmpty()) return false;
-            if (handler.getStackInSlot(i).getCount() < handler.getStackInSlot(i).getMaxStackSize()) return false;
-        }
+
+        List<IItemHandler> handlers = getBuildingHandlers();
+
+        // Aucun rack enregistré → hut vide ou non encore chargé → pas plein
+        if (handlers.isEmpty()) return false;
+
+        // Vérifie chaque rack
+        for (IItemHandler handler : handlers)
+            if (hasSpace(handler)) return false;
+
         return true;
     }
 
+    private static boolean hasSpace(IItemHandler handler)
+    {
+        for (int i = 0; i < handler.getSlots(); i++)
+        {
+            ItemStack inSlot = handler.getStackInSlot(i);
+            if (inSlot.isEmpty()) return true;
+            if (inSlot.getCount() < inSlot.getMaxStackSize()) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Insère un item dans les racks du bâtiment MineColonies.
+     * Fix #3 : utilise getBuildingHandlers() au lieu de la capability directe.
+     */
     public boolean insertItem(ItemStack stack)
     {
         if (targetInventoryPos == null || level == null) return false;
-        IItemHandler handler = level.getCapability(Capabilities.ItemHandler.BLOCK, targetInventoryPos, null);
-        if (handler == null) return false;
+
+        List<IItemHandler> handlers = getBuildingHandlers();
+        if (handlers.isEmpty())
+        {
+            // Fallback : capability directe (compatibilité non-MineColonies)
+            IItemHandler direct = level.getCapability(
+                    Capabilities.ItemHandler.BLOCK, targetInventoryPos, null);
+            if (direct == null) return false;
+            handlers = List.of(direct);
+        }
 
         ItemStack remainder = stack.copy();
-        for (int i = 0; i < handler.getSlots(); i++)
+        for (IItemHandler handler : handlers)
         {
-            remainder = handler.insertItem(i, remainder, false);
+            for (int i = 0; i < handler.getSlots() && !remainder.isEmpty(); i++)
+                remainder = handler.insertItem(i, remainder, false);
             if (remainder.isEmpty()) return true;
         }
 
@@ -346,7 +348,7 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
         else
             setState(RedirectorState.LINKED);
 
-        // Résolution lazy du nom du builder — pour les redirectors linkés avant ce patch
+        // Résolution lazy du nom du builder
         if ((linkedBuilderName == null || linkedBuilderName.equals("N/A"))
                 && linkedBuilderPos != null && level != null && !level.isClientSide())
         {

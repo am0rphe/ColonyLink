@@ -17,10 +17,6 @@ import com.minecolonies.api.colony.IColony;
 import com.minecolonies.api.colony.IColonyManager;
 import com.minecolonies.api.colony.buildings.IBuilding;
 import com.minecolonies.core.colony.buildings.workerbuildings.BuildingWareHouse;
-import com.refinedmods.refinedstorage.api.network.Network;
-import com.refinedmods.refinedstorage.api.network.storage.StorageNetworkComponent;
-import com.refinedmods.refinedstorage.api.storage.Actor;
-import com.refinedmods.refinedstorage.common.support.resource.ItemResource;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
@@ -48,8 +44,6 @@ import java.util.concurrent.TimeUnit;
  *
  * Cas RS2 :
  *   1. Extrait directement l'item ou ses composants depuis les racks warehouse
- *   2. Les injecte dans le réseau RS2 via StorageNetworkComponent
- *   3. Pour les items standards : lance le craft RS2 via AutocraftingNetworkComponent
  *   4. Pour les items Domum : insère les composants extraits dans le buffer redirector
  *
  * Cas Domum Ornamentum (AE2 + RS2) :
@@ -70,11 +64,10 @@ public class WarehouseCraftHandler
 
         // ── Détection wand AE2 ou RS2 ─────────────────────────────────────────
         ItemStack wandStack = findWandInInventory(player);
-        boolean isRS = wandStack != null && wandStack.getItem() instanceof ColonyLinkWandRS;
 
         if (wandStack == null)
         {
-            player.sendSystemMessage(Component.literal("§cWand not found!"));
+            player.sendSystemMessage(Component.literal("§cClipboard not found!"));
             return;
         }
 
@@ -93,39 +86,11 @@ public class WarehouseCraftHandler
             return;
         }
 
-        // ── Route vers le handler approprié ──────────────────────────────────
-        if (isRS)
-        {
-            if (!ColonyLinkWandRSLinkableHandler.isLinked(wandStack))
-            {
-                player.sendSystemMessage(Component.literal("§cRS2 Wand not linked!"));
-                return;
-            }
-            Network network = ColonyLinkWandRSLinkableHandler.getNetwork(wandStack, level);
-            if (network == null)
-            {
-                player.sendSystemMessage(Component.literal("§cCannot connect to RS2 network!"));
-                return;
-            }
-            StorageNetworkComponent storage = network.getComponent(StorageNetworkComponent.class);
-            if (storage == null)
-            {
-                player.sendSystemMessage(Component.literal("§cRS2 network has no storage!"));
-                return;
-            }
-
-            if (isDomum)
-                handleDomumFromWarehouseRS(player, level, stack, realCount, redirectorPos,
-                        network, storage, warehouse);
-            else
-                handleRS2FromWarehouse(player, level, stack, realCount,
-                        network, storage, warehouse);
-        }
-        else
+        // ── Route vers AE2 ──────────────────────────────────────────────────────
         {
             if (!ColonyLinkWandLinkableHandler.isLinked(wandStack))
             {
-                player.sendSystemMessage(Component.literal("§cWand not linked!"));
+                player.sendSystemMessage(Component.literal("§cClipboard not linked!"));
                 return;
             }
             IWirelessAccessPoint wap = getWap(wandStack, level);
@@ -150,223 +115,6 @@ public class WarehouseCraftHandler
             else
                 handleAe2FromWarehouse(player, level, stack, realCount,
                         grid, storageService, actionSource, warehouse);
-        }
-    }
-
-    // ── Cas RS2 standard ──────────────────────────────────────────────────────
-
-    private static void handleRS2FromWarehouse(
-            ServerPlayer player,
-            ServerLevel level,
-            ItemStack stack,
-            int realCount,
-            Network network,
-            StorageNetworkComponent storage,
-            BuildingWareHouse warehouse)
-    {
-        ItemResource rsKey = ItemResource.ofItemStack(stack);
-
-        // Vérifie d'abord si l'item est directement en warehouse
-        long directInWarehouse = countItemInWarehouse(level, warehouse, stack);
-        if (directInWarehouse > 0)
-        {
-            int toExtract = (int) Math.min(directInWarehouse, realCount);
-            long extracted = extractFromWarehouseRacks(level, warehouse, stack, toExtract);
-            if (extracted > 0)
-            {
-                // Insère dans RS2
-                long remaining = extracted;
-                long inserted = storage.insert(rsKey, remaining, com.refinedmods.refinedstorage.api.core.Action.EXECUTE, Actor.EMPTY);
-                if (inserted > 0)
-                    player.sendSystemMessage(Component.literal(
-                            "§a[ColonyLink RS] Transferred " + inserted + "x "
-                                    + stack.getDisplayName().getString()
-                                    + " from Warehouse → RS2 (ready to Send)"));
-                else
-                    player.sendSystemMessage(Component.literal("§c[ColonyLink RS] RS2 insertion failed!"));
-            }
-            return;
-        }
-
-        // Tente craft RS2 : extrait composants WH → RS2 → craft
-        var autocrafting = network.getComponent(
-                com.refinedmods.refinedstorage.api.network.autocrafting.AutocraftingNetworkComponent.class);
-        if (autocrafting == null || !autocrafting.getOutputs().contains(rsKey))
-        {
-            player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink RS] No RS2 pattern and item not found in Warehouse!"));
-            return;
-        }
-
-        // Pour RS2, ensureTask gère lui-même les composants — on insère juste ce qu'on a en WH
-        long extracted = extractFromWarehouseRacks(level, warehouse, stack, realCount);
-        if (extracted > 0)
-        {
-            storage.insert(rsKey, extracted, com.refinedmods.refinedstorage.api.core.Action.EXECUTE, Actor.EMPTY);
-            player.sendSystemMessage(Component.literal(
-                    "§7[WH→RS2] " + extracted + "x " + stack.getDisplayName().getString()));
-        }
-
-        var result = autocrafting.ensureTask(rsKey, realCount, Actor.EMPTY,
-                com.refinedmods.refinedstorage.api.autocrafting.calculation.CancellationToken.NONE);
-        switch (result)
-        {
-            case TASK_CREATED, TASK_ALREADY_RUNNING ->
-                    player.sendSystemMessage(Component.literal(
-                            "§a[ColonyLink RS] Craft started: " + realCount + "x "
-                                    + stack.getDisplayName().getString()
-                                    + " (components from Warehouse)"));
-            case MISSING_RESOURCES ->
-                    player.sendSystemMessage(Component.literal(
-                            "§c[ColonyLink RS] Craft failed — missing resources even after WH injection!"));
-        }
-    }
-
-    // ── Cas Domum RS2 ─────────────────────────────────────────────────────────
-
-    private static void handleDomumFromWarehouseRS(
-            ServerPlayer player,
-            ServerLevel level,
-            ItemStack domumStack,
-            int realCount,
-            BlockPos redirectorPos,
-            Network network,
-            StorageNetworkComponent storage,
-            BuildingWareHouse warehouse)
-    {
-        // Cas 1 : l'item DO final est directement en warehouse → buffer redirector
-        long directFound = countDomumInWarehouse(level, warehouse, domumStack);
-        if (directFound > 0)
-        {
-            int toExtract = (int) Math.min(directFound, realCount);
-            long extracted = extractDomumFromWarehouseRacks(level, warehouse, domumStack, toExtract);
-            if (extracted > 0)
-            {
-                var redirectorBe = level.getBlockEntity(redirectorPos);
-                IItemHandler buffer = null;
-                if (redirectorBe instanceof ColonyLinkRedirectorBlockEntityRS redirectorRS)
-                    buffer = redirectorRS.buffer;
-                else if (redirectorBe instanceof ColonyLinkRedirectorBlockEntity redirectorAE2)
-                    buffer = redirectorAE2.buffer;
-
-                if (buffer == null)
-                {
-                    player.sendSystemMessage(Component.literal("§c[ColonyLink RS] Redirector not found!"));
-                    return;
-                }
-
-                ItemStack toInsert = domumStack.copyWithCount((int) extracted);
-                for (int slot = 0; slot < buffer.getSlots() && !toInsert.isEmpty(); slot++)
-                    toInsert = buffer.insertItem(slot, toInsert, false);
-
-                if (toInsert.isEmpty())
-                    player.sendSystemMessage(Component.literal(
-                            "§a[ColonyLink RS] Sent " + extracted + "x "
-                                    + domumStack.getDisplayName().getString()
-                                    + " from Warehouse → Redirector buffer!"));
-                else
-                    player.sendSystemMessage(Component.literal(
-                            "§6[ColonyLink RS] Buffer partially full — " + toInsert.getCount() + "x not inserted."));
-                return;
-            }
-        }
-
-        // Cas 2 : item DO pas en warehouse → extrait composants WH → buffer redirector
-        Item item = domumStack.getItem();
-        if (!(item instanceof BlockItem blockItem)) return;
-        Block block = blockItem.getBlock();
-        if (!(block instanceof IMateriallyTexturedBlock texturedBlock)) return;
-
-        MaterialTextureData textureData = MaterialTextureData.readFromItemStack(domumStack);
-
-        // Collecte les composants extraits
-        List<ItemStack> extractedComponents = new ArrayList<>();
-        boolean allOk = true;
-
-        for (IMateriallyTexturedBlockComponent component : texturedBlock.getComponents())
-        {
-            Block materialBlock = textureData.getTexturedComponents().get(component.getId());
-            if (materialBlock == null)
-            {
-                if (!component.isOptional())
-                {
-                    player.sendSystemMessage(Component.literal(
-                            "§c[ColonyLink RS] Missing material for component: " + component.getId()));
-                    allOk = false;
-                    break;
-                }
-                continue;
-            }
-
-            ItemStack materialStack = new ItemStack(materialBlock, realCount);
-
-            // Vérifie ce qui est déjà dans RS2
-            ItemResource rsMatKey = ItemResource.ofItemStack(materialStack);
-            long inRS2 = storage.get(rsMatKey);
-            long stillNeeded = Math.max(0, realCount - inRS2);
-
-            if (stillNeeded > 0)
-            {
-                long extracted = extractFromWarehouseRacks(
-                        level, warehouse, materialStack, (int) Math.min(stillNeeded, Integer.MAX_VALUE));
-                if (extracted > 0)
-                {
-                    // Insère dans RS2 pour que le craft DO puisse l'utiliser
-                    storage.insert(rsMatKey, extracted, com.refinedmods.refinedstorage.api.core.Action.EXECUTE, Actor.EMPTY);
-                    extractedComponents.add(materialStack.copyWithCount((int) extracted));
-                    player.sendSystemMessage(Component.literal(
-                            "§7[WH→RS2] " + extracted + "x " + materialStack.getDisplayName().getString()));
-                }
-            }
-        }
-
-        if (!allOk) return;
-
-        // Insère le résultat DO dans le buffer redirector via extraction RS2
-        // (même logique que DomumCraftHandler mais côté RS2)
-        var redirectorBe = level.getBlockEntity(redirectorPos);
-        IItemHandler buffer = null;
-        if (redirectorBe instanceof ColonyLinkRedirectorBlockEntityRS redirectorRS)
-            buffer = redirectorRS.buffer;
-        else if (redirectorBe instanceof ColonyLinkRedirectorBlockEntity redirectorAE2)
-            buffer = redirectorAE2.buffer;
-
-        if (buffer == null)
-        {
-            player.sendSystemMessage(Component.literal("§c[ColonyLink RS] Redirector not found!"));
-            return;
-        }
-
-        // Construit le MaterialTextureData et insère dans le buffer
-        com.ldtteam.domumornamentum.client.model.data.MaterialTextureData.Builder builder =
-                com.ldtteam.domumornamentum.client.model.data.MaterialTextureData.builder();
-        for (IMateriallyTexturedBlockComponent component : texturedBlock.getComponents())
-        {
-            Block materialBlock = textureData.getTexturedComponents().get(component.getId());
-            if (materialBlock != null)
-                builder.setComponent(component.getId(), materialBlock);
-        }
-
-        ItemStack result = domumStack.copy();
-        result.setCount(realCount);
-        builder.writeToItemStack(result);
-
-        ItemStack remainder = result.copy();
-        for (int slot = 0; slot < buffer.getSlots() && !remainder.isEmpty(); slot++)
-            remainder = buffer.insertItem(slot, remainder, false);
-
-        if (remainder.isEmpty())
-            player.sendSystemMessage(Component.literal(
-                    "§a[ColonyLink RS] Crafted " + realCount + "x "
-                            + domumStack.getDisplayName().getString()
-                            + " from Warehouse components → buffer!"));
-        else
-        {
-            // Remboursement RS2
-            for (ItemStack comp : extractedComponents)
-                storage.insert(ItemResource.ofItemStack(comp), comp.getCount(),
-                        com.refinedmods.refinedstorage.api.core.Action.EXECUTE, Actor.EMPTY);
-            player.sendSystemMessage(Component.literal("§c[ColonyLink RS] Buffer full — DO craft cancelled."));
         }
     }
 
@@ -769,13 +517,9 @@ public class WarehouseCraftHandler
     }
 
     /**
-     * Cherche d'abord la wand RS2, puis la wand AE2.
-     * La wand RS2 est prioritaire car l'utilisateur est en mode RS2.
      */
     private static ItemStack findWandInInventory(ServerPlayer player)
     {
-        for (ItemStack stack : player.getInventory().items)
-            if (stack.getItem() instanceof ColonyLinkWandRS) return stack;
         for (ItemStack stack : player.getInventory().items)
             if (stack.getItem() instanceof ColonyLinkWand) return stack;
         return null;

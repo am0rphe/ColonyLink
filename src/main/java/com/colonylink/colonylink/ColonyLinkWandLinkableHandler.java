@@ -286,4 +286,107 @@ public class ColonyLinkWandLinkableHandler implements IGridLinkableHandler
         BuilderEntry entry = getActiveEntry(stack);
         return entry != null ? entry.builderPos() : null;
     }
+
+    // ── ColonyLink Packages (citizen token) ──────────────────────────────────
+
+    private static final String NBT_CITIZEN_PACKAGES = "citizen_packages";
+    public static final int MAX_PACKAGES = 64;
+
+    /** Retourne le nombre de packages stockés dans la wand (0 si absent). */
+    public static int getCitizenPackages(ItemStack stack)
+    {
+        net.minecraft.world.item.component.CustomData data = stack.get(net.minecraft.core.component.DataComponents.CUSTOM_DATA);
+        if (data == null) return 0;
+        var tag = data.copyTag();
+        return tag.contains(NBT_CITIZEN_PACKAGES) ? tag.getInt(NBT_CITIZEN_PACKAGES) : 0;
+    }
+
+    /** Définit le nombre de packages (clamped 0..MAX_PACKAGES). */
+    public static void setCitizenPackages(ItemStack stack, int count)
+    {
+        int clamped = Math.max(0, Math.min(count, MAX_PACKAGES));
+        stack.update(net.minecraft.core.component.DataComponents.CUSTOM_DATA,
+                net.minecraft.world.item.component.CustomData.EMPTY, data -> {
+                    var tag = data.copyTag();
+                    tag.putInt(NBT_CITIZEN_PACKAGES, clamped);
+                    return net.minecraft.world.item.component.CustomData.of(tag);
+                });
+    }
+
+    /** Ajoute des packages (clamped). */
+    public static void addCitizenPackages(ItemStack stack, int amount)
+    {
+        setCitizenPackages(stack, getCitizenPackages(stack) + amount);
+    }
+
+    /**
+     * Consomme 1 package.
+     * @return true si la consommation a réussi (stock > 0)
+     */
+    public static boolean consumeCitizenPackage(ItemStack stack)
+    {
+        int current = getCitizenPackages(stack);
+        if (current <= 0) return false;
+        setCitizenPackages(stack, current - 1);
+        return true;
+    }
+
+    // ── Citizen sent requests (persistance NBT) ───────────────────────────────
+
+    private static final String NBT_SENT_REQUESTS = "citizen_sent_keys";
+
+    /** Retourne les clés des requests déjà envoyées (citizenName|itemId). */
+    public static java.util.Set<String> getSentRequestKeys(ItemStack stack)
+    {
+        net.minecraft.world.item.component.CustomData data = stack.get(net.minecraft.core.component.DataComponents.CUSTOM_DATA);
+        if (data == null) return new java.util.HashSet<>();
+        var tag = data.copyTag();
+        if (!tag.contains(NBT_SENT_REQUESTS)) return new java.util.HashSet<>();
+        java.util.Set<String> keys = new java.util.HashSet<>();
+        var list = tag.getList(NBT_SENT_REQUESTS, 8); // 8 = TAG_String
+        for (int i = 0; i < list.size(); i++)
+            keys.add(list.getString(i));
+        return keys;
+    }
+
+    /** Ajoute une clé de request envoyée dans le NBT. */
+    public static void addSentRequestKey(ItemStack stack, String key)
+    {
+        stack.update(net.minecraft.core.component.DataComponents.CUSTOM_DATA,
+                net.minecraft.world.item.component.CustomData.EMPTY, data -> {
+                    var tag = data.copyTag();
+                    net.minecraft.nbt.ListTag list = tag.contains(NBT_SENT_REQUESTS)
+                            ? tag.getList(NBT_SENT_REQUESTS, 8)
+                            : new net.minecraft.nbt.ListTag();
+                    // Eviter les doublons
+                    for (int i = 0; i < list.size(); i++)
+                        if (list.getString(i).equals(key)) return data;
+                    list.add(net.minecraft.nbt.StringTag.valueOf(key));
+                    tag.put(NBT_SENT_REQUESTS, list);
+                    return net.minecraft.world.item.component.CustomData.of(tag);
+                });
+    }
+
+    /**
+     * Nettoie les clés qui ne sont plus dans la liste active des requests.
+     * Appelé quand le CitizensPacket arrive — supprime les entrées résolues.
+     */
+    public static void pruneSentRequestKeys(ItemStack stack, java.util.Set<String> activeKeys)
+    {
+        stack.update(net.minecraft.core.component.DataComponents.CUSTOM_DATA,
+                net.minecraft.world.item.component.CustomData.EMPTY, data -> {
+                    var tag = data.copyTag();
+                    if (!tag.contains(NBT_SENT_REQUESTS)) return data;
+                    net.minecraft.nbt.ListTag old = tag.getList(NBT_SENT_REQUESTS, 8);
+                    net.minecraft.nbt.ListTag pruned = new net.minecraft.nbt.ListTag();
+                    for (int i = 0; i < old.size(); i++)
+                    {
+                        String k = old.getString(i);
+                        if (activeKeys.contains(k))
+                            pruned.add(net.minecraft.nbt.StringTag.valueOf(k));
+                    }
+                    tag.put(NBT_SENT_REQUESTS, pruned);
+                    return net.minecraft.world.item.component.CustomData.of(tag);
+                });
+    }
 }

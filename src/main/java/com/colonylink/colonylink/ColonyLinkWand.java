@@ -36,16 +36,10 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * ColonyLink Wand — v1.1.3
+ * ColonyLink Wand — v1.2.0
  *
- * Implémente IAEItemPowerStorage → charge native dans le Charger AE2.
- * Expose IEnergyStorage via capability → charge dans les mods FE tiers.
- *
- * Anti-pop :
- *   shouldCauseReequipAnimation() retourne false quand seul le NBT change
- *   (même item, slot identique), exactement comme AEBasePoweredItem d'AE2.
- *   Cela supprime l'animation de re-équipement qui causait le flash visuel
- *   de la barre durabilité toutes les 40 ticks.
+ * Fix #2 : sneak+clic sur un Builder's Hut déjà lié affiche un message
+ *          indiquant dans quelle tab il est déjà présent.
  */
 public class ColonyLinkWand extends Item implements IAEItemPowerStorage
 {
@@ -55,12 +49,6 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
 
     // ── Anti-pop ──────────────────────────────────────────────────────────────
 
-    /**
-     * Même logique que AEBasePoweredItem :
-     * Retourne false si c'est le même item dans le même slot (seul le NBT a changé).
-     * Cela évite l'animation de re-équipement et le flash de la barre durabilité
-     * quand le ticker met à jour le RF toutes les 40 ticks.
-     */
     @Override
     public boolean shouldCauseReequipAnimation(ItemStack oldStack, ItemStack newStack, boolean slotChanged)
     {
@@ -147,7 +135,7 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
                 + " §7/ §f" + formatRF(capacity) + " RF §7(" + pct + "%)"));
 
         if (stored <= 0)
-            tooltip.add(Component.literal("§c⚠ OUT OF POWER — charge in AE2 Charger or FE charger"));
+            tooltip.add(Component.literal("§c⚠ OUT OF POWER — charge Clipboard in AE2 Charger or FE charger"));
 
         boolean linkedAE2 = ColonyLinkWandLinkableHandler.isLinked(stack);
         List<BuilderEntry> entries = ColonyLinkWandLinkableHandler.getBuilderEntries(stack);
@@ -155,8 +143,8 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
 
         if (!linkedAE2)
         {
-            tooltip.add(Component.literal("§c✘ Not linked to AE2"));
-            tooltip.add(Component.literal("§8  → Insert into a §fWireless Access Point"));
+            tooltip.add(Component.literal("§c✘ Clipboard not linked to AE2"));
+            tooltip.add(Component.literal("§8  → Insert Clipboard into a §fWireless Access Point"));
         }
         else
         {
@@ -182,7 +170,7 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
         tooltip.add(Component.literal("§7Right-click §8(air) → open resource GUI"));
         tooltip.add(Component.literal("§7Sneak + Right-click §8Builder's Hut → add/link builder"));
         tooltip.add(Component.literal("§7Sneak + Right-click §8Redirector → link to active builder"));
-        tooltip.add(Component.literal("§8Charge: §fAE2 Charger §8· §fany FE charger mod"));
+        tooltip.add(Component.literal("§8Charge Clipboard: §fAE2 Charger §8· §fany FE charger mod"));
     }
 
     private static String formatRF(long rf)
@@ -205,13 +193,13 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
         if (WandEnergyStorage.getStoredRF(wandStack) <= 0)
         {
             player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink] Out of Power! Charge in AE2 Charger or FE charger."));
+                    "§c[ColonyLink] Out of Power! Charge Clipboard in AE2 Charger or FE charger."));
             return InteractionResultHolder.fail(wandStack);
         }
 
         if (!ColonyLinkWandLinkableHandler.isLinked(wandStack))
         {
-            player.sendSystemMessage(Component.literal("§cThis wand is not linked to an AE2 network!"));
+            player.sendSystemMessage(Component.literal("§cThis Clipboard is not linked to an AE2 network!"));
             return InteractionResultHolder.fail(wandStack);
         }
 
@@ -232,7 +220,6 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
     }
 
     // ── useOn() — clic droit sur BLOC ─────────────────────────────────────────
-    // Pas de guard RF — le Charger AE2 utilise useOn() pour insérer la wand.
 
     @Override
     public net.minecraft.world.InteractionResult useOn(UseOnContext context)
@@ -259,7 +246,7 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
         if (!player.isShiftKeyDown())
             return net.minecraft.world.InteractionResult.PASS;
 
-        // Sneak + Redirector
+        // ── Sneak + Redirector ────────────────────────────────────────────────
         if (be instanceof ColonyLinkRedirectorBlockEntity redirector)
         {
             if (redirector.getManagedGridNode().getNode() == null)
@@ -271,7 +258,7 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
             List<BuilderEntry> entries = ColonyLinkWandLinkableHandler.getBuilderEntries(wandStack);
             if (entries.isEmpty())
             {
-                player.sendSystemMessage(Component.literal("§cNo Builder's Hut linked to this wand!"));
+                player.sendSystemMessage(Component.literal("§cNo Builder's Hut linked to this Clipboard!"));
                 player.sendSystemMessage(Component.literal("§7Sneak + Right-click a Builder's Hut first."));
                 return net.minecraft.world.InteractionResult.FAIL;
             }
@@ -311,10 +298,10 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
             return net.minecraft.world.InteractionResult.SUCCESS;
         }
 
-        // Sneak + Builder's Hut
+        // ── Sneak + Builder's Hut ─────────────────────────────────────────────
         if (!ColonyLinkWandLinkableHandler.isLinked(wandStack))
         {
-            player.sendSystemMessage(Component.literal("§cThis wand is not linked to an AE2 network!"));
+            player.sendSystemMessage(Component.literal("§cThis Clipboard is not linked to an AE2 network!"));
             return net.minecraft.world.InteractionResult.FAIL;
         }
 
@@ -350,6 +337,21 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
             return net.minecraft.world.InteractionResult.PASS;
         if (!(building instanceof AbstractBuildingStructureBuilder bb))
             return net.minecraft.world.InteractionResult.PASS;
+
+        // ── Fix #2 : vérifie si ce hut est déjà lié ──────────────────────────
+        List<BuilderEntry> existingEntries = ColonyLinkWandLinkableHandler.getBuilderEntries(wandStack);
+        for (int i = 0; i < existingEntries.size(); i++)
+        {
+            if (existingEntries.get(i).builderPos().equals(pos))
+            {
+                BuilderEntry existing = existingEntries.get(i);
+                player.sendSystemMessage(Component.literal(
+                        "§e[ColonyLink] This Builder's Hut is already linked in tab §f"
+                                + (i + 1) + " §e(§f" + existing.builderName() + "§e)!"));
+                return net.minecraft.world.InteractionResult.FAIL;
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────
 
         String builderName = "Builder";
         if (!bb.getAllAssignedCitizen().isEmpty())
@@ -477,7 +479,7 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
                 entries, builderPos, builderName, buildingName, workerStatus, "", cpus,
                 rState, ColonyLinkPacket.BuilderRequest.NONE,
                 hasCard, whPrio, buildTabMetas(allEntries), activeTabIndex,
-                rfStored, rfMax, false));
+                rfStored, rfMax));
         return true;
     }
 

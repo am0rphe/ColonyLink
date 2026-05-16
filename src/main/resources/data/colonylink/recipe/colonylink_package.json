@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "SPS",
+    "P P",
+    "SPS"
+  ],
+  "key": {
+    "S": {"tag": "minecraft:wooden_slabs"},
+    "P": {"item": "minecraft:paper"}
+  },
+  "result": {
+    "id": "colonylink:colonylink_package",
+    "count": 2
+  }
+}

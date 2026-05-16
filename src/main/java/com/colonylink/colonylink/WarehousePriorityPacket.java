@@ -31,19 +31,11 @@ public record WarehousePriorityPacket(BlockPos redirectorPos) implements CustomP
         context.enqueueWork(() -> {
             if (!(context.player() instanceof ServerPlayer serverPlayer)) return;
 
-            ServerPlayer player = serverPlayer;
-            var be = player.serverLevel().getBlockEntity(packet.redirectorPos());
-
-            // Supporte AE2 et RS2
+            var be = serverPlayer.serverLevel().getBlockEntity(packet.redirectorPos());
             if (be instanceof ColonyLinkRedirectorBlockEntity redirector)
             {
                 if (!redirector.hasWarehouseCard()) return;
                 redirector.toggleWarehousePriority();
-            }
-            else if (be instanceof ColonyLinkRedirectorBlockEntityRS redirectorRS)
-            {
-                if (!redirectorRS.hasWarehouseCard()) return;
-                redirectorRS.toggleWarehousePriority();
             }
         });
     }

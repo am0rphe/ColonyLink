@@ -18,7 +18,6 @@ public record ColonyLinkPacket(
         String builderName,
         String buildingName,
         String workerStatus,
-        // v1.1.3 — Raison IDLE (faim, maladie, pas de maison, etc.) — vide si non IDLE
         String workerIdleReason,
         int availableCpus,
         String redirectorState,
@@ -28,8 +27,7 @@ public record ColonyLinkPacket(
         List<BuilderTabMeta> tabMetas,
         int activeTabIndex,
         long rfStored,
-        long rfMax,
-        boolean isRS
+        long rfMax
 ) implements CustomPacketPayload
 {
     public record BuilderTabMeta(
@@ -112,7 +110,6 @@ public record ColonyLinkPacket(
                 buf.writeInt(packet.activeTabIndex());
                 buf.writeLong(packet.rfStored());
                 buf.writeLong(packet.rfMax());
-                buf.writeBoolean(packet.isRS());
             },
             buf -> {
                 int size = buf.readInt();
@@ -166,11 +163,10 @@ public record ColonyLinkPacket(
                 int activeTabIndex = buf.readInt();
                 long rfStored      = buf.readLong();
                 long rfMax         = buf.readLong();
-                boolean isRS       = buf.readBoolean();
 
                 return new ColonyLinkPacket(list, pos, builderName, buildingName,
                         workerStatus, workerIdleReason, availableCpus, redirectorState, req,
-                        hasWCard, whPrio, metas, activeTabIndex, rfStored, rfMax, isRS);
+                        hasWCard, whPrio, metas, activeTabIndex, rfStored, rfMax);
             }
     );
 
@@ -181,27 +177,16 @@ public record ColonyLinkPacket(
     {
         context.enqueueWork(() ->
         {
-            // v1.1.3 : met à jour le cache RF client sans toucher au NBT de l'item
-            // → pas de ClientboundContainerSetSlotPacket → pas de pop visuel hotbar
             ClientRFCache.update(packet.rfStored(), packet.rfMax());
 
             var screen = Minecraft.getInstance().screen;
 
             if (screen instanceof ColonyLinkScreen cls)
-            {
-                // Cas normal : GUI wand ouvert → update en place
                 cls.updateFromPacket(packet);
-            }
             else if (screen instanceof ColonyLinkConfigScreen cfgScreen)
-            {
-                // Config screen ouvert par-dessus → mettre à jour le parent
-                // sans fermer la fenêtre de config.
                 cfgScreen.updateParentPacket(packet);
-            }
             else
-            {
                 Minecraft.getInstance().setScreen(new ColonyLinkScreen(packet));
-            }
         });
     }
 }

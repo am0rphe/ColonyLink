@@ -2,6 +2,9 @@ package com.colonylink.colonylink;
 
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.ArmorItem;
+import net.minecraft.world.item.ArmorMaterial;
+import net.minecraft.world.item.ArmorMaterials;
 import net.minecraft.world.item.AxeItem;
 import net.minecraft.world.item.HoeItem;
 import net.minecraft.world.item.Item;
@@ -13,6 +16,7 @@ import net.minecraft.world.item.Tier;
 import net.minecraft.world.item.TieredItem;
 import net.minecraft.world.item.Tiers;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
+import net.minecraft.core.Holder;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -55,6 +59,17 @@ public class BuilderToolHelper
     {
         /** Retourne la quantité de cet item disponible dans le réseau. */
         long get(ItemStack stack);
+
+        /**
+         * Itère sur le stock et retourne tous les ItemStack dont l'item
+         * est une instance de toolClass, avec le tier estimé donné.
+         * Utilisé pour trouver les items moddés (Apotheosis, etc.) qui ont du NBT.
+         * Implémentation par défaut : retourne liste vide (fallback sans NBT).
+         */
+        default List<ItemStack> findByToolClass(Class<?> toolClass, Tiers estimatedTier)
+        {
+            return java.util.Collections.emptyList();
+        }
     }
 
     /**
@@ -75,9 +90,31 @@ public class BuilderToolHelper
      */
     public static ToolInventoryView fromAE2Inventory(appeng.api.stacks.KeyCounter counter)
     {
-        return stack -> {
-            appeng.api.stacks.AEItemKey key = appeng.api.stacks.AEItemKey.of(stack);
-            return key != null ? counter.get(key) : 0L;
+        return new ToolInventoryView()
+        {
+            @Override
+            public long get(ItemStack stack)
+            {
+                appeng.api.stacks.AEItemKey key = appeng.api.stacks.AEItemKey.of(stack);
+                return key != null ? counter.get(key) : 0L;
+            }
+
+            @Override
+            public List<ItemStack> findByToolClass(Class<?> toolClass, Tiers estimatedTier)
+            {
+                List<ItemStack> result = new ArrayList<>();
+                for (var entry : counter)
+                {
+                    if (!(entry.getKey() instanceof appeng.api.stacks.AEItemKey aeKey)) continue;
+                    Item item = aeKey.getItem();
+                    if (!toolClass.isInstance(item)) continue;
+                    if (!(item instanceof TieredItem tiered)) continue;
+                    if (estimateVanillaTier(tiered.getTier()) != estimatedTier) continue;
+                    ItemStack found = aeKey.toStack(1);
+                    result.add(found);
+                }
+                return result;
+            }
         };
     }
 
@@ -94,42 +131,31 @@ public class BuilderToolHelper
         };
     }
 
-    // ── Wrappers RS2 ──────────────────────────────────────────────────────────
-
-    /**
-     * Construit un ToolInventoryView depuis un StorageNetworkComponent RS2.
-     * Appelé par SendToBuilderHandlerRS et ColonyLinkServerTicker (RS2).
-     */
-    public static ToolInventoryView fromRS2Storage(
-            com.refinedmods.refinedstorage.api.network.storage.StorageNetworkComponent storage)
-    {
-        return stack -> {
-            com.refinedmods.refinedstorage.common.support.resource.ItemResource key =
-                    com.refinedmods.refinedstorage.common.support.resource.ItemResource.ofItemStack(stack);
-            return storage.get(key);
-        };
-    }
-
-    /**
-     * Construit un ToolCraftingView depuis un AutocraftingNetworkComponent RS2.
-     * Appelé par SendToBuilderHandlerRS et ColonyLinkServerTicker (RS2).
-     * Accepte null (RS2 sans autocrafters configurés).
-     */
-    public static ToolCraftingView fromRS2Crafting(
-            com.refinedmods.refinedstorage.api.network.autocrafting.AutocraftingNetworkComponent crafting)
-    {
-        if (crafting == null) return stack -> false;
-        return stack -> {
-            com.refinedmods.refinedstorage.common.support.resource.ItemResource key =
-                    com.refinedmods.refinedstorage.common.support.resource.ItemResource.ofItemStack(stack);
-            return crafting.getOutputs().contains(key);
-        };
-    }
-
     // ── Tiers ordonnés ───────────────────────────────────────────────────────
 
     private static final Tiers[] TIER_ORDER = {
             Tiers.NETHERITE, Tiers.DIAMOND, Tiers.IRON, Tiers.STONE, Tiers.WOOD
+    };
+
+    // ── Armure : matériaux vanilla ordonnés du meilleur au moins bon ──────────
+    // Utilisé pour la substitution d'armures (gardes, knights, etc.)
+    // Durabilités de référence (multiplicateur de base 13 * duraMult) :
+    //   Leather=5, Gold=7, Chainmail=15, Iron=15, Diamond=33, Netherite=37
+    // On se base sur le defense value du chestplate pour l'ordre
+    private static final int ARMOR_TIER_NETHERITE = 4;
+    private static final int ARMOR_TIER_DIAMOND    = 3;
+    private static final int ARMOR_TIER_IRON       = 2;
+    private static final int ARMOR_TIER_GOLD       = 1;
+    private static final int ARMOR_TIER_LEATHER    = 0;
+
+    /** Tableau max armor tier par niveau de bâtiment (0-5), identique aux outils. */
+    private static final int[] MAX_ARMOR_TIER_FOR_LEVEL = {
+            ARMOR_TIER_LEATHER,   // level 0 → cuir max
+            ARMOR_TIER_GOLD,      // level 1 → gold/chain max
+            ARMOR_TIER_IRON,      // level 2 → iron max
+            ARMOR_TIER_DIAMOND,   // level 3 → diamond max
+            ARMOR_TIER_NETHERITE, // level 4 → netherite max
+            ARMOR_TIER_NETHERITE  // level 5 → netherite max
     };
 
     private static final Tiers[] MAX_TIER_FOR_LEVEL = {
@@ -238,15 +264,12 @@ public class BuilderToolHelper
             if (bestCraftable != null) break;
         }
 
-        // Décision
-        if (bestInStock != null && bestCraftable != null)
-        {
-            if (bestCraftableTierIndex > bestInStockTierIndex)
-                return new SubstituteResult(SubstituteAction.CRAFT, bestCraftable);
-            else
-                return new SubstituteResult(SubstituteAction.SEND, bestInStock);
-        }
-        else if (bestInStock != null)
+        // Décision — le stock est toujours prioritaire sur le craft.
+        // On ne propose de crafter que si rien n'est disponible en réseau.
+        // Raison : les tiers custom (Apotheosis, etc.) sont mal estimés via getUses(),
+        // et proposer de crafter alors qu'un outil acceptable est déjà en stock est
+        // une mauvaise expérience.
+        if (bestInStock != null)
             return new SubstituteResult(SubstituteAction.SEND, bestInStock);
         else if (bestCraftable != null)
             return new SubstituteResult(SubstituteAction.CRAFT, bestCraftable);
@@ -289,6 +312,7 @@ public class BuilderToolHelper
         List<Item> candidates = getCandidateItems(requested, tier);
         if (candidates.isEmpty()) return null;
 
+        // Passe A : items vanilla / sans NBT — lookup direct par clé
         for (Item candidate : candidates)
         {
             ItemStack probe = new ItemStack(candidate);
@@ -298,11 +322,25 @@ public class BuilderToolHelper
             return probe;
         }
 
-        // Fallback : items avec enchantements — on cherche sans filtrer les enchants
-        // (le réseau peut contenir des versions enchantées)
-        // On délègue au caller de vérifier le niveau exact via isEnchantValid()
-        // Note : pour les items moddés avec enchants stockés différemment,
-        // le probe sans enchant ne correspond pas — acceptable pour la v1.1.4.
+        // Passe B : items moddés avec NBT (Apotheosis, etc.)
+        // On itère sur le stock réel pour trouver des items de la même classe/tier
+        // qui ne matchent pas en lookup direct (NBT différent de l'item vide).
+        Item requestedItem = requested.getItem();
+        final Class<?> toolClass;
+        if      (requestedItem instanceof PickaxeItem) toolClass = PickaxeItem.class;
+        else if (requestedItem instanceof AxeItem)     toolClass = AxeItem.class;
+        else if (requestedItem instanceof ShovelItem)  toolClass = ShovelItem.class;
+        else if (requestedItem instanceof HoeItem)     toolClass = HoeItem.class;
+        else if (requestedItem instanceof SwordItem)   toolClass = SwordItem.class;
+        else toolClass = TieredItem.class;
+
+        List<ItemStack> modded = inventory.findByToolClass(toolClass, tier);
+        for (ItemStack found : modded)
+        {
+            if (!isEnchantValid(found, maxEnchantLevel)) continue;
+            return found;
+        }
+
         return null;
     }
 
@@ -339,6 +377,91 @@ public class BuilderToolHelper
                 || item instanceof HoeItem
                 || item instanceof SwordItem
                 || item instanceof TieredItem;
+    }
+
+    // ── Détection et substitution d'armure ───────────────────────────────────
+
+    public static boolean isArmor(ItemStack stack)
+    {
+        return !stack.isEmpty() && stack.getItem() instanceof ArmorItem;
+    }
+
+    /**
+     * Trouve le meilleur substitut vanilla pour une pièce d'armure demandée.
+     * Respecte le niveau du bâtiment (même table que les outils) et les enchants.
+     * Priorité : stock > craftable, vanilla prioritaire sur moddé.
+     *
+     * @param requested    pièce d'armure demandée (peut être Mekanism, Apotheosis, etc.)
+     * @param buildingLevel niveau du bâtiment (0-5)
+     * @param inventory    vue du stock réseau
+     * @param crafting     vue du craft réseau
+     */
+    public static SubstituteResult findBestArmor(
+            ItemStack requested,
+            int buildingLevel,
+            ToolInventoryView inventory,
+            ToolCraftingView crafting)
+    {
+        if (!isArmor(requested)) return SubstituteResult.NONE;
+        if (!(requested.getItem() instanceof ArmorItem requestedArmor)) return SubstituteResult.NONE;
+
+        ArmorItem.Type armorType = requestedArmor.getType();
+        int level     = Math.max(0, Math.min(5, buildingLevel));
+        int maxTier   = MAX_ARMOR_TIER_FOR_LEVEL[level];
+        int maxEnchant = MAX_ENCHANT_LEVEL[Math.min(maxTier, 4)][level];
+
+        // Ordre : Netherite → Diamond → Iron → Gold → Leather (meilleur en premier)
+        int[] tierOrder = { ARMOR_TIER_NETHERITE, ARMOR_TIER_DIAMOND, ARMOR_TIER_IRON,
+                ARMOR_TIER_GOLD, ARMOR_TIER_LEATHER };
+
+        // Passe 1 : meilleur en stock
+        for (int tier : tierOrder)
+        {
+            if (tier > maxTier) continue;
+            Item vanilla = getVanillaArmorPiece(armorType, tier);
+            if (vanilla == null) continue;
+            ItemStack probe = new ItemStack(vanilla);
+            long qty = inventory.get(probe);
+            if (qty > 0 && isEnchantValid(probe, maxEnchant))
+                return new SubstituteResult(SubstituteAction.SEND, probe);
+        }
+
+        // Passe 2 : meilleur craftable
+        for (int tier : tierOrder)
+        {
+            if (tier > maxTier) continue;
+            Item vanilla = getVanillaArmorPiece(armorType, tier);
+            if (vanilla == null) continue;
+            ItemStack probe = new ItemStack(vanilla);
+            if (crafting.isCraftable(probe))
+                return new SubstituteResult(SubstituteAction.CRAFT, probe);
+        }
+
+        return SubstituteResult.NONE;
+    }
+
+    /** Retourne la pièce d'armure vanilla correspondant au type et au tier donné. */
+    private static Item getVanillaArmorPiece(ArmorItem.Type type, int tier)
+    {
+        String mat = switch (tier) {
+            case ARMOR_TIER_NETHERITE -> "netherite";
+            case ARMOR_TIER_DIAMOND   -> "diamond";
+            case ARMOR_TIER_IRON      -> "iron";
+            case ARMOR_TIER_GOLD      -> "golden";
+            default                   -> "leather";
+        };
+        String piece = switch (type) {
+            case HELMET     -> "helmet";
+            case CHESTPLATE -> "chestplate";
+            case LEGGINGS   -> "leggings";
+            case BOOTS      -> "boots";
+            default         -> null;
+        };
+        if (piece == null) return null;
+        ResourceLocation id = ResourceLocation.fromNamespaceAndPath("minecraft", mat + "_" + piece);
+        if (!BuiltInRegistries.ITEM.containsKey(id)) return null;
+        Item result = BuiltInRegistries.ITEM.get(id);
+        return result == net.minecraft.world.item.Items.AIR ? null : result;
     }
 
     // ── Correspondance tier ───────────────────────────────────────────────────
@@ -413,10 +536,38 @@ public class BuilderToolHelper
                 if (candidates.contains(item)) continue;
                 if (!toolClass.isInstance(item)) continue;
                 if (!(item instanceof TieredItem tiered)) continue;
-                if (!(tiered.getTier() instanceof Tiers t) || t != tier) continue;
+
+                // #11 : supporte les tiers vanilla ET les tiers custom (Apotheosis, mods...)
+                // On mappe le Tier custom sur un Tiers vanilla équivalent via getUses()
+                Tiers equivalent = estimateVanillaTier(tiered.getTier());
+                if (equivalent != tier) continue;
+
                 candidates.add(item);
             }
             return java.util.Collections.unmodifiableList(candidates);
         });
+    }
+
+    /**
+     * #11 — Mappe un Tier quelconque (vanilla ou custom) sur le Tiers vanilla
+     * le plus proche, en se basant sur getUses() (durabilité).
+     *
+     * Niveaux vanilla de référence :
+     *   WOOD/GOLD = 0, STONE = 1, IRON = 2, DIAMOND = 3, NETHERITE = 4
+     *
+     * Les tiers custom de mods (Apotheosis, etc.) — on estime via getUses() :
+     * indiquer leur puissance relative — on les mappe sur le palier le plus proche.
+     */
+    static Tiers estimateVanillaTier(Tier tier)
+    {
+        if (tier instanceof Tiers t) return t;
+        // Tier custom (Apotheosis, etc.) — on estime via getUses() (durabilité)
+        // Valeurs vanilla : Wood=59, Stone=131, Iron=250, Diamond=1561, Netherite=2031
+        int uses = tier.getUses();
+        if (uses <= 100)  return Tiers.WOOD;
+        if (uses <= 300)  return Tiers.STONE;
+        if (uses <= 800)  return Tiers.IRON;
+        if (uses <= 1800) return Tiers.DIAMOND;
+        return Tiers.NETHERITE;
     }
 }

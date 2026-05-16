@@ -166,7 +166,7 @@ public class ColonyLinkRedirectorScreen extends AbstractContainerScreen<ColonyLi
             List<Component> tooltip = new ArrayList<>();
             tooltip.add(Component.literal("§6Warehouse Link Card slot"));
             tooltip.add(Component.literal("§7Insert a §fWarehouse Link Card §7to enable"));
-            tooltip.add(Component.literal("§7the §fCheck Warehouse §7button in the Wand GUI."));
+            tooltip.add(Component.literal("§7the §fCheck Warehouse §7button in the Clipboard GUI."));
             boolean hasCard = menu.getBlockEntity() != null && menu.getBlockEntity().hasWarehouseCard();
             if (hasCard)
                 tooltip.add(Component.literal("§a✔ Card inserted — Warehouse scanning enabled"));

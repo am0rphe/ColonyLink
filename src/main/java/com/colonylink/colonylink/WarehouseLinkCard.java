@@ -23,7 +23,7 @@ public class WarehouseLinkCard extends Item
         tooltip.add(Component.literal("§8──────────────────"));
         tooltip.add(Component.literal("§eUsage:"));
         tooltip.add(Component.literal("§8  Insert into the dedicated slot of the Redirector GUI."));
-        tooltip.add(Component.literal("§8  Enables §fCheck Warehouse §8button in the Wand GUI."));
+        tooltip.add(Component.literal("§8  Enables §fCheck Warehouse §8button in the Clipboard GUI."));
         tooltip.add(Component.literal("§8  Allows Send to pull items from Warehouse racks first."));
     }
 }

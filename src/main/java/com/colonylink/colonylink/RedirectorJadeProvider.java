@@ -109,9 +109,9 @@ public class RedirectorJadeProvider implements
                 tooltip.add(Component.literal("§eStatus: §6Not linked"));
                 tooltip.add(Component.literal("§8──────────────────"));
                 tooltip.add(Component.literal("§eSetup required:"));
-                tooltip.add(Component.literal("§7 1. Link Wand to a §fWireless Access Point"));
-                tooltip.add(Component.literal("§7 2. Sneak+click a §fBuilder's Hut §7with the Wand"));
-                tooltip.add(Component.literal("§7 3. Sneak+click §fthis Redirector §7with the Wand"));
+                tooltip.add(Component.literal("§7 1. Link Clipboard to a §fWireless Access Point"));
+                tooltip.add(Component.literal("§7 2. Sneak+click a §fBuilder's Hut §7with the Clipboard"));
+                tooltip.add(Component.literal("§7 3. Sneak+click §fthis Redirector §7with the Clipboard"));
             }
             case STANDBY ->
             {

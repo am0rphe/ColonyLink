@@ -1,12 +1,10 @@
 {
-  "item.colonylink.colony_link_wand": "Colony Link Wand",
+  "item.colonylink.colony_link_wand": "ColonyLink Clipboard",
   "item.colonylink.colony_link_wand.tooltip": "Right-click a Builder's Hut to queue autocrafting in AE2",
-  "item.colonylink.colony_link_wand_rs": "Colony Link Wand (RS)",
-  "item.colonylink.colony_link_wand_rs.tooltip": "Right-click a Builder's Hut to queue autocrafting in RS2",
   "itemGroup.colonylink": "ColonyLink",
   "block.colonylink.colony_link_redirector": "Colony Link Redirector",
   "block.colonylink.colony_link_redirector.tooltip": "Links a ME network to a colony inventory",
-  "block.colonylink.colony_link_redirector_rs": "Colony Link Redirector (RS)",
-  "block.colonylink.colony_link_redirector_rs.tooltip": "Links a RS2 network to a colony inventory",
-  "item.colonylink.warehouse_link_card": "Warehouse Link Card"
+  "item.colonylink.warehouse_link_card": "Warehouse Link Card",
+  "item.colonylink.colonylink_package": "ColonyLink Package",
+  "item.colonylink.colonylink_package.tooltip": "Load into Clipboard Citizens tab to enable Send/Craft"
 }

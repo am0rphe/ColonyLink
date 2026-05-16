@@ -33,49 +33,29 @@ public record RemoveBuilderPacket(int tabIndex) implements CustomPacketPayload
             ItemStack wandStack = null;
             for (ItemStack s : player.getInventory().items)
                 if (s.getItem() instanceof ColonyLinkWand) { wandStack = s; break; }
-            if (wandStack == null)
-                for (ItemStack s : player.getInventory().items)
-                    if (s.getItem() instanceof ColonyLinkWandRS) { wandStack = s; break; }
             if (wandStack == null) return;
 
-            boolean isRS = wandStack.getItem() instanceof ColonyLinkWandRS;
             int index = packet.tabIndex();
-            java.util.List<BuilderEntry> entries = isRS
-                    ? ColonyLinkWandRSLinkableHandler.getBuilderEntries(wandStack)
-                    : ColonyLinkWandLinkableHandler.getBuilderEntries(wandStack);
+            java.util.List<BuilderEntry> entries = ColonyLinkWandLinkableHandler.getBuilderEntries(wandStack);
             if (index < 0 || index >= entries.size()) return;
 
             String removedName = entries.get(index).builderName();
-            if (isRS) ColonyLinkWandRSLinkableHandler.removeEntryAt(wandStack, index);
-            else      ColonyLinkWandLinkableHandler.removeEntryAt(wandStack, index);
+            ColonyLinkWandLinkableHandler.removeEntryAt(wandStack, index);
 
             player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                    "§e[ColonyLink] Builder §f" + removedName + " §eunlinked from wand."));
+                    "§e[ColonyLink] Builder §f" + removedName + " §eunlinked from Clipboard."));
 
-            java.util.List<BuilderEntry> updated = isRS
-                    ? ColonyLinkWandRSLinkableHandler.getBuilderEntries(wandStack)
-                    : ColonyLinkWandLinkableHandler.getBuilderEntries(wandStack);
+            java.util.List<BuilderEntry> updated = ColonyLinkWandLinkableHandler.getBuilderEntries(wandStack);
             if (updated.isEmpty())
             {
-                if (isRS) ColonyLinkServerTicker.removeViewerRS(player.getUUID());
-                else      ColonyLinkServerTicker.removeViewer(player.getUUID());
+                ColonyLinkServerTicker.removeViewer(player.getUUID());
             }
             else
             {
-                int newActive = isRS
-                        ? ColonyLinkWandRSLinkableHandler.getActiveTab(wandStack)
-                        : ColonyLinkWandLinkableHandler.getActiveTab(wandStack);
+                int newActive = ColonyLinkWandLinkableHandler.getActiveTab(wandStack);
                 BuilderEntry newEntry = updated.get(newActive);
-                if (isRS)
-                {
-                    ColonyLinkServerTicker.addViewerRS(player.getUUID(), newEntry.builderPos(), newActive);
-                    ColonyLinkServerTicker.sendImmediateUpdateRS(player, newEntry.builderPos(), newActive);
-                }
-                else
-                {
-                    ColonyLinkServerTicker.addViewer(player.getUUID(), newEntry.builderPos(), newActive);
-                    ColonyLinkServerTicker.sendImmediateUpdate(player, newEntry.builderPos(), newActive);
-                }
+                ColonyLinkServerTicker.addViewer(player.getUUID(), newEntry.builderPos(), newActive);
+                ColonyLinkServerTicker.sendImmediateUpdate(player, newEntry.builderPos(), newActive);
             }
         });
     }

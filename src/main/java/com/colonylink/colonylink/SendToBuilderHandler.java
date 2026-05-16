@@ -20,12 +20,14 @@ import net.minecraft.world.item.ItemStack;
 import net.neoforged.neoforge.capabilities.Capabilities;
 import net.neoforged.neoforge.items.IItemHandler;
 
+import java.util.List;
+
 public class SendToBuilderHandler
 {
     public static void handleSendToBuilder(ServerPlayer player, ItemStack stack,
                                            BlockPos builderPos, int realCount)
     {
-        // ── v1.1.3 : Coût RF ──────────────────────────────────────────────────
+        // ── Coût RF ───────────────────────────────────────────────────────────
         long sendCost = ColonyLinkConfig.SEND_COST_RF.get();
         if (sendCost > 0 && !ColonyLinkServerTicker.tryConsumeRF(player, sendCost))
         {
@@ -37,27 +39,22 @@ public class SendToBuilderHandler
         ItemStack wandStack = findWandInInventory(player);
         if (wandStack == null || !ColonyLinkWandLinkableHandler.isLinked(wandStack))
         {
-            player.sendSystemMessage(Component.literal("§cWand not found or not linked!"));
+            player.sendSystemMessage(Component.literal("§cClipboard not found or not linked!"));
             return;
         }
 
         ServerLevel level = player.serverLevel();
 
-        // ── v1.1.3 : Substitution d'outils ───────────────────────────────────
-        // Si l'item est un outil, on cherche le meilleur tier disponible
-        // selon le niveau du bâtiment du builder avant d'extraire du ME.
+        // ── Substitution d'outils ─────────────────────────────────────────────
         if (BuilderToolHelper.isTool(stack))
         {
             IWirelessAccessPoint wap = getWap(wandStack, level);
             if (wap != null && wap.getGrid() != null)
             {
                 IGrid grid = wap.getGrid();
-                appeng.api.stacks.KeyCounter inv =
-                        grid.getStorageService().getCachedInventory();
-                appeng.api.networking.crafting.ICraftingService cs =
-                        grid.getCraftingService();
+                appeng.api.stacks.KeyCounter inv = grid.getStorageService().getCachedInventory();
+                appeng.api.networking.crafting.ICraftingService cs = grid.getCraftingService();
 
-                // Cherche le niveau du bâtiment
                 int buildingLevel = 0;
                 com.minecolonies.api.colony.IColony colony =
                         com.minecolonies.api.colony.IColonyManager.getInstance()
@@ -80,15 +77,12 @@ public class SendToBuilderHandler
 
                 if (sub.action() == BuilderToolHelper.SubstituteAction.SEND)
                 {
-                    // Substitue l'item par le meilleur trouvé en ME
                     stack = sub.displayStack().copyWithCount(stack.getCount());
                     player.sendSystemMessage(Component.literal(
-                            "§6[ColonyLink] Tool upgraded: §f"
-                                    + stack.getDisplayName().getString()));
+                            "§6[ColonyLink] Tool upgraded: §f" + stack.getDisplayName().getString()));
                 }
                 else if (sub.action() == BuilderToolHelper.SubstituteAction.CRAFT)
                 {
-                    // Lance le craft du meilleur tier disponible
                     CraftHandler.handleCraftRequest(player, sub.displayStack(), 1);
                     player.sendSystemMessage(Component.literal(
                             "§a[ColonyLink] Crafting best tool: §f"
@@ -97,13 +91,12 @@ public class SendToBuilderHandler
                 }
             }
         }
-        // ─────────────────────────────────────────────────────────────────────
 
         BlockPos redirectorPos = ColonyLinkWandLinkableHandler.getActiveRedirectorPos(wandStack);
         if (redirectorPos == null)
         {
-            player.sendSystemMessage(Component.literal("§cNo Redirector linked to this wand!"));
-            player.sendSystemMessage(Component.literal("§7Sneak + Right-click a Colony Link Redirector with the wand."));
+            player.sendSystemMessage(Component.literal("§cNo Redirector linked to this Clipboard!"));
+            player.sendSystemMessage(Component.literal("§7Sneak + Right-click a Colony Link Redirector with the Clipboard."));
             return;
         }
 
@@ -131,10 +124,30 @@ public class SendToBuilderHandler
             return;
         }
 
-        IItemHandler targetHandler = level.getCapability(Capabilities.ItemHandler.BLOCK, targetPos, null);
-        if (targetHandler == null)
+        // ── Fix #3 : utilise getBuildingHandlers() au lieu de getCapability direct ──
+        // Le Builder's Hut MineColonies n'expose pas d'IItemHandler via capability
+        // sur sa position de bloc. On passe par getBuildingHandlers() qui interroge
+        // IBuilding.getContainers() pour trouver les racks réels.
+        List<IItemHandler> buildingHandlers = redirector.getBuildingHandlers();
+        if (buildingHandlers.isEmpty())
         {
-            player.sendSystemMessage(Component.literal("§cTarget inventory not found at " + targetPos.toShortString()));
+            // Dernier fallback : capability directe (non-MineColonies)
+            IItemHandler direct = level.getCapability(Capabilities.ItemHandler.BLOCK, targetPos, null);
+            if (direct == null)
+            {
+                player.sendSystemMessage(Component.literal(
+                        "§c[ColonyLink] No inventory found for builder hut. " +
+                                "Make sure the hut has at least one rack placed."));
+                return;
+            }
+            buildingHandlers = List.of(direct);
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
+        if (redirector.getState() == ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY)
+        {
+            player.sendSystemMessage(Component.literal(
+                    "§6[ColonyLink] Builder inventory is full — free up space or wait for the builder to use items."));
             return;
         }
 
@@ -143,12 +156,6 @@ public class SendToBuilderHandler
 
         IGrid grid = wap.getGrid();
         if (grid == null) { player.sendSystemMessage(Component.literal("§cAE2 network is offline!")); return; }
-
-        if (redirector.getState() == ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY)
-        {
-            player.sendSystemMessage(Component.literal("§6Redirector is in STANDBY - target inventory is full!"));
-            return;
-        }
 
         IStorageService storageService = grid.getStorageService();
         MEStorage inventory = storageService.getInventory();
@@ -183,7 +190,7 @@ public class SendToBuilderHandler
                 ItemStack took = buffer.extractItem(slot, toExtract, false);
                 if (took.isEmpty()) continue;
 
-                ItemStack leftOver = insertIntoHandler(targetHandler, took);
+                ItemStack leftOver = insertIntoHandlers(buildingHandlers, took);
                 long sent = took.getCount() - leftOver.getCount();
                 totalInserted += sent;
                 remaining -= (int) sent;
@@ -203,7 +210,7 @@ public class SendToBuilderHandler
         if (warehousePriority && !isDomum)
         {
             remaining = extractFromWarehouseThenMe(level, stack, aeKey, remaining,
-                    inventory, actionSource, redirector, targetPos);
+                    inventory, actionSource, redirector, buildingHandlers);
             totalInserted = realCount - remaining;
         }
         else
@@ -215,7 +222,7 @@ public class SendToBuilderHandler
                 if (extracted <= 0) break;
 
                 ItemStack toInsert = aeKey.toStack((int) extracted);
-                ItemStack leftOver = insertIntoHandler(targetHandler, toInsert);
+                ItemStack leftOver = insertIntoHandlers(buildingHandlers, toInsert);
                 long sent = extracted - leftOver.getCount();
                 totalInserted += sent;
                 remaining -= (int) sent;
@@ -237,21 +244,28 @@ public class SendToBuilderHandler
                             + stack.getDisplayName().getString() + " to builder!"));
             if (remaining > 0)
                 player.sendSystemMessage(Component.literal(
-                        "§6[ColonyLink] Target inventory full — " + remaining + "x not sent."));
+                        "§6[ColonyLink] Builder inventory is full — free up space or wait for the builder to use items."));
         }
         else
         {
-            player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink] Could not send "
-                            + stack.getDisplayName().getString()
-                            + " — not enough in ME or inventory full!"));
+            // Si le redirector vient de passer en STANDBY, le message orange suffit — pas de doublon rouge.
+            if (redirector.getState() == ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY)
+                player.sendSystemMessage(Component.literal(
+                        "§6[ColonyLink] Builder inventory is full — free up space or wait for the builder to use items."));
+            else
+                player.sendSystemMessage(Component.literal(
+                        "§c[ColonyLink] Could not send " + stack.getDisplayName().getString()
+                                + " — not available in ME."));
         }
     }
+
+    // ── extractFromWarehouseThenMe — patché pour utiliser buildingHandlers ────
 
     private static int extractFromWarehouseThenMe(
             ServerLevel level, ItemStack stack, AEItemKey aeKey, int remaining,
             MEStorage inventory, IActionSource actionSource,
-            ColonyLinkRedirectorBlockEntity redirector, BlockPos targetPos)
+            ColonyLinkRedirectorBlockEntity redirector,
+            List<IItemHandler> buildingHandlers)
     {
         IColony colony = IColonyManager.getInstance().getClosestColony(level, redirector.getBlockPos());
         if (colony != null)
@@ -280,21 +294,13 @@ public class SendToBuilderHandler
                             ItemStack took = rackHandler.extractItem(slot, toExtract, false);
                             if (took.isEmpty()) continue;
 
-                            IItemHandler targetHandler = level.getCapability(
-                                    Capabilities.ItemHandler.BLOCK, targetPos, null);
-                            if (targetHandler == null)
-                            {
-                                for (int s = 0; s < rackHandler.getSlots() && !took.isEmpty(); s++)
-                                    took = rackHandler.insertItem(s, took, false);
-                                return remaining;
-                            }
-
-                            ItemStack leftOver = insertIntoHandler(targetHandler, took);
+                            ItemStack leftOver = insertIntoHandlers(buildingHandlers, took);
                             int sent = took.getCount() - leftOver.getCount();
                             remaining -= sent;
 
                             if (!leftOver.isEmpty())
                             {
+                                // Remet le surplus dans le rack warehouse
                                 for (int s2 = 0; s2 < rackHandler.getSlots() && !leftOver.isEmpty(); s2++)
                                     leftOver = rackHandler.insertItem(s2, leftOver, false);
                                 redirector.setState(ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY);
@@ -317,12 +323,8 @@ public class SendToBuilderHandler
             long extracted = inventory.extract(aeKey, batchSize, Actionable.MODULATE, actionSource);
             if (extracted <= 0) break;
 
-            IItemHandler targetHandler = level.getCapability(
-                    Capabilities.ItemHandler.BLOCK, targetPos, null);
-            if (targetHandler == null) break;
-
             ItemStack toInsert = aeKey.toStack((int) extracted);
-            ItemStack leftOver = insertIntoHandler(targetHandler, toInsert);
+            ItemStack leftOver = insertIntoHandlers(buildingHandlers, toInsert);
             int sent = (int) extracted - leftOver.getCount();
             remaining -= sent;
 
@@ -337,6 +339,24 @@ public class SendToBuilderHandler
         return remaining;
     }
 
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /**
+     * Insère un ItemStack dans une liste de handlers (racks MineColonies).
+     * Retourne le surplus non inséré.
+     */
+    static ItemStack insertIntoHandlers(List<IItemHandler> handlers, ItemStack stack)
+    {
+        ItemStack remainder = stack.copy();
+        for (IItemHandler handler : handlers)
+        {
+            for (int slot = 0; slot < handler.getSlots() && !remainder.isEmpty(); slot++)
+                remainder = handler.insertItem(slot, remainder, false);
+            if (remainder.isEmpty()) return ItemStack.EMPTY;
+        }
+        return remainder;
+    }
+
     private static ItemStack insertIntoHandler(IItemHandler handler, ItemStack stack)
     {
         ItemStack remainder = stack.copy();
@@ -345,7 +365,7 @@ public class SendToBuilderHandler
         return remainder;
     }
 
-    private static ItemStack findWandInInventory(ServerPlayer player)
+    static ItemStack findWandInInventory(ServerPlayer player)
     {
         for (ItemStack stack : player.getInventory().items)
             if (stack.getItem() instanceof ColonyLinkWand) return stack;
