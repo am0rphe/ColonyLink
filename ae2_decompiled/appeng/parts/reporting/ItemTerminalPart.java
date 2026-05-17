@@ -1,0 +1,36 @@
+/*
+ * Decompiled with CFR 0.152.
+ * 
+ * Could not load the following classes:
+ *  net.minecraft.resources.ResourceLocation
+ */
+package appeng.parts.reporting;
+
+import appeng.api.parts.IPartItem;
+import appeng.api.parts.IPartModel;
+import appeng.core.AppEng;
+import appeng.items.parts.PartModels;
+import appeng.parts.PartModel;
+import appeng.parts.reporting.AbstractTerminalPart;
+import net.minecraft.resources.ResourceLocation;
+
+public class ItemTerminalPart
+extends AbstractTerminalPart {
+    @PartModels
+    public static final ResourceLocation MODEL_OFF = AppEng.makeId("part/terminal_off");
+    @PartModels
+    public static final ResourceLocation MODEL_ON = AppEng.makeId("part/terminal_on");
+    public static final IPartModel MODELS_OFF = new PartModel(MODEL_BASE, MODEL_OFF, MODEL_STATUS_OFF);
+    public static final IPartModel MODELS_ON = new PartModel(MODEL_BASE, MODEL_ON, MODEL_STATUS_ON);
+    public static final IPartModel MODELS_HAS_CHANNEL = new PartModel(MODEL_BASE, MODEL_ON, MODEL_STATUS_HAS_CHANNEL);
+
+    public ItemTerminalPart(IPartItem<?> partItem) {
+        super(partItem);
+    }
+
+    @Override
+    public IPartModel getStaticModels() {
+        return this.selectModel(MODELS_OFF, MODELS_ON, MODELS_HAS_CHANNEL);
+    }
+}
+

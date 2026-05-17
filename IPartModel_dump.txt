@@ -1,0 +1,22 @@
+﻿/*
+ * Decompiled with CFR 0.152.
+ * 
+ * Could not load the following classes:
+ *  net.minecraft.resources.ResourceLocation
+ */
+package appeng.api.parts;
+
+import java.util.Collections;
+import java.util.List;
+import net.minecraft.resources.ResourceLocation;
+
+public interface IPartModel {
+    default public boolean requireCableConnection() {
+        return true;
+    }
+
+    default public List<ResourceLocation> getModels() {
+        return Collections.emptyList();
+    }
+}
+

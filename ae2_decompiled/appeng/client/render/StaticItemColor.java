@@ -1,0 +1,26 @@
+/*
+ * Decompiled with CFR 0.152.
+ * 
+ * Could not load the following classes:
+ *  net.minecraft.client.color.item.ItemColor
+ *  net.minecraft.world.item.ItemStack
+ */
+package appeng.client.render;
+
+import appeng.api.util.AEColor;
+import net.minecraft.client.color.item.ItemColor;
+import net.minecraft.world.item.ItemStack;
+
+public class StaticItemColor
+implements ItemColor {
+    private final AEColor color;
+
+    public StaticItemColor(AEColor color) {
+        this.color = color;
+    }
+
+    public int getColor(ItemStack stack, int tintIndex) {
+        return this.color.getVariantByTintIndex(tintIndex);
+    }
+}
+

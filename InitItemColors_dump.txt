@@ -1,0 +1,102 @@
+﻿/*
+ * Decompiled with CFR 0.152.
+ * 
+ * Could not load the following classes:
+ *  net.minecraft.client.color.item.ItemColor
+ *  net.minecraft.util.FastColor$ARGB32
+ *  net.minecraft.world.item.ItemStack
+ *  net.minecraft.world.level.ItemLike
+ *  net.neoforged.neoforge.client.event.RegisterColorHandlersEvent$Item
+ */
+package appeng.init.client;
+
+import appeng.api.util.AEColor;
+import appeng.client.render.StaticItemColor;
+import appeng.core.definitions.AEBlocks;
+import appeng.core.definitions.AEItems;
+import appeng.core.definitions.ItemDefinition;
+import appeng.items.misc.PaintBallItem;
+import appeng.items.parts.ColoredPartItem;
+import appeng.items.parts.PartItem;
+import appeng.items.storage.BasicStorageCell;
+import appeng.items.tools.MemoryCardItem;
+import appeng.items.tools.powered.AbstractPortableCell;
+import appeng.items.tools.powered.ColorApplicatorItem;
+import net.minecraft.client.color.item.ItemColor;
+import net.minecraft.util.FastColor;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.ItemLike;
+import net.neoforged.neoforge.client.event.RegisterColorHandlersEvent;
+
+public final class InitItemColors {
+    private InitItemColors() {
+    }
+
+    public static void init(RegisterColorHandlersEvent.Item event) {
+        InitItemColors.init((ItemColor itemColor, ItemLike[] items) -> event.register(InitItemColors.makeOpaque(itemColor), items));
+    }
+
+    private static void init(ItemColorRegistrar registrar) {
+        registrar.register(new StaticItemColor(AEColor.TRANSPARENT), new ItemLike[]{AEBlocks.ME_CHEST.asItem()});
+        registrar.register(MemoryCardItem::getTintColor, AEItems.MEMORY_CARD);
+        registrar.register(InitItemColors::getColorApplicatorColor, AEItems.COLOR_APPLICATOR);
+        registrar.register(AbstractPortableCell::getColor, AEItems.PORTABLE_ITEM_CELL1K, AEItems.PORTABLE_FLUID_CELL1K, AEItems.PORTABLE_ITEM_CELL4K, AEItems.PORTABLE_FLUID_CELL4K, AEItems.PORTABLE_ITEM_CELL16K, AEItems.PORTABLE_FLUID_CELL16K, AEItems.PORTABLE_ITEM_CELL64K, AEItems.PORTABLE_FLUID_CELL64K, AEItems.PORTABLE_ITEM_CELL256K, AEItems.PORTABLE_FLUID_CELL256K);
+        registrar.register(BasicStorageCell::getColor, AEItems.ITEM_CELL_1K, AEItems.FLUID_CELL_1K, AEItems.ITEM_CELL_4K, AEItems.FLUID_CELL_4K, AEItems.ITEM_CELL_16K, AEItems.FLUID_CELL_16K, AEItems.ITEM_CELL_64K, AEItems.FLUID_CELL_64K, AEItems.ITEM_CELL_256K, AEItems.FLUID_CELL_256K);
+        for (ItemDefinition<?> definition : AEItems.getItems()) {
+            Object item = definition.asItem();
+            if (item instanceof PartItem) {
+                AEColor color = AEColor.TRANSPARENT;
+                if (item instanceof ColoredPartItem) {
+                    color = ((ColoredPartItem)item).getColor();
+                }
+                registrar.register(new StaticItemColor(color), new ItemLike[]{item});
+                continue;
+            }
+            if (!(item instanceof PaintBallItem)) continue;
+            InitItemColors.registerPaintBall(registrar, (PaintBallItem)((Object)item));
+        }
+    }
+
+    private static void registerPaintBall(ItemColorRegistrar registrar, PaintBallItem item) {
+        int renderColor;
+        AEColor color = item.getColor();
+        int colorValue = item.isLumen() ? color.mediumVariant : color.mediumVariant;
+        int r = colorValue >> 16 & 0xFF;
+        int g = colorValue >> 8 & 0xFF;
+        int b = colorValue & 0xFF;
+        if (item.isLumen()) {
+            float fail = 0.7f;
+            int full = 76;
+            renderColor = (int)(76.0f + (float)r * 0.7f) << 16 | (int)(76.0f + (float)g * 0.7f) << 8 | (int)(76.0f + (float)b * 0.7f) | 0xFF000000;
+        } else {
+            renderColor = r << 16 | g << 8 | b | 0xFF000000;
+        }
+        registrar.register((is, tintIndex) -> renderColor, new ItemLike[]{item});
+    }
+
+    private static int getColorApplicatorColor(ItemStack itemStack, int idx) {
+        if (idx == 0) {
+            return -1;
+        }
+        AEColor col = ((ColorApplicatorItem)itemStack.getItem()).getActiveColor(itemStack);
+        if (col == null) {
+            return -1;
+        }
+        return switch (idx) {
+            case 1 -> col.blackVariant;
+            case 2 -> col.mediumVariant;
+            case 3 -> col.whiteVariant;
+            default -> -1;
+        };
+    }
+
+    private static ItemColor makeOpaque(ItemColor itemColor) {
+        return (stack, tintIndex) -> FastColor.ARGB32.opaque((int)itemColor.getColor(stack, tintIndex));
+    }
+
+    @FunctionalInterface
+    static interface ItemColorRegistrar {
+        public void register(ItemColor var1, ItemLike ... var2);
+    }
+}
+

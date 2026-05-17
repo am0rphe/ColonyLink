@@ -1,0 +1,91 @@
+/*
+ * Decompiled with CFR 0.152.
+ * 
+ * Could not load the following classes:
+ *  com.mojang.blaze3d.systems.RenderSystem
+ *  net.minecraft.Util
+ *  net.minecraft.client.Minecraft
+ *  net.minecraft.client.gui.Font
+ *  net.minecraft.client.gui.GuiGraphics
+ *  net.minecraft.client.gui.components.Button
+ *  net.minecraft.client.gui.components.Button$OnPress
+ *  net.minecraft.client.gui.components.WidgetSprites
+ *  net.minecraft.network.chat.Component
+ *  net.minecraft.network.chat.FormattedText
+ *  net.minecraft.util.FormattedCharSequence
+ *  net.minecraft.util.Mth
+ */
+package appeng.client.gui.widgets;
+
+import appeng.core.AppEng;
+import com.mojang.blaze3d.systems.RenderSystem;
+import net.minecraft.Util;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.WidgetSprites;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.FormattedText;
+import net.minecraft.util.FormattedCharSequence;
+import net.minecraft.util.Mth;
+
+public class AE2Button
+extends Button {
+    protected static final WidgetSprites SPRITES = new WidgetSprites(AppEng.makeId("button"), AppEng.makeId("button_disabled"), AppEng.makeId("button_highlighted"));
+
+    public AE2Button(int pX, int pY, int pWidth, int pHeight, Component component, Button.OnPress onPress) {
+        super(pX, pY, pWidth, pHeight, component, onPress, supplier -> Component.empty());
+    }
+
+    public AE2Button(Component component, Button.OnPress onPress) {
+        super(0, 0, 0, 0, component, onPress, supplier -> Component.empty());
+    }
+
+    protected void renderWidget(GuiGraphics pGuiGraphics, int pMouseX, int pMouseY, float pPartialTick) {
+        Minecraft minecraft = Minecraft.getInstance();
+        pGuiGraphics.setColor(1.0f, 1.0f, 1.0f, this.alpha);
+        RenderSystem.enableBlend();
+        RenderSystem.enableDepthTest();
+        pGuiGraphics.blitSprite(SPRITES.get(this.active, this.isHovered()), this.getX(), this.getY(), this.getWidth(), this.getHeight());
+        pGuiGraphics.setColor(1.0f, 1.0f, 1.0f, 1.0f);
+        if (!this.active) {
+            this.renderButtonText(pGuiGraphics, minecraft.font, 2, 0x413F54 | Mth.ceil((float)(this.alpha * 255.0f)) << 24, -1);
+        } else if (this.isHovered()) {
+            this.renderButtonText(pGuiGraphics, minecraft.font, 2, 0x517497 | Mth.ceil((float)(this.alpha * 255.0f)) << 24, 0);
+        } else {
+            this.renderButtonText(pGuiGraphics, minecraft.font, 2, 0xF2F2F2 | Mth.ceil((float)(this.alpha * 255.0f)) << 24, 1);
+        }
+    }
+
+    public static void renderButtonText(GuiGraphics pGuiGraphics, Font pFont, Component pText, int pMinX, int pMinY, int pMaxX, int pMaxY, int yOffset, int pColor) {
+        AE2Button.renderButtonText(pGuiGraphics, pFont, pText, (pMinX + pMaxX) / 2, pMinX, pMinY, pMaxX, pMaxY, yOffset, pColor);
+    }
+
+    public static void renderButtonText(GuiGraphics pGuiGraphics, Font pFont, Component pText, int pCenterX, int pMinX, int pMinY, int pMaxX, int pMaxY, int yOffset, int pColor) {
+        int i = pFont.width((FormattedText)pText);
+        int j = (pMinY + pMaxY - 9) / 2 + 1;
+        int k = pMaxX - pMinX;
+        if (i > k) {
+            int l = i - k;
+            double d0 = (double)Util.getMillis() / 1000.0;
+            double d1 = Math.max((double)l * 0.5, 3.0);
+            double d2 = Math.sin(1.5707963267948966 * Math.cos(Math.PI * 2 * d0 / d1)) / 2.0 + 0.5;
+            double d3 = Mth.lerp((double)d2, (double)0.0, (double)l);
+            pGuiGraphics.enableScissor(pMinX, pMinY, pMaxX, pMaxY);
+            pGuiGraphics.drawString(pFont, pText, pMinX - (int)d3, j, pColor, false);
+            pGuiGraphics.disableScissor();
+        } else {
+            int i1 = Mth.clamp((int)pCenterX, (int)(pMinX + i / 2), (int)(pMaxX - i / 2));
+            FormattedCharSequence formattedcharsequence = pText.getVisualOrderText();
+            pGuiGraphics.drawString(pFont, formattedcharsequence, i1 - pFont.width(formattedcharsequence) / 2, j - yOffset, pColor, false);
+        }
+    }
+
+    protected void renderButtonText(GuiGraphics pGuiGraphics, Font pFont, int pWidth, int pColor, int yOffset) {
+        int i = this.getX() + pWidth;
+        int j = this.getX() + this.getWidth() - pWidth;
+        AE2Button.renderButtonText(pGuiGraphics, pFont, this.getMessage(), i, this.getY(), j, this.getY() + this.getHeight(), yOffset, pColor);
+    }
+}
+

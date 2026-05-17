@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "MEM",
+    "ECE",
+    "MEM"
+  ],
+  "key": {
+    "M": { "item": "ae2:terminal" },
+    "E": { "item": "ae2:fluix_crystal" },
+    "C": { "item": "colonylink:warehouse_link_card" }
+  },
+  "result": {
+    "id": "colonylink:warehouse_link_terminal",
+    "count": 1
+  }
+}

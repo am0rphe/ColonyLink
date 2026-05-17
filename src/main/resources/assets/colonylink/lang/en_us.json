@@ -5,6 +5,11 @@
   "block.colonylink.colony_link_redirector": "Colony Link Redirector",
   "block.colonylink.colony_link_redirector.tooltip": "Links a ME network to a colony inventory",
   "item.colonylink.warehouse_link_card": "Warehouse Link Card",
+  "item.colonylink.warehouse_link_card.tooltip": "Insert into the Redirector or Terminal to enable Warehouse scanning",
   "item.colonylink.colonylink_package": "ColonyLink Package",
-  "item.colonylink.colonylink_package.tooltip": "Load into Clipboard Citizens tab to enable Send/Craft"
+  "item.colonylink.colonylink_package.tooltip": "Load into Clipboard Citizens tab to enable Send/Craft",
+  "item.colonylink.warehouse_link_terminal": "Warehouse Link Terminal",
+  "item.colonylink.warehouse_link_terminal.tooltip": "Bidirectional bridge between the MineColonies Warehouse and the AE2 ME network",
+  "block.colonylink.warehouse_link_terminal": "Warehouse Link Terminal",
+  "block.colonylink.warehouse_link_terminal.tooltip": "Bidirectional bridge between the MineColonies Warehouse and the AE2 ME network"
 }

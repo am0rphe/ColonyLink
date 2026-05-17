@@ -1,0 +1,62 @@
+{
+  "textures": {
+    "backDark":     "colonylink:part/warehouse_terminal_back_dark",
+    "backLight":    "colonylink:part/warehouse_terminal_back_light",
+    "lightsBright": "colonylink:part/warehouse_terminal_bright",
+    "lightsMedium": "colonylink:part/warehouse_terminal_bright",
+    "lightsDark":   "colonylink:part/warehouse_terminal_bright"
+  },
+  "elements": [
+    {
+      "from": [2, 2, 0.05],
+      "to":   [14, 14, 0.06],
+      "faces": {
+        "north": {
+          "texture": "#backDark"
+        }
+      }
+    },
+    {
+      "from": [2, 2, 0.04],
+      "to":   [14, 14, 0.05],
+      "faces": {
+        "north": {
+          "texture": "#backLight"
+        }
+      }
+    },
+    {
+      "from": [2, 2, 0.03],
+      "to":   [14, 14, 0.04],
+      "faces": {
+        "north": {
+          "texture": "#lightsBright",
+          "tintindex": 3,
+          "neoforge_data": { "block_light": 15, "sky_light": 15 }
+        }
+      }
+    },
+    {
+      "from": [2, 2, 0.02],
+      "to":   [14, 14, 0.03],
+      "faces": {
+        "north": {
+          "texture": "#lightsMedium",
+          "tintindex": 2,
+          "neoforge_data": { "block_light": 15, "sky_light": 15 }
+        }
+      }
+    },
+    {
+      "from": [2, 2, 0.01],
+      "to":   [14, 14, 0.02],
+      "faces": {
+        "north": {
+          "texture": "#lightsDark",
+          "tintindex": 1,
+          "neoforge_data": { "block_light": 15, "sky_light": 15 }
+        }
+      }
+    }
+  ]
+}

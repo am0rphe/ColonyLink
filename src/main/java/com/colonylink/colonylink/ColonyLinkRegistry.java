@@ -9,6 +9,7 @@ import net.neoforged.neoforge.capabilities.RegisterCapabilitiesEvent;
 import net.neoforged.neoforge.common.extensions.IMenuTypeExtension;
 import net.neoforged.neoforge.registries.DeferredBlock;
 import net.neoforged.neoforge.registries.DeferredHolder;
+import net.neoforged.neoforge.registries.DeferredItem;
 import net.neoforged.neoforge.registries.DeferredRegister;
 
 public class ColonyLinkRegistry
@@ -20,7 +21,7 @@ public class ColonyLinkRegistry
     public static final DeferredRegister<MenuType<?>> MENUS = DeferredRegister.create(
             net.minecraft.core.registries.Registries.MENU, ColonyLink.MODID);
 
-    // ── AE2 Redirector ────────────────────────────────────────────────────────
+    // ── AE2 Redirector (bloc existant) ────────────────────────────────────────
 
     public static final DeferredBlock<ColonyLinkRedirectorBlock> REDIRECTOR_BLOCK =
             BLOCKS.register("colony_link_redirector", ColonyLinkRedirectorBlock::new);
@@ -37,11 +38,26 @@ public class ColonyLinkRegistry
             REDIRECTOR_MENU_TYPE = MENUS.register("colony_link_redirector",
             () -> IMenuTypeExtension.create(ColonyLinkRedirectorMenu::new));
 
+    // ── Warehouse Link Terminal Part ──────────────────────────────────────────
+    //
+    // No Block or BlockEntity — the terminal is a Part placed on a cable bus.
+    // Only an Item (implementing IPartItem) and a MenuType are needed.
+
+    /** The Part item — placed on cable buses like the ME Crafting Terminal. */
+    public static final DeferredHolder<Item, WarehouseLinkTerminalItem>
+            WAREHOUSE_LINK_TERMINAL_ITEM = BLOCK_ITEMS.register("warehouse_link_terminal",
+            WarehouseLinkTerminalItem::new);
+
+    /** Menu type for the terminal GUI. */
+    public static final DeferredHolder<MenuType<?>, MenuType<WarehouseLinkTerminalMenu>>
+            WAREHOUSE_LINK_TERMINAL_MENU_TYPE = MENUS.register("warehouse_link_terminal",
+            () -> IMenuTypeExtension.create(WarehouseLinkTerminalMenu::new));
+
     // ── Capabilities ──────────────────────────────────────────────────────────
 
     public static void registerCapabilities(RegisterCapabilitiesEvent event)
     {
-        // AE2 grid node host
+        // AE2 grid node host — Redirector bloc
         event.registerBlockEntity(
                 AECapabilities.IN_WORLD_GRID_NODE_HOST,
                 REDIRECTOR_BLOCK_ENTITY.get(),

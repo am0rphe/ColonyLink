@@ -1,9 +1,11 @@
 package com.colonylink.colonylink;
 
 import appeng.api.features.GridLinkables;
+import appeng.api.parts.PartModels;
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.CreativeModeTabs;
@@ -39,9 +41,8 @@ public class ColonyLink
     public static final DeferredRegister<CreativeModeTab> CREATIVE_MODE_TABS =
             DeferredRegister.create(net.minecraft.core.registries.Registries.CREATIVE_MODE_TAB, MODID);
 
-    // ── Items wand ────────────────────────────────────────────────────────────
+    // ── Items ─────────────────────────────────────────────────────────────────
 
-    /** Wand AE2 — required */
     public static final DeferredItem<Item> COLONY_LINK_WAND = ITEMS.register("colony_link_wand",
             () -> new ColonyLinkWand(new Item.Properties().stacksTo(1)));
 
@@ -62,16 +63,18 @@ public class ColonyLink
                             .displayItems((parameters, output) -> {
                                 output.accept(COLONY_LINK_WAND.get());
                                 output.accept(ColonyLinkRegistry.REDIRECTOR_BLOCK_ITEM.get());
+                                // Terminal Part item (placed on cable bus)
+                                output.accept(ColonyLinkRegistry.WAREHOUSE_LINK_TERMINAL_ITEM.get());
                                 output.accept(WAREHOUSE_LINK_CARD.get());
                                 output.accept(COLONY_LINK_PACKAGE.get());
                             }).build());
 
-    // ── Handler AE2 ───────────────────────────────────────────────────────────
+    // ── AE2 linkable handler ──────────────────────────────────────────────────
 
     public static final ColonyLinkWandLinkableHandler LINKABLE_HANDLER =
             new ColonyLinkWandLinkableHandler();
 
-    // ── Constructeur ──────────────────────────────────────────────────────────
+    // ── Constructor ───────────────────────────────────────────────────────────
 
     public ColonyLink(IEventBus modEventBus, ModContainer modContainer)
     {
@@ -79,6 +82,13 @@ public class ColonyLink
         modEventBus.addListener(this::registerPayloads);
         modEventBus.addListener(this::registerScreens);
         modEventBus.addListener(ColonyLinkRegistry::registerCapabilities);
+
+        // ── v1.3.0 — Client-side: ItemColor handlers for terminal item ───
+        // Must be registered on the mod event bus (not Forge event bus) and
+        // only on the client side, since RegisterColorHandlersEvent.Item is
+        // a client-only mod-bus event.
+        if (net.neoforged.fml.loading.FMLEnvironment.dist.isClient())
+            modEventBus.addListener(ColonyLinkClient::onRegisterItemColors);
 
         ITEMS.register(modEventBus);
         CREATIVE_MODE_TABS.register(modEventBus);
@@ -105,33 +115,57 @@ public class ColonyLink
     @OnlyIn(Dist.CLIENT)
     private void registerScreens(RegisterMenuScreensEvent event)
     {
-        event.register(ColonyLinkRegistry.REDIRECTOR_MENU_TYPE.get(), ColonyLinkRedirectorScreen::new);
+        event.register(ColonyLinkRegistry.REDIRECTOR_MENU_TYPE.get(),
+                ColonyLinkRedirectorScreen::new);
+        event.register(ColonyLinkRegistry.WAREHOUSE_LINK_TERMINAL_MENU_TYPE.get(),
+                WarehouseLinkTerminalScreen::new);
     }
 
-    // ── Events AE2 ────────────────────────────────────────────────────────────
+    // ── Common setup ──────────────────────────────────────────────────────────
+
+    private void commonSetup(FMLCommonSetupEvent event)
+    {
+        event.enqueueWork(() -> {
+            // Register wand as AE2 linkable (WAP pairing)
+            GridLinkables.register(COLONY_LINK_WAND.get(), LINKABLE_HANDLER);
+
+            // Register Part models — three states mirroring the ME Crafting Terminal.
+            // Files at:
+            //   assets/colonylink/models/part/warehouse_link_terminal_on.json
+            //   assets/colonylink/models/part/warehouse_link_terminal_off.json
+            PartModels.registerModels(
+                    ResourceLocation.fromNamespaceAndPath(MODID, "part/warehouse_link_terminal_on"),
+                    ResourceLocation.fromNamespaceAndPath(MODID, "part/warehouse_link_terminal_off"));
+
+            LOGGER.info("ColonyLink v1.3.0 loaded — Warehouse Link Terminal Part registered.");
+        });
+    }
+
+    // ── Events: Redirector block right-click ──────────────────────────────────
 
     @SubscribeEvent
     public static void onRightClickBlock(PlayerInteractEvent.RightClickBlock event)
     {
         if (event.getLevel().isClientSide()) return;
 
-        Player player = event.getEntity();
-        ItemStack heldItem = event.getItemStack();
-        BlockPos pos = event.getPos();
+        Player player    = event.getEntity();
+        ItemStack held   = event.getItemStack();
+        BlockPos pos     = event.getPos();
 
         var be = event.getLevel().getBlockEntity(pos);
         if (!(be instanceof ColonyLinkRedirectorBlockEntity redirector)) return;
 
         var wrenchTag = net.minecraft.tags.TagKey.create(
                 net.minecraft.core.registries.Registries.ITEM,
-                net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("c", "tools/wrench"));
-        if (heldItem.is(wrenchTag))
+                ResourceLocation.fromNamespaceAndPath("c", "tools/wrench"));
+
+        if (held.is(wrenchTag))
         {
             event.setCanceled(true);
             if (player.isShiftKeyDown())
             {
                 var blockState = event.getLevel().getBlockState(pos);
-                Block.dropResources(blockState, event.getLevel(), pos, be, player, heldItem);
+                Block.dropResources(blockState, event.getLevel(), pos, be, player, held);
                 event.getLevel().removeBlock(pos, false);
                 player.sendSystemMessage(Component.literal("§aColony Link Redirector removed!"));
             }
@@ -145,10 +179,10 @@ public class ColonyLink
                     case NOT_LINKED -> player.sendSystemMessage(
                             Component.literal("§e[Redirector] No builder linked."));
                     case STANDBY -> player.sendSystemMessage(
-                            Component.literal("§6[Redirector] Builder inventory is full — waiting for space."));
+                            Component.literal("§6[Redirector] Builder inventory is full."));
                     case LINKED ->
                     {
-                        player.sendSystemMessage(Component.literal("§a[Redirector] LINKED and operational!"));
+                        player.sendSystemMessage(Component.literal("§a[Redirector] Operational!"));
                         if (redirector.getTargetInventoryPos() != null)
                             player.sendSystemMessage(Component.literal(
                                     "§7Target: " + redirector.getTargetInventoryPos().toShortString()));
@@ -169,44 +203,68 @@ public class ColonyLink
         }
     }
 
-    // ── Setup ─────────────────────────────────────────────────────────────────
-
-    private void commonSetup(FMLCommonSetupEvent event)
-    {
-        event.enqueueWork(() -> {
-            GridLinkables.register(COLONY_LINK_WAND.get(), LINKABLE_HANDLER);
-            LOGGER.info("ColonyLink loaded! (v1.2.2 — AE2 only, Package token)");
-        });
-    }
-
     // ── Payloads ──────────────────────────────────────────────────────────────
 
     private void registerPayloads(RegisterPayloadHandlersEvent event)
     {
         PayloadRegistrar registrar = event.registrar("1");
 
+        // ── Existing packets ───────────────────────────────────────────────
+
         // S→C
-        registrar.playToClient(ColonyLinkPacket.TYPE, ColonyLinkPacket.STREAM_CODEC, ColonyLinkPacket::handle);
-        registrar.playToClient(TabCountsPacket.TYPE, TabCountsPacket.STREAM_CODEC, TabCountsPacket::handle);
-        registrar.playToClient(WarehouseResultPacket.TYPE, WarehouseResultPacket.STREAM_CODEC, WarehouseResultPacket::handle);
-        registrar.playToClient(CitizensPacket.TYPE, CitizensPacket.STREAM_CODEC, CitizensPacket::handle);
+        registrar.playToClient(ColonyLinkPacket.TYPE, ColonyLinkPacket.STREAM_CODEC,
+                ColonyLinkPacket::handle);
+        registrar.playToClient(TabCountsPacket.TYPE, TabCountsPacket.STREAM_CODEC,
+                TabCountsPacket::handle);
+        registrar.playToClient(WarehouseResultPacket.TYPE, WarehouseResultPacket.STREAM_CODEC,
+                WarehouseResultPacket::handle);
+        registrar.playToClient(CitizensPacket.TYPE, CitizensPacket.STREAM_CODEC,
+                CitizensPacket::handle);
+        registrar.playToClient(PackageTokenSyncPacket.TYPE, PackageTokenSyncPacket.STREAM_CODEC,
+                PackageTokenSyncPacket::handle);
 
         // C→S
-        registrar.playToServer(GuiStatePacket.TYPE, GuiStatePacket.STREAM_CODEC, GuiStatePacket::handle);
-        registrar.playToServer(CraftRequestPacket.TYPE, CraftRequestPacket.STREAM_CODEC, CraftRequestPacket::handle);
-        registrar.playToServer(CraftAllRequestPacket.TYPE, CraftAllRequestPacket.STREAM_CODEC, CraftAllRequestPacket::handle);
-        registrar.playToServer(SendToBuilderPacket.TYPE, SendToBuilderPacket.STREAM_CODEC, SendToBuilderPacket::handle);
-        registrar.playToServer(SendToWarehousePacket.TYPE, SendToWarehousePacket.STREAM_CODEC, SendToWarehousePacket::handle);
-        registrar.playToServer(RestartBuilderPacket.TYPE, RestartBuilderPacket.STREAM_CODEC, RestartBuilderPacket::handle);
-        registrar.playToServer(RemoveBuilderPacket.TYPE, RemoveBuilderPacket.STREAM_CODEC, RemoveBuilderPacket::handle);
-        registrar.playToServer(WarehouseCheckPacket.TYPE, WarehouseCheckPacket.STREAM_CODEC, WarehouseCheckPacket::handle);
-        registrar.playToServer(WarehousePriorityPacket.TYPE, WarehousePriorityPacket.STREAM_CODEC, WarehousePriorityPacket::handle);
-        registrar.playToServer(WarehouseCraftPacket.TYPE, WarehouseCraftPacket.STREAM_CODEC, WarehouseCraftPacket::handle);
-        registrar.playToServer(CitizensRequestPacket.TYPE, CitizensRequestPacket.STREAM_CODEC, CitizensRequestPacket::handle);
+        registrar.playToServer(GuiStatePacket.TYPE, GuiStatePacket.STREAM_CODEC,
+                GuiStatePacket::handle);
+        registrar.playToServer(CraftRequestPacket.TYPE, CraftRequestPacket.STREAM_CODEC,
+                CraftRequestPacket::handle);
+        registrar.playToServer(CraftAllRequestPacket.TYPE, CraftAllRequestPacket.STREAM_CODEC,
+                CraftAllRequestPacket::handle);
+        registrar.playToServer(SendToBuilderPacket.TYPE, SendToBuilderPacket.STREAM_CODEC,
+                SendToBuilderPacket::handle);
+        registrar.playToServer(SendToWarehousePacket.TYPE, SendToWarehousePacket.STREAM_CODEC,
+                SendToWarehousePacket::handle);
+        registrar.playToServer(RestartBuilderPacket.TYPE, RestartBuilderPacket.STREAM_CODEC,
+                RestartBuilderPacket::handle);
+        registrar.playToServer(RemoveBuilderPacket.TYPE, RemoveBuilderPacket.STREAM_CODEC,
+                RemoveBuilderPacket::handle);
+        registrar.playToServer(WarehouseCheckPacket.TYPE, WarehouseCheckPacket.STREAM_CODEC,
+                WarehouseCheckPacket::handle);
+        registrar.playToServer(WarehousePriorityPacket.TYPE, WarehousePriorityPacket.STREAM_CODEC,
+                WarehousePriorityPacket::handle);
+        registrar.playToServer(WarehouseCraftPacket.TYPE, WarehouseCraftPacket.STREAM_CODEC,
+                WarehouseCraftPacket::handle);
+        registrar.playToServer(CitizensRequestPacket.TYPE, CitizensRequestPacket.STREAM_CODEC,
+                CitizensRequestPacket::handle);
+        registrar.playToServer(PackageTokenPacket.TYPE, PackageTokenPacket.STREAM_CODEC,
+                PackageTokenPacket::handle);
+        registrar.playToServer(PackageLoadPacket.TYPE, PackageLoadPacket.STREAM_CODEC,
+                PackageLoadPacket::handle);
 
-        // Packets Citizens Package token
-        registrar.playToClient(PackageTokenSyncPacket.TYPE, PackageTokenSyncPacket.STREAM_CODEC, PackageTokenSyncPacket::handle);
-        registrar.playToServer(PackageTokenPacket.TYPE, PackageTokenPacket.STREAM_CODEC, PackageTokenPacket::handle);
-        registrar.playToServer(PackageLoadPacket.TYPE, PackageLoadPacket.STREAM_CODEC, PackageLoadPacket::handle);
+        // ── v1.3.0 — Warehouse Link Terminal ──────────────────────────────
+
+        // S→C
+        registrar.playToClient(WarehouseTerminalSyncPacket.TYPE,
+                WarehouseTerminalSyncPacket.STREAM_CODEC, WarehouseTerminalSyncPacket::handle);
+        registrar.playToClient(TerminalMeSyncPacket.TYPE,
+                TerminalMeSyncPacket.STREAM_CODEC, TerminalMeSyncPacket::handle);
+
+        // C→S
+        registrar.playToServer(TerminalGuiStatePacket.TYPE,
+                TerminalGuiStatePacket.STREAM_CODEC, TerminalGuiStatePacket::handle);
+        registrar.playToServer(TerminalTransferPacket.TYPE,
+                TerminalTransferPacket.STREAM_CODEC, TerminalTransferPacket::handle);
+        registrar.playToServer(TerminalCraftPacket.TYPE,
+                TerminalCraftPacket.STREAM_CODEC, TerminalCraftPacket::handle);
     }
 }

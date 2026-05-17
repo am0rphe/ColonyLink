@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit;
 
 public class CraftHandler
 {
-    private static final ExecutorService CRAFT_EXECUTOR = Executors.newCachedThreadPool(r ->
+    static final ExecutorService CRAFT_EXECUTOR = Executors.newCachedThreadPool(r ->
     {
         Thread t = new Thread(r, "ColonyLink-Craft");
         t.setDaemon(true);
@@ -93,9 +93,9 @@ public class CraftHandler
 
                 try
                 {
-                    long batchSize    = getBatchSize(craftingService, aeKey);
+                    long batchSize     = getBatchSize(craftingService, aeKey);
                     long batchesNeeded = batchSize > 0 ? (long) Math.ceil((double) realCount / batchSize) : 1;
-                    long totalToCraft = batchSize > 0 ? batchesNeeded * batchSize : realCount;
+                    long totalToCraft  = batchSize > 0 ? batchesNeeded * batchSize : realCount;
 
                     Future<ICraftingPlan> future = craftingService.beginCraftingCalculation(
                             level, simulationRequester, aeKey, totalToCraft, CalculationStrategy.CRAFT_LESS);
@@ -115,9 +115,9 @@ public class CraftHandler
                 catch (Exception e) { ColonyLink.LOGGER.error("Craft error", e); failCount++; }
             }
 
-            final int finalSuccess  = successCount;
-            final int finalFail     = failCount;
-            final int finalSkipped  = skipped;
+            final int finalSuccess   = successCount;
+            final int finalFail      = failCount;
+            final int finalSkipped   = skipped;
             final int finalRealCount = realCounts.get(0);
 
             level.getServer().execute(() -> {
@@ -187,5 +187,53 @@ public class CraftHandler
         var be = targetLevel.getBlockEntity(linkedPos.pos());
         if (be instanceof IWirelessAccessPoint wap) return wap;
         return null;
+    }
+
+    /**
+     * Submits a single AE2 craft job — used by TerminalCraftPacket (Warehouse Link Terminal).
+     * Package-visible so TerminalCraftPacket can call it without accessing CRAFT_EXECUTOR directly.
+     */
+    static void submitCraftJob(ServerPlayer player,
+                               IGrid grid,
+                               ICraftingService cs,
+                               IActionSource actionSource,
+                               ICraftingSimulationRequester simReq,
+                               AEItemKey aeKey,
+                               int count)
+    {
+        CRAFT_EXECUTOR.submit(() -> {
+            try
+            {
+                Future<ICraftingPlan> future = cs.beginCraftingCalculation(
+                        player.serverLevel(), simReq, aeKey, count, CalculationStrategy.CRAFT_LESS);
+                ICraftingPlan plan = future.get(10, TimeUnit.SECONDS);
+                if (plan == null)
+                {
+                    player.serverLevel().getServer().execute(() ->
+                            player.sendSystemMessage(Component.literal(
+                                    "§c[Terminal] Craft plan failed for §f"
+                                            + aeKey.toStack(1).getDisplayName().getString())));
+                    return;
+                }
+
+                CompletableFuture<Boolean> done = new CompletableFuture<>();
+                player.serverLevel().getServer().execute(() ->
+                        done.complete(cs.submitJob(plan, null, null, false, actionSource).successful()));
+
+                boolean ok = done.get(5, TimeUnit.SECONDS);
+                player.serverLevel().getServer().execute(() ->
+                        player.sendSystemMessage(Component.literal(ok
+                                ? "§a[Terminal] Autocraft started: §f" + count + "x "
+                                  + aeKey.toStack(1).getDisplayName().getString()
+                                : "§c[Terminal] Autocraft failed — missing ingredients.")));
+            }
+            catch (Exception e)
+            {
+                ColonyLink.LOGGER.error("[Terminal] Autocraft error", e);
+                player.serverLevel().getServer().execute(() ->
+                        player.sendSystemMessage(Component.literal(
+                                "§c[Terminal] Autocraft error: " + e.getMessage())));
+            }
+        });
     }
 }

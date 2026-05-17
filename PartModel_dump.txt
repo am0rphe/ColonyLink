@@ -1,0 +1,55 @@
+﻿/*
+ * Decompiled with CFR 0.152.
+ * 
+ * Could not load the following classes:
+ *  com.google.common.collect.ImmutableList
+ *  net.minecraft.resources.ResourceLocation
+ */
+package appeng.parts;
+
+import appeng.api.parts.IPartModel;
+import com.google.common.collect.ImmutableList;
+import java.util.List;
+import net.minecraft.resources.ResourceLocation;
+
+public class PartModel
+implements IPartModel {
+    private final boolean isSolid;
+    private final List<ResourceLocation> resources;
+
+    public PartModel(ResourceLocation resource) {
+        this(true, resource);
+    }
+
+    public PartModel(ResourceLocation ... resources) {
+        this(true, resources);
+    }
+
+    public PartModel(boolean isSolid, ResourceLocation resource) {
+        this(isSolid, (List<ResourceLocation>)ImmutableList.of((Object)resource));
+    }
+
+    public PartModel(boolean isSolid, ResourceLocation ... resources) {
+        this(isSolid, (List<ResourceLocation>)ImmutableList.copyOf((Object[])resources));
+    }
+
+    public PartModel(List<ResourceLocation> resources) {
+        this(true, resources);
+    }
+
+    public PartModel(boolean isSolid, List<ResourceLocation> resources) {
+        this.isSolid = isSolid;
+        this.resources = resources;
+    }
+
+    @Override
+    public boolean requireCableConnection() {
+        return this.isSolid;
+    }
+
+    @Override
+    public List<ResourceLocation> getModels() {
+        return this.resources;
+    }
+}
+
