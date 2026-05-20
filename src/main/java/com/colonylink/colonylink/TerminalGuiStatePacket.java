@@ -12,10 +12,7 @@ import net.neoforged.neoforge.network.handling.IPayloadContext;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * C→S : player opened or closed the Warehouse Link Terminal GUI.
- *
- * Contains the host BlockPos and the Direction of the Part face,
- * so the server can locate the exact Part instance via IPartHost.getPart(side).
+ * C→S : ouverture ou fermeture du GUI Warehouse Link Terminal.
  */
 public record TerminalGuiStatePacket(boolean open, BlockPos hostPos, int sideByte)
         implements CustomPacketPayload
@@ -36,7 +33,6 @@ public record TerminalGuiStatePacket(boolean open, BlockPos hostPos, int sideByt
                             buf.readBoolean(), buf.readBlockPos(), buf.readByte() & 0xFF)
             );
 
-    /** Constructor used by the screen on open. Reads side from the open menu's part. */
     public TerminalGuiStatePacket(boolean open, BlockPos hostPos, Direction side)
     {
         this(open, hostPos, side != null ? side.ordinal() : 0);
@@ -54,9 +50,9 @@ public record TerminalGuiStatePacket(boolean open, BlockPos hostPos, int sideByt
             if (part == null) return;
 
             if (packet.open())
-                part.requestImmediateSync();
+                part.onGuiOpened(player);
             else
-                part.onGuiClosed();
+                part.onGuiClosed(player);
         });
     }
 

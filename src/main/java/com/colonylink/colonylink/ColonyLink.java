@@ -80,7 +80,8 @@ public class ColonyLink
     {
         modEventBus.addListener(this::commonSetup);
         modEventBus.addListener(this::registerPayloads);
-        modEventBus.addListener(this::registerScreens);
+        if (net.neoforged.fml.loading.FMLEnvironment.dist.isClient())
+            modEventBus.addListener(this::registerScreens);
         modEventBus.addListener(ColonyLinkRegistry::registerCapabilities);
 
         // ── v1.3.0 — Client-side: ItemColor handlers for terminal item ───

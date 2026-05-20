@@ -1,33 +1,14 @@
 {
+  "parent": "ae2:part/display_base",
   "textures": {
-    "backDark":     "colonylink:part/warehouse_terminal_back_dark",
-    "backLight":    "colonylink:part/warehouse_terminal_back_light",
     "lightsBright": "colonylink:part/warehouse_terminal_bright",
-    "lightsMedium": "colonylink:part/warehouse_terminal_bright",
-    "lightsDark":   "colonylink:part/warehouse_terminal_bright"
+    "lightsMedium": "colonylink:part/warehouse_terminal_medium",
+    "lightsDark":   "colonylink:part/warehouse_terminal_dark"
   },
   "elements": [
     {
-      "from": [2, 2, 0.05],
-      "to":   [14, 14, 0.06],
-      "faces": {
-        "north": {
-          "texture": "#backDark"
-        }
-      }
-    },
-    {
-      "from": [2, 2, 0.04],
-      "to":   [14, 14, 0.05],
-      "faces": {
-        "north": {
-          "texture": "#backLight"
-        }
-      }
-    },
-    {
-      "from": [2, 2, 0.03],
-      "to":   [14, 14, 0.04],
+      "from": [2, 2, 0],
+      "to":   [14, 14, 2],
       "faces": {
         "north": {
           "texture": "#lightsBright",
@@ -37,8 +18,8 @@
       }
     },
     {
-      "from": [2, 2, 0.02],
-      "to":   [14, 14, 0.03],
+      "from": [2, 2, 0],
+      "to":   [14, 14, 2],
       "faces": {
         "north": {
           "texture": "#lightsMedium",
@@ -48,8 +29,8 @@
       }
     },
     {
-      "from": [2, 2, 0.01],
-      "to":   [14, 14, 0.02],
+      "from": [2, 2, 0],
+      "to":   [14, 14, 2],
       "faces": {
         "north": {
           "texture": "#lightsDark",

@@ -39,6 +39,17 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class ColonyLinkServerTicker
 {
+    // ── Registre des WarehouseLinkTerminalPart actives ────────────────────────
+    // Les Parts s'enregistrent ici quand elles ont des viewers (GUI ouverts).
+    // Le ticker appelle Part.serverTick() périodiquement pour les syncs.
+    private static final java.util.Set<WarehouseLinkTerminalPart> activeTerminalParts =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    public static void registerTerminalPart(WarehouseLinkTerminalPart part)
+    { activeTerminalParts.add(part); }
+
+    public static void unregisterTerminalPart(WarehouseLinkTerminalPart part)
+    { activeTerminalParts.remove(part); }
     private record ViewerState(BlockPos builderPos, int activeTabIndex, int colonyId) {}
 
     private static final Map<UUID, ViewerState> activeViewers = new ConcurrentHashMap<>();
@@ -81,6 +92,13 @@ public class ColonyLinkServerTicker
     {
         if (tickCounter.incrementAndGet() < getTickerInterval()) return;
         tickCounter.set(0);
+
+        // Ticker les Parts actives (sync warehouse/ME vers les viewers)
+        activeTerminalParts.removeIf(part -> {
+            if (part.getLevel() == null) return true; // Part déchargée
+            part.serverTick();
+            return false;
+        });
 
         List<UUID> toRemove = new ArrayList<>();
 

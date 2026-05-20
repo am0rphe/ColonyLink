@@ -1,11 +1,9 @@
 package com.colonylink.colonylink;
 
-import appeng.api.networking.crafting.CalculationStrategy;
-import appeng.api.networking.crafting.ICraftingPlan;
 import appeng.api.networking.crafting.ICraftingService;
-import appeng.api.networking.crafting.ICraftingSimulationRequester;
-import appeng.api.networking.security.IActionSource;
 import appeng.api.stacks.AEItemKey;
+import appeng.menu.locator.MenuLocators;
+import appeng.menu.me.crafting.CraftAmountMenu;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.chat.Component;
@@ -16,14 +14,11 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-
 /**
  * C→S : crafting action in the Warehouse Link Terminal.
  *
  * mode = CRAFT_3x3  → complete a 3×3 recipe
- * mode = AUTOCRAFT  → submit an AE2 autocraft job
+ * mode = AUTOCRAFT  → open native AE2 CraftAmountMenu (fix 8)
  */
 public record TerminalCraftPacket(
         Mode mode,
@@ -73,7 +68,7 @@ public record TerminalCraftPacket(
             switch (packet.mode())
             {
                 case CRAFT_3x3  -> handleCraft3x3(player);
-                case AUTOCRAFT  -> handleAutocraft(player, part, packet.stack(), packet.count());
+                case AUTOCRAFT  -> handleAutocraft(player, part, packet.stack());
             }
         });
     }
@@ -100,8 +95,23 @@ public record TerminalCraftPacket(
                 "§a[Terminal] Crafted §f" + result.getDisplayName().getString()));
     }
 
-    private static void handleAutocraft(ServerPlayer player, WarehouseLinkTerminalPart part,
-                                        ItemStack stack, int count)
+    /**
+     * Middle-click sur un item craftable dans le panel ME :
+     * ouvre le vrai écran CraftAmountMenu natif d'AE2. [Fix 8]
+     *
+     * CraftAmountMenu.open() est la méthode statique AE2 qui :
+     *   1. Appelle MenuOpener.open(TYPE, player, locator)
+     *   2. Cast player.containerMenu en CraftAmountMenu
+     *   3. Appelle setWhatToCraft(aeKey, initialAmount) + broadcastChanges()
+     *
+     *   - Direction  = la face sur laquelle notre Part est monté (part.getSide())
+     *
+     * Notre Part implémente ISubMenuHost via :
+     *   WarehouseLinkTerminalPart → AbstractTerminalPart → ITerminalHost → ISubMenuHost ✓
+     */
+    private static void handleAutocraft(ServerPlayer player,
+                                        WarehouseLinkTerminalPart part,
+                                        ItemStack stack)
     {
         if (!part.isAe2Active())
         {
@@ -111,13 +121,10 @@ public record TerminalCraftPacket(
 
         var node = part.getManagedGridNode().getNode();
         if (node == null) return;
-        var grid = node.getGrid();
 
-        ICraftingService cs        = grid.getCraftingService();
-        IActionSource actionSrc    = IActionSource.ofMachine(part);
-        ICraftingSimulationRequester simReq = () -> actionSrc;
+        ICraftingService cs    = node.getGrid().getCraftingService();
+        AEItemKey        aeKey = AEItemKey.of(stack);
 
-        AEItemKey aeKey = AEItemKey.of(stack);
         if (aeKey == null || !cs.isCraftable(aeKey))
         {
             player.sendSystemMessage(Component.literal(
@@ -125,6 +132,11 @@ public record TerminalCraftPacket(
             return;
         }
 
-        CraftHandler.submitCraftJob(player, grid, cs, actionSrc, simReq, aeKey, count);
+        // Construire le locator depuis le Part directement (1 argument dans cette version AE2)
+        var locator = MenuLocators.forPart(part);
+
+        // Ouvre le CraftAmountMenu natif AE2 — l'utilisateur voit l'UI AE2
+        // standard avec le champ de quantité, le choix du CPU, etc.
+        CraftAmountMenu.open(player, locator, aeKey, 1);
     }
 }

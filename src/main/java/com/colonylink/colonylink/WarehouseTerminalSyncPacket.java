@@ -13,12 +13,14 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * S→C : sends the full warehouse snapshot to the client.
+ * S→C : snapshot complet du Warehouse vers le client.
+ * Inclut un message d'erreur optionnel (ex. "No colony found").
  */
 public record WarehouseTerminalSyncPacket(
         List<WarehouseItemEntry> entries,
         boolean hasWarehouseCard,
-        BlockPos terminalPos
+        BlockPos terminalPos,
+        String errorMessage   // vide = pas d'erreur
 ) implements CustomPacketPayload
 {
     public record WarehouseItemEntry(ItemStack stack, long count) {}
@@ -39,6 +41,7 @@ public record WarehouseTerminalSyncPacket(
                         }
                         buf.writeBoolean(p.hasWarehouseCard());
                         buf.writeBlockPos(p.terminalPos());
+                        buf.writeUtf(p.errorMessage());
                     },
                     buf -> {
                         int size = buf.readInt();
@@ -47,13 +50,16 @@ public record WarehouseTerminalSyncPacket(
                             entries.add(new WarehouseItemEntry(
                                     ItemStack.STREAM_CODEC.decode(buf), buf.readLong()));
                         boolean hasCard = buf.readBoolean();
-                        BlockPos pos = buf.readBlockPos();
-                        return new WarehouseTerminalSyncPacket(entries, hasCard, pos);
+                        BlockPos pos    = buf.readBlockPos();
+                        String err      = buf.readUtf();
+                        return new WarehouseTerminalSyncPacket(entries, hasCard, pos, err);
                     }
             );
 
     @Override
     public CustomPacketPayload.Type<? extends CustomPacketPayload> type() { return TYPE; }
+
+    public boolean hasError() { return errorMessage != null && !errorMessage.isEmpty(); }
 
     public static void handle(WarehouseTerminalSyncPacket packet, IPayloadContext ctx)
     {

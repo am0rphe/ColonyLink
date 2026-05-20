@@ -112,8 +112,8 @@ public class ColonyLinkConfig
                 .comment("Interval in ticks between each server ticker update.",
                         "Lower = more responsive GUI but more server load.",
                         "Higher = less server load but slower GUI updates.",
-                        "20t = 1s, 40t = 2s, 80t = 4s. Default: 40")
-                .defineInRange("ticker_interval_ticks", 40, 10, 200);
+                        "10t = 0.5s, 20t = 1s, 40t = 2s. Default: 10")
+                .defineInRange("ticker_interval_ticks", 10, 5, 100);
 
         WAND_RANGE_CHECK = builder
                 .comment("If true, the wand checks that the player is within range of the linked",
