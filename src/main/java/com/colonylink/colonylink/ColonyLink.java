@@ -214,15 +214,15 @@ public class ColonyLink
 
         // S→C
         registrar.playToClient(ColonyLinkPacket.TYPE, ColonyLinkPacket.STREAM_CODEC,
-                ColonyLinkPacket::handle);
+                (p, c) -> ColonyLinkPacket.handle(p, c));
         registrar.playToClient(TabCountsPacket.TYPE, TabCountsPacket.STREAM_CODEC,
-                TabCountsPacket::handle);
+                (p, c) -> TabCountsPacket.handle(p, c));
         registrar.playToClient(WarehouseResultPacket.TYPE, WarehouseResultPacket.STREAM_CODEC,
-                WarehouseResultPacket::handle);
+                (p, c) -> WarehouseResultPacket.handle(p, c));
         registrar.playToClient(CitizensPacket.TYPE, CitizensPacket.STREAM_CODEC,
-                CitizensPacket::handle);
+                (p, c) -> CitizensPacket.handle(p, c));
         registrar.playToClient(PackageTokenSyncPacket.TYPE, PackageTokenSyncPacket.STREAM_CODEC,
-                PackageTokenSyncPacket::handle);
+                (p, c) -> PackageTokenSyncPacket.handle(p, c));
 
         // C→S
         registrar.playToServer(GuiStatePacket.TYPE, GuiStatePacket.STREAM_CODEC,
@@ -254,11 +254,15 @@ public class ColonyLink
 
         // ── v1.3.0 — Warehouse Link Terminal ──────────────────────────────
 
-        // S→C
+        // S→C — lambdas pour éviter le chargement de WarehouseLinkTerminalScreen
+        // (extends Screen = @OnlyIn CLIENT) par RuntimeDistCleaner sur serveur dédié.
+        // Les lambdas ne référencent pas Screen dans leur bytecode → safe both sides.
         registrar.playToClient(WarehouseTerminalSyncPacket.TYPE,
-                WarehouseTerminalSyncPacket.STREAM_CODEC, WarehouseTerminalSyncPacket::handle);
+                WarehouseTerminalSyncPacket.STREAM_CODEC,
+                (p, c) -> TerminalClientPacketHandler.handleWarehouseSync(p, c));
         registrar.playToClient(TerminalMeSyncPacket.TYPE,
-                TerminalMeSyncPacket.STREAM_CODEC, TerminalMeSyncPacket::handle);
+                TerminalMeSyncPacket.STREAM_CODEC,
+                (p, c) -> TerminalClientPacketHandler.handleMeSync(p, c));
 
         // C→S
         registrar.playToServer(TerminalGuiStatePacket.TYPE,
