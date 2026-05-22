@@ -1,6 +1,5 @@
 package com.colonylink.colonylink;
 
-import net.minecraft.client.Minecraft;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
@@ -47,18 +46,4 @@ public record TabCountsPacket(
 
     @Override
     public CustomPacketPayload.Type<? extends CustomPacketPayload> type() { return TYPE; }
-
-    public static void handle(TabCountsPacket packet, IPayloadContext context)
-    {
-        context.enqueueWork(() -> {
-            // Traité GUI ouvert OU fermé — le badge hotbar doit fonctionner en permanence
-            for (int i = 0; i < packet.counts().size(); i++)
-            {
-                if (i == packet.activeTabIndex()) continue; // tab active = toujours lue
-                int count = packet.counts().get(i);
-                // markTabUnread avec le count serveur — ne marque que si count > lastRead
-                ColonyLinkScreen.markTabUnread(i, count);
-            }
-        });
-    }
 }

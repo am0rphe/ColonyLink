@@ -1,6 +1,5 @@
 package com.colonylink.colonylink;
 
-import net.minecraft.client.Minecraft;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
@@ -85,13 +84,5 @@ public record WarehouseResultPacket(
     public CustomPacketPayload.Type<? extends CustomPacketPayload> type()
     {
         return TYPE;
-    }
-
-    public static void handle(WarehouseResultPacket packet, IPayloadContext context)
-    {
-        context.enqueueWork(() -> {
-            if (Minecraft.getInstance().screen instanceof ColonyLinkScreen screen)
-                screen.updateWarehouseSnapshot(packet);
-        });
     }
 }

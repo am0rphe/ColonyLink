@@ -1,6 +1,5 @@
 package com.colonylink.colonylink;
 
-import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
@@ -172,21 +171,4 @@ public record ColonyLinkPacket(
 
     @Override
     public CustomPacketPayload.Type<? extends CustomPacketPayload> type() { return TYPE; }
-
-    public static void handle(ColonyLinkPacket packet, IPayloadContext context)
-    {
-        context.enqueueWork(() ->
-        {
-            ClientRFCache.update(packet.rfStored(), packet.rfMax());
-
-            var screen = Minecraft.getInstance().screen;
-
-            if (screen instanceof ColonyLinkScreen cls)
-                cls.updateFromPacket(packet);
-            else if (screen instanceof ColonyLinkConfigScreen cfgScreen)
-                cfgScreen.updateParentPacket(packet);
-            else
-                Minecraft.getInstance().setScreen(new ColonyLinkScreen(packet));
-        });
-    }
 }

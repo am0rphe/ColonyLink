@@ -1,6 +1,5 @@
 package com.colonylink.colonylink;
 
-import net.minecraft.client.Minecraft;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
@@ -69,13 +68,4 @@ public record CitizensPacket(List<CitizenRequestEntry> entries) implements Custo
 
     @Override
     public CustomPacketPayload.Type<? extends CustomPacketPayload> type() { return TYPE; }
-
-    public static void handle(CitizensPacket packet, IPayloadContext context)
-    {
-        context.enqueueWork(() -> {
-            var screen = Minecraft.getInstance().screen;
-            if (screen instanceof ColonyLinkScreen cls)
-                cls.updateCitizens(packet);
-        });
-    }
 }

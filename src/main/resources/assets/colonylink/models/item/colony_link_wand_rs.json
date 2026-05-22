@@ -1,6 +1,0 @@
-{
-  "parent": "item/handheld",
-  "textures": {
-    "layer0": "colonylink:item/colony_link_wand_rs"
-  }
-}

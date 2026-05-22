@@ -40,7 +40,19 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Warehouse Link Terminal — Part v1.3.0 (logique complète).
+ * Warehouse Link Terminal — Part v1.3.9 (hybride méta/racks).
+ *
+ * v1.3.9 :
+ *  - Fix double-count : la lecture du warehouse passe par le méta-handler
+ *    exposé par MineColonies (un handler agrégé de tous les racks, identifié
+ *    par getSlots() > 54). Plus rapide, plus juste, et MineColonies gère
+ *    pour nous la dédup rack double / rack simple / mix.
+ *  - Insertions/extractions inchangées dans leur logique, mais filtrent
+ *    désormais explicitement le méta-handler (skip si getSlots() > 54).
+ *    Le méta n'est touché que pour la lecture, jamais pour écrire.
+ *  - Fallback : si aucun méta-handler n'est trouvé (cas dégénéré, mod
+ *    conflict), la lecture retombe sur l'ancien scan des racks individuels
+ *    avec la limite RACK_HALF_SLOTS (comportement v1.3.0).
  *
  * Hérite de AbstractTerminalPart pour :
  *  - Rendu AE2 natif (cable arm, canal, ModelData SPIN)
@@ -49,9 +61,9 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * Fonctionnalités :
  *  - Slot carte Warehouse Link Card (NBT persisté)
- *  - Scan warehouse MineColonies → snapshot client
+ *  - Scan warehouse MineColonies → snapshot client (via méta-handler)
  *  - Scan ME storage → snapshot client
- *  - Transfers : WH↔ME, WH↔Player, ME↔Player
+ *  - Transfers : WH↔ME, WH↔Player, ME↔Player (via racks individuels)
  *  - Pick/deposit : via le carried vanilla (setCarried/getCarried)
  *  - Permissions : owner ou officer de la colonie liée à la card
  *  - Gestion des viewers actifs (sync périodique)
@@ -75,8 +87,31 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
 
     /** Rayon max pour détecter la colonie depuis la position du Part (blocks). */
     private static final int COLONY_SEARCH_RADIUS = 100;
-    /** Nombre de slots locaux d'une moitié de rack MineColonies (rack simple=27, rack double=54 mais on lit seulement les 27 locaux). */
+
+    /**
+     * Nombre de slots locaux d'une moitié de rack MineColonies.
+     * - Rack simple : 27 slots
+     * - Rack double : 54 slots (27 locaux + 27 miroir de l'autre moitié)
+     * Quand on scanne les racks individuels (insert/extract), on s'arrête à 27
+     * pour ne pas doublonner les miroirs.
+     */
     private static final int RACK_HALF_SLOTS = 27;
+
+    /**
+     * Seuil au-dessus duquel un IItemHandler retourné par warehouse.getContainers()
+     * est considéré comme le méta-handler du warehouse (agrégat de tous les racks),
+     * et non un rack physique.
+     *
+     * Un rack physique MineColonies a au maximum 54 slots (rack double).
+     * Au-delà, c'est forcément le handler agrégé du building (observé empiriquement
+     * avec ~1323 slots = ~49 racks × 27 dans un warehouse en cours de remplissage).
+     *
+     * Utilisé pour :
+     *  - LECTURE : on cible CE handler exclusivement (snapshot rapide et déjà
+     *              dédupliqué par MineColonies).
+     *  - ÉCRITURE : on SKIP ce handler. On n'écrit que dans les racks physiques.
+     */
+    private static final int META_HANDLER_MIN_SLOTS = 55;
 
     // ── État ──────────────────────────────────────────────────────────────────
 
@@ -250,6 +285,23 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
 
     // ── Snapshots ─────────────────────────────────────────────────────────────
 
+    /**
+     * Construit le snapshot warehouse pour le client.
+     *
+     * v1.3.9 — Stratégie hybride :
+     *
+     *  1. On scanne getContainers() à la recherche du méta-handler (le handler
+     *     agrégé exposé par le building, identifié par getSlots() >= 55).
+     *
+     *  2. Si trouvé : on lit UNIQUEMENT le méta-handler. C'est MineColonies qui
+     *     gère pour nous la dédup rack double et l'agrégation des stacks
+     *     identiques répartis sur plusieurs racks. Aucun risque de
+     *     double-comptage.
+     *
+     *  3. Si non trouvé (cas dégénéré : warehouse atypique, mod conflict, etc.) :
+     *     fallback sur l'ancien scan des racks individuels avec la limite
+     *     RACK_HALF_SLOTS=27 par handler. Comportement v1.3.0.
+     */
     private WarehouseTerminalSyncPacket buildWarehouseSnapshot(ServerLevel level)
     {
         BlockPos hostPos = this.getBlockEntity() != null ? this.getBlockEntity().getBlockPos() : BlockPos.ZERO;
@@ -266,49 +318,91 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         if (warehouse == null)
             return new WarehouseTerminalSyncPacket(List.of(), true, hostPos, "No warehouse nearby");
 
-        List<WarehouseTerminalSyncPacket.WarehouseItemEntry> entries = new ArrayList<>();
         java.util.Map<String, WarehouseTerminalSyncPacket.WarehouseItemEntry> aggregated = new java.util.LinkedHashMap<>();
 
-        // Déduplication rack double MineColonies.
-        //
-        // getContainers() retourne 2 BlockPos pour un rack double (les 2 moitiés).
-        // Chaque handler expose 54 slots : slots 0-26 = items locaux du bloc,
-        // slots 27-53 = items de l'autre moitié (miroir).
-        // Scanner les 2 positions sans précaution = compter chaque item x2.
-        //
-        // Fix : ne scanner que les 27 premiers slots de chaque handler.
-        // Chaque moitié contribue ses 27 slots locaux → total correct sans doublon.
-        // Un rack simple a aussi 27 slots → aucun impact.
-        //
-        // Set<BlockPos> en garde contre les positions strictement dupliquées.
+        // Étape 1 : chercher le méta-handler.
+        IItemHandler metaHandler = findMetaHandler(level, warehouse);
 
-        java.util.Set<BlockPos> visitedPos = new java.util.HashSet<>();
-
-        for (BlockPos rackPos : warehouse.getContainers())
+        if (metaHandler != null)
         {
-            if (!visitedPos.add(rackPos)) continue; // position strictement dupliquée
-
-            IItemHandler rack = level.getCapability(Capabilities.ItemHandler.BLOCK, rackPos, null);
-            if (rack == null) continue;
-
-            // Ne scanner que les 27 premiers slots (slots locaux de ce bloc)
-            int slots = Math.min(rack.getSlots(), RACK_HALF_SLOTS);
+            // Lecture via méta : scan unique de tous les slots, sans dédup.
+            int slots = metaHandler.getSlots();
             for (int s = 0; s < slots; s++)
             {
-                ItemStack inSlot = rack.getStackInSlot(s);
+                ItemStack inSlot = metaHandler.getStackInSlot(s);
                 if (inSlot.isEmpty()) continue;
-                String key = net.minecraft.core.registries.BuiltInRegistries.ITEM
-                        .getKey(inSlot.getItem()).toString()
-                        + inSlot.getComponents().toString();
-                aggregated.merge(key,
-                        new WarehouseTerminalSyncPacket.WarehouseItemEntry(inSlot.copyWithCount(1), inSlot.getCount()),
-                        (a, b) -> new WarehouseTerminalSyncPacket.WarehouseItemEntry(a.stack(), a.count() + b.count()));
+                aggregateItem(aggregated, inSlot);
             }
         }
-        entries.addAll(aggregated.values());
+        else
+        {
+            // Fallback : scan des racks individuels (comportement v1.3.0).
+            // Déduplication par position (rack double = 2 BlockPos) et limite
+            // RACK_HALF_SLOTS pour ne pas re-lire les slots miroir.
+            java.util.Set<BlockPos> visitedPos = new java.util.HashSet<>();
+            for (BlockPos rackPos : warehouse.getContainers())
+            {
+                if (!visitedPos.add(rackPos)) continue;
+                IItemHandler rack = level.getCapability(Capabilities.ItemHandler.BLOCK, rackPos, null);
+                if (rack == null) continue;
+                // Sécurité : si un méta-handler arrive ici, on le saute (il sera
+                // beaucoup trop gros et fausserait le total). En pratique on
+                // n'arrive ici que si findMetaHandler() a retourné null, donc
+                // ce filtre est défensif.
+                if (rack.getSlots() >= META_HANDLER_MIN_SLOTS) continue;
+                int slots = Math.min(rack.getSlots(), RACK_HALF_SLOTS);
+                for (int s = 0; s < slots; s++)
+                {
+                    ItemStack inSlot = rack.getStackInSlot(s);
+                    if (inSlot.isEmpty()) continue;
+                    aggregateItem(aggregated, inSlot);
+                }
+            }
+        }
+
+        List<WarehouseTerminalSyncPacket.WarehouseItemEntry> entries = new ArrayList<>(aggregated.values());
         entries.sort((a, b) -> Long.compare(b.count(), a.count()));
 
         return new WarehouseTerminalSyncPacket(entries, true, hostPos, "");
+    }
+
+    /**
+     * Helper : fusionne un ItemStack dans la map d'agrégation par identité d'item
+     * (item + components). Utilisé par les deux branches de buildWarehouseSnapshot.
+     */
+    private static void aggregateItem(
+            java.util.Map<String, WarehouseTerminalSyncPacket.WarehouseItemEntry> aggregated,
+            ItemStack inSlot)
+    {
+        String key = net.minecraft.core.registries.BuiltInRegistries.ITEM
+                .getKey(inSlot.getItem()).toString()
+                + inSlot.getComponents().toString();
+        aggregated.merge(key,
+                new WarehouseTerminalSyncPacket.WarehouseItemEntry(inSlot.copyWithCount(1), inSlot.getCount()),
+                (a, b) -> new WarehouseTerminalSyncPacket.WarehouseItemEntry(a.stack(), a.count() + b.count()));
+    }
+
+    /**
+     * Cherche le méta-handler exposé par le warehouse MineColonies.
+     *
+     * MineColonies expose dans getContainers() à la fois :
+     *  - tous les racks individuels (27 ou 54 slots chacun)
+     *  - un handler agrégé "warehouse-as-a-whole" (généralement 100+ slots)
+     *
+     * Le méta-handler est identifié par sa taille : >= 55 slots.
+     * Au plus un seul méta-handler par warehouse en pratique.
+     *
+     * @return le méta-handler trouvé, ou null s'il n'y en a pas (fallback).
+     */
+    private static IItemHandler findMetaHandler(ServerLevel level, BuildingWareHouse warehouse)
+    {
+        for (BlockPos rackPos : warehouse.getContainers())
+        {
+            IItemHandler h = level.getCapability(Capabilities.ItemHandler.BLOCK, rackPos, null);
+            if (h == null) continue;
+            if (h.getSlots() >= META_HANDLER_MIN_SLOTS) return h;
+        }
+        return null;
     }
 
     private TerminalMeSyncPacket buildMeSnapshot(ServerLevel level)
@@ -354,6 +448,8 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
             if (!visitedPos.add(rackPos)) continue;
             IItemHandler rack = level.getCapability(Capabilities.ItemHandler.BLOCK, rackPos, null);
             if (rack == null || !visited.add(rack)) continue;
+            // v1.3.9 — skip méta-handler : on n'écrit jamais via l'agrégat.
+            if (rack.getSlots() >= META_HANDLER_MIN_SLOTS) continue;
             ItemStack before = toInsert.copy();
             toInsert = insertIntoHandler(rack, toInsert);
             inserted += before.getCount() - toInsert.getCount();
@@ -440,6 +536,8 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
             if (!visitedPos.add(rackPos)) continue;
             IItemHandler rack = level.getCapability(Capabilities.ItemHandler.BLOCK, rackPos, null);
             if (rack == null || !visited.add(rack)) continue;
+            // v1.3.9 — skip méta-handler : on extrait des racks physiques uniquement.
+            if (rack.getSlots() >= META_HANDLER_MIN_SLOTS) continue;
             int slots = Math.min(rack.getSlots(), RACK_HALF_SLOTS);
             for (int s = 0; s < slots && remaining > 0; s++)
             {
@@ -557,6 +655,8 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
             if (!visitedPos.add(rackPos)) continue;
             IItemHandler rack = level.getCapability(Capabilities.ItemHandler.BLOCK, rackPos, null);
             if (rack == null || !visited.add(rack)) continue;
+            // v1.3.9 — skip méta-handler.
+            if (rack.getSlots() >= META_HANDLER_MIN_SLOTS) continue;
             for (int s = 0; s < Math.min(rack.getSlots(), RACK_HALF_SLOTS) && remaining > 0; s++)
             {
                 ItemStack inSlot = rack.getStackInSlot(s);
@@ -587,6 +687,8 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
                 if (ret.isEmpty()) break;
                 IItemHandler rack = level.getCapability(Capabilities.ItemHandler.BLOCK, rackPos, null);
                 if (rack == null || !retVisited.add(rack)) continue;
+                // v1.3.9 — skip méta-handler.
+                if (rack.getSlots() >= META_HANDLER_MIN_SLOTS) continue;
                 ret = insertIntoHandler(rack, ret);
             }
         }
@@ -617,6 +719,8 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
             if (!visitedPos.add(rackPos)) continue;
             IItemHandler rack = level.getCapability(Capabilities.ItemHandler.BLOCK, rackPos, null);
             if (rack == null || !visited.add(rack)) continue;
+            // v1.3.9 — skip méta-handler.
+            if (rack.getSlots() >= META_HANDLER_MIN_SLOTS) continue;
             for (int s = 0; s < Math.min(rack.getSlots(), RACK_HALF_SLOTS) && remaining > 0; s++)
             {
                 ItemStack inSlot = rack.getStackInSlot(s);
@@ -642,6 +746,8 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
                 if (toGive.isEmpty()) break;
                 IItemHandler rack = level.getCapability(Capabilities.ItemHandler.BLOCK, rp, null);
                 if (rack == null || !retVis.add(rack)) continue;
+                // v1.3.9 — skip méta-handler.
+                if (rack.getSlots() >= META_HANDLER_MIN_SLOTS) continue;
                 toGive = insertIntoHandler(rack, toGive);
             }
             msg(player, "§e[Terminal] Inventory full.");
@@ -680,6 +786,8 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
             if (!visitedPos.add(rackPos)) continue;
             IItemHandler rack = level.getCapability(Capabilities.ItemHandler.BLOCK, rackPos, null);
             if (rack == null || !visited.add(rack)) continue;
+            // v1.3.9 — skip méta-handler.
+            if (rack.getSlots() >= META_HANDLER_MIN_SLOTS) continue;
             remaining = insertIntoHandler(rack, remaining);
         }
 
@@ -769,6 +877,8 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
             if (!visitedPos.add(rackPos)) continue;
             IItemHandler rack = level.getCapability(Capabilities.ItemHandler.BLOCK, rackPos, null);
             if (rack == null || !visited.add(rack)) continue;
+            // v1.3.9 — skip méta-handler.
+            if (rack.getSlots() >= META_HANDLER_MIN_SLOTS) continue;
             stack = insertIntoHandler(rack, stack);
         }
         return original - stack.getCount();

@@ -12,7 +12,11 @@ import java.util.*;
 import static com.colonylink.colonylink.WarehouseLinkTerminalMenu.*;
 
 /**
- * Warehouse Link Terminal — Screen v1.3.0
+ * Warehouse Link Terminal — Screen v1.3.8
+ *
+ * v1.3.8 :
+ *  - Compteurs items en police ~75% (taille AE2-like) pour ne plus jamais déborder
+ *  - Format AE2 standard pour les grands nombres : 999, 1.0K, 9.9K, 10K, 999K, 1.0M, 1.0B, 999B
  *
  * Pick system (fake cursor, 100% client-side) :
  *  - Clic gauche panel WH/ME  : PICKUP_FROM_WH/ME → serveur extrait + setCarried
@@ -69,6 +73,14 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
     private static final int C_ICON_BOX      = 0xFFB8A070;
     private static final int C_ICON_ME       = 0xFF6699FF;
     private static final int C_ICON_PLAYER   = 0xFF88CCAA;
+
+    // ── v1.3.8 — Compteur items ──────────────────────────────────────────────
+    /** Échelle de la police du compteur sur les slots (1.0 = taille MC standard ~7px). */
+    private static final float COUNT_FONT_SCALE = 0.72f;
+    /** Couleur du compteur. */
+    private static final int   C_COUNT_TEXT    = 0xFFFFFFFF;
+    /** Couleur de l'ombre du compteur (drop shadow). */
+    private static final int   C_COUNT_SHADOW  = 0xFF3F3F3F;
 
     // Spacing boutons centraux
     private static final int BTN_W_CTR = 18;
@@ -446,15 +458,80 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
             ItemStack stack; long count; boolean craftable=false;
             if(isWh){var e=whFiltered.get(idx);stack=e.stack();count=e.count();}
             else    {var e=meFiltered.get(idx);stack=e.stack();count=e.count();craftable=e.craftable();}
+
+            // Rendu de l'item SEUL (sans le count vanilla, qui est trop gros et déborde)
             g.renderItem(stack,sx,sy);
+            // Rendu des décorations vanilla (durabilité, cooldown) mais SANS texte count
+            g.renderItemDecorations(font,stack,sx,sy,"");
+
+            // Indicateurs craftable côté ME
             if (!isWh)
             {
-                if (craftable&&count<=0) { g.fill(sx,sy,sx+16,sy+16,C_CRAFTONLY_OV); g.drawString(font,"+",sx+4,sy+4,0xFF00CCFF,true); }
-                else if (craftable)      { g.renderItemDecorations(font,stack,sx,sy,fmt(count)); g.fill(sx+13,sy,sx+16,sy+3,C_CRAFTABLE_DOT); }
-                else                     g.renderItemDecorations(font,stack,sx,sy,fmt(count));
+                if (craftable && count<=0)
+                {
+                    // Craftable-only : overlay bleu + "+"
+                    g.fill(sx,sy,sx+16,sy+16,C_CRAFTONLY_OV);
+                    g.drawString(font,"+",sx+4,sy+4,0xFF00CCFF,true);
+                    // Pas de count à afficher
+                    continue;
+                }
+                if (craftable)
+                {
+                    // Stocked ET craftable : petit dot vert en haut-droite
+                    g.fill(sx+13,sy,sx+16,sy+3,C_CRAFTABLE_DOT);
+                }
             }
-            else g.renderItemDecorations(font,stack,sx,sy,fmt(count));
+
+            // ── v1.3.8 — Count compact, police scalée à droite-bas du slot ──
+            if (count > 0)
+                drawCount(g, sx, sy, count);
         }
+    }
+
+    /**
+     * v1.3.8 — Dessine le compteur d'items dans le coin bas-droit du slot
+     * avec une police réduite (~72% de la taille standard).
+     *
+     * Format style AE2 : 1-999 brut, 1.0K-9.9K, 10K-999K, 1.0M-999M, 1.0B-999B.
+     * Tous les formats tiennent en ≤ 4 caractères.
+     *
+     * Le texte est rendu avec une matrice scale + un drop shadow manuel
+     * (le drawString natif avec shadow rend une ombre à l'échelle 1x qui
+     * paraît ridicule sur du texte à 0.72x ; on dessine donc l'ombre
+     * manuellement, décalée d'1 px).
+     */
+    private void drawCount(GuiGraphics g, int slotX, int slotY, long count)
+    {
+        String txt = fmtCount(count);
+        float scale = COUNT_FONT_SCALE;
+
+        // Taille rendue du texte (font.width retourne la largeur à scale 1)
+        int wRaw = font.width(txt);
+        int hRaw = font.lineHeight; // = 9 px standard
+
+        // Position : coin bas-droit du slot 16x16, ancrée à 1px du bord
+        // (slotX, slotY) = coin haut-gauche du slot rendu (sx, sy dans renderPanelItems)
+        int slotRight  = slotX + 16;
+        int slotBottom = slotY + 16;
+        // Position en coords scalées (à diviser par scale dans la matrice scalée)
+        float drawX = (slotRight  - 1) / scale - wRaw;
+        float drawY = (slotBottom - 1) / scale - hRaw;
+
+        var pose = g.pose();
+        pose.pushPose();
+        // Z élevé pour que le compteur passe devant l'item rendu
+        pose.translate(0f, 0f, 200f);
+        pose.scale(scale, scale, 1f);
+
+        // Drop shadow manuel : on draw d'abord en sombre décalé d'1 px (en coords scalées),
+        // puis le texte en clair par-dessus. Le shadow=false du drawString évite le shadow
+        // vanilla qui serait à l'échelle 1.
+        g.drawString(font, txt, (int)Math.round(drawX) + 1, (int)Math.round(drawY) + 1,
+                C_COUNT_SHADOW, false);
+        g.drawString(font, txt, (int)Math.round(drawX), (int)Math.round(drawY),
+                C_COUNT_TEXT, false);
+
+        pose.popPose();
     }
 
     // ── Tooltips ──────────────────────────────────────────────────────────────
@@ -719,7 +796,40 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
 
     private int clamp(int s, int tot) { int max=Math.max(0,(int)Math.ceil(tot/(double)PANEL_COLS)-PANEL_ROWS); return Math.max(0,Math.min(s,max)); }
     private boolean over(double mx, double my, int bx, int by, int bw, int bh) { return mx>=bx&&mx<bx+bw&&my>=by&&my<by+bh; }
-    private static String fmt(long n) { if(n>=1_000_000)return(n/1_000_000)+"M"; if(n>=1_000)return(n/1_000)+"K"; return String.valueOf(n); }
+
+    /**
+     * v1.3.8 — Format compact style AE2 pour les compteurs d'items.
+     *
+     * Règles (max 4 caractères) :
+     *   0-999          → "0", "1", ..., "999"
+     *   1000-9999      → "1.0K", "1.5K", ..., "9.9K"     (1 décimale)
+     *   10_000-999_999 → "10K", "11K", ..., "999K"        (pas de décimale)
+     *   1M-9.9M        → "1.0M", ..., "9.9M"              (1 décimale)
+     *   10M-999M       → "10M", "11M", ..., "999M"
+     *   1B-9.9B        → "1.0B", ..., "9.9B"
+     *   10B+           → "10B", "11B", ..., "999B" (plafond fonctionnel)
+     *   au-delà        → "∞"  (improbable mais on évite tout overflow visuel)
+     */
+    private static String fmtCount(long n)
+    {
+        if (n < 0)             return "0";
+        if (n < 1_000)         return Long.toString(n);
+        if (n < 10_000)        return fmtDecimal(n, 1_000)  + "K";   // 1.0K..9.9K
+        if (n < 1_000_000)     return (n / 1_000)           + "K";   // 10K..999K
+        if (n < 10_000_000)    return fmtDecimal(n, 1_000_000) + "M";// 1.0M..9.9M
+        if (n < 1_000_000_000) return (n / 1_000_000)       + "M";   // 10M..999M
+        if (n < 10_000_000_000L)  return fmtDecimal(n, 1_000_000_000L) + "B"; // 1.0B..9.9B
+        if (n < 1_000_000_000_000L) return (n / 1_000_000_000L) + "B";        // 10B..999B
+        return "\u221e"; // ∞ — au-delà de 1T, indicateur fonctionnel
+    }
+
+    /** Helper : formate n/divisor avec 1 décimale, ex: fmtDecimal(1500, 1000) = "1.5". */
+    private static String fmtDecimal(long n, long divisor)
+    {
+        long whole = n / divisor;
+        long frac  = (n * 10 / divisor) % 10;
+        return whole + "." + frac;
+    }
 
     private net.minecraft.core.BlockPos partHostPos()
     { var be=menu.getPart().getHostBlockEntity(); return be!=null?be.getBlockPos():net.minecraft.core.BlockPos.ZERO; }

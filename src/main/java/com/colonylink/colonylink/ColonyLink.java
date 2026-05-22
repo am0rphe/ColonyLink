@@ -2,6 +2,7 @@ package com.colonylink.colonylink;
 
 import appeng.api.features.GridLinkables;
 import appeng.api.parts.PartModels;
+import appeng.items.parts.PartModelsHelper;
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -82,6 +83,8 @@ public class ColonyLink
         modEventBus.addListener(this::registerPayloads);
         if (net.neoforged.fml.loading.FMLEnvironment.dist.isClient())
             modEventBus.addListener(this::registerScreens);
+        if (net.neoforged.fml.loading.FMLEnvironment.dist.isClient())
+            modEventBus.addListener(ColonyLinkClient::onRegisterAdditionalModels);
         modEventBus.addListener(ColonyLinkRegistry::registerCapabilities);
 
         // ── v1.3.0 — Client-side: ItemColor handlers for terminal item ───
@@ -100,6 +103,42 @@ public class ColonyLink
         ColonyLinkRegistry.MENUS.register(modEventBus);
 
         ColonyLinkRecipes.RECIPE_SERIALIZERS.register(modEventBus);
+
+        // ── v1.3.7 — AE2 part-model registration ─────────────────────────
+        //
+        // CRITICAL TIMING: this MUST happen synchronously in the mod
+        // constructor, NOT in FMLCommonSetupEvent and NOT inside
+        // event.enqueueWork(...).
+        //
+        // AE2 calls PartModelsInternal.freeze() during its own
+        // FMLCommonSetupEvent handler. Any registerModels() call after
+        // that throws IllegalStateException:
+        //
+        //   "Cannot register models after the pre-initialization phase!"
+        //
+        // v1.3.6 placed this call inside event.enqueueWork(...) in our
+        // own commonSetup — which defers it to the sync work queue that
+        // runs AFTER all commonSetup listeners (including AE2's freeze).
+        // That's the wrong phase.
+        //
+        // The mod constructor runs during the mod-loader bootstrap, well
+        // before any FMLCommonSetupEvent. By this point, all our
+        // DeferredRegister entries are queued (we registered the buses
+        // above) and class loading for WarehouseLinkTerminalPart is fine
+        // — we only need the static @PartModels fields, not the
+        // instances. Server-safe: PartModels/PartModelsHelper are common
+        // API classes, no client-only types referenced.
+        //
+        // This is the canonical pattern used by AE2 addons (appflux,
+        // merequester, etc.).
+        //
+        // Note: ColonyLinkClient.onRegisterAdditionalModels stays in
+        // place — it's the NeoForge side of model registration (so the
+        // JSON files get baked). Both registrations are required:
+        //   - NeoForge ModelEvent.RegisterAdditional → bakes the JSONs
+        //   - AE2 PartModels.registerModels          → CableBus whitelist
+        PartModels.registerModels(
+                PartModelsHelper.createModels(WarehouseLinkTerminalPart.class));
 
         NeoForge.EVENT_BUS.register(ColonyLinkServerTicker.class);
 
@@ -127,18 +166,13 @@ public class ColonyLink
     private void commonSetup(FMLCommonSetupEvent event)
     {
         event.enqueueWork(() -> {
-            // Register wand as AE2 linkable (WAP pairing)
+            // Register wand as AE2 linkable (WAP pairing).
+            // GridLinkables stays in enqueueWork — it needs the Item to be
+            // fully constructed via DeferredRegister, which happens in the
+            // registry events between mod-ctor and commonSetup.
             GridLinkables.register(COLONY_LINK_WAND.get(), LINKABLE_HANDLER);
 
-            // Register Part models — three states mirroring the ME Crafting Terminal.
-            // Files at:
-            //   assets/colonylink/models/part/warehouse_link_terminal_on.json
-            //   assets/colonylink/models/part/warehouse_link_terminal_off.json
-            PartModels.registerModels(
-                    ResourceLocation.fromNamespaceAndPath(MODID, "part/warehouse_link_terminal_on"),
-                    ResourceLocation.fromNamespaceAndPath(MODID, "part/warehouse_link_terminal_off"));
-
-            LOGGER.info("ColonyLink v1.3.0 loaded — Warehouse Link Terminal Part registered.");
+            LOGGER.info("ColonyLink v1.3.7 loaded — Warehouse Link Terminal Part registered.");
         });
     }
 
@@ -212,17 +246,18 @@ public class ColonyLink
 
         // ── Existing packets ───────────────────────────────────────────────
 
-        // S→C
+        // S→C — handlers dans ClientPacketHandler (@OnlyIn CLIENT)
+        // Les lambdas évitent le chargement de Minecraft.class au classload côté serveur.
         registrar.playToClient(ColonyLinkPacket.TYPE, ColonyLinkPacket.STREAM_CODEC,
-                (p, c) -> ColonyLinkPacket.handle(p, c));
+                (p, c) -> ClientPacketHandler.handleColonyLink(p, c));
         registrar.playToClient(TabCountsPacket.TYPE, TabCountsPacket.STREAM_CODEC,
-                (p, c) -> TabCountsPacket.handle(p, c));
+                (p, c) -> ClientPacketHandler.handleTabCounts(p, c));
         registrar.playToClient(WarehouseResultPacket.TYPE, WarehouseResultPacket.STREAM_CODEC,
-                (p, c) -> WarehouseResultPacket.handle(p, c));
+                (p, c) -> ClientPacketHandler.handleWarehouseResult(p, c));
         registrar.playToClient(CitizensPacket.TYPE, CitizensPacket.STREAM_CODEC,
-                (p, c) -> CitizensPacket.handle(p, c));
+                (p, c) -> ClientPacketHandler.handleCitizens(p, c));
         registrar.playToClient(PackageTokenSyncPacket.TYPE, PackageTokenSyncPacket.STREAM_CODEC,
-                (p, c) -> PackageTokenSyncPacket.handle(p, c));
+                (p, c) -> ClientPacketHandler.handlePackageTokenSync(p, c));
 
         // C→S
         registrar.playToServer(GuiStatePacket.TYPE, GuiStatePacket.STREAM_CODEC,
