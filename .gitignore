@@ -41,3 +41,6 @@ repo/
 
 # Backup archives
 *.rar
+
+# External reference materials (decompiled mods, extracted assets, dumps)
+_references/
