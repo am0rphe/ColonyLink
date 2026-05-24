@@ -30,6 +30,10 @@ repositories {
         name = "modrinth"
         url = "https://api.modrinth.com/maven"
     }
+    maven {
+        name = "Curios"
+        url = "https://maven.theillusivec4.top/"
+    }
 }
 
 base {
@@ -75,6 +79,11 @@ dependencies {
     compileOnly files("run/client/mods/minecolonies-1.1.1299-1.21.1-snapshot.jar")
     compileOnly "curse.maven:applied-energistics-2-223794:6626602"
     compileOnly "maven.modrinth:jade:15.10.5+neoforge"
+
+    // ── v1.4.0 — Curios API (optional dependency) ─────────────────────────
+    // :api classifier → only the API surface, no full mod jar at compile time.
+    // No runtimeOnly — Curios is optional; the mod boots without it.
+    compileOnly "top.theillusivec4.curios:curios-neoforge:9.5.1+1.21.1:api"
 }
 
 tasks.withType(ProcessResources).configureEach {

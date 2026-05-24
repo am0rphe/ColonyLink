@@ -198,9 +198,7 @@ public class CitizensScanHandler
 
     private static ItemStack findWandInInventory(ServerPlayer player)
     {
-        for (ItemStack s : player.getInventory().items)
-            if (s.getItem() instanceof ColonyLinkWand)
-                return s;
-        return null;
+        // Delegate to the shared implementation that also checks Curios slots.
+        return ColonyLinkServerTicker.findWandInInventory(player);
     }
 }

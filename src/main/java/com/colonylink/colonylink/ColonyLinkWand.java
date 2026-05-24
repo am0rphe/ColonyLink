@@ -214,7 +214,7 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
         int activeTab = ColonyLinkWandLinkableHandler.getActiveTab(wandStack);
         BuilderEntry active = entries.get(Math.min(activeTab, entries.size() - 1));
 
-        return openGUI(wandStack, sp, (ServerLevel) level, active.builderPos(), activeTab)
+        return openGUIStatic(wandStack, sp, (ServerLevel) level, active.builderPos(), activeTab)
                 ? InteractionResultHolder.success(wandStack)
                 : InteractionResultHolder.fail(wandStack);
     }
@@ -385,8 +385,8 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
 
     // ── openGUI ───────────────────────────────────────────────────────────────
 
-    private boolean openGUI(ItemStack wandStack, ServerPlayer player, ServerLevel sl,
-                            BlockPos builderPos, int activeTabIndex)
+    public static boolean openGUIStatic(ItemStack wandStack, ServerPlayer player, ServerLevel sl,
+                                        BlockPos builderPos, int activeTabIndex)
     {
         IWirelessAccessPoint wap = getWap(wandStack, sl);
         if (wap == null) { player.sendSystemMessage(Component.literal("§cCannot connect to AE2 network!")); return false; }
@@ -497,7 +497,7 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
     public static BlockPos getLastBuilderPos(ItemStack stack)
     { return ColonyLinkWandLinkableHandler.getActiveBuilderPos(stack); }
 
-    private IWirelessAccessPoint getWap(ItemStack wandStack, ServerLevel level)
+    public static IWirelessAccessPoint getWap(ItemStack wandStack, ServerLevel level)
     {
         GlobalPos lp = ColonyLinkWandLinkableHandler.getLinkedPos(wandStack);
         if (lp == null) return null;

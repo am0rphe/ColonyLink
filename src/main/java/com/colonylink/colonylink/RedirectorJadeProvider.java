@@ -8,7 +8,6 @@ import snownee.jade.api.IBlockComponentProvider;
 import snownee.jade.api.IServerDataProvider;
 import snownee.jade.api.ITooltip;
 import snownee.jade.api.config.IPluginConfig;
-import snownee.jade.api.ui.IElement;
 import snownee.jade.api.ui.IElementHelper;
 
 /**
@@ -40,8 +39,10 @@ public class RedirectorJadeProvider implements
     private static final String KEY_BUILDER_X    = "cl_bx";
     private static final String KEY_BUILDER_Y    = "cl_by";
     private static final String KEY_BUILDER_Z    = "cl_bz";
-    private static final String KEY_BUFFER_USED  = "cl_buf_used";
-    private static final String KEY_BUFFER_MAX   = "cl_buf_max";
+    private static final String KEY_BUFFER_USED    = "cl_buf_used";
+    private static final String KEY_BUFFER_MAX     = "cl_buf_max";
+    private static final String KEY_DOMUM_PATTERNS = "cl_domum";
+    private static final String KEY_DOMUM_INFO     = "cl_domum_info"; // "name|variant;name|variant;..."
 
     // ── Données serveur → client ──────────────────────────────────────────────
 
@@ -71,8 +72,39 @@ public class RedirectorJadeProvider implements
         for (int slot = 0; slot < be.buffer.getSlots(); slot++)
             if (!be.buffer.getStackInSlot(slot).isEmpty()) used++;
 
+        // Compte les DomumPatternItems + collecte leurs infos
+        int domumCount = 0;
+        StringBuilder domumInfo = new StringBuilder();
+        for (int slot = 0; slot < be.buffer.getSlots(); slot++)
+        {
+            net.minecraft.world.item.ItemStack s = be.buffer.getStackInSlot(slot);
+            if (!(s.getItem() instanceof DomumPatternItem)) continue;
+            domumCount++;
+
+            // Nom de l'item cible
+            net.minecraft.world.item.ItemStack target =
+                    DomumPatternItem.decodeTarget(s, accessor.getLevel().registryAccess());
+            String name = target != null ? target.getDisplayName().getString() : "?";
+
+            // Variant
+            net.minecraft.world.item.component.BlockItemStateProperties bs =
+                    s.get(net.minecraft.core.component.DataComponents.BLOCK_STATE);
+            String variant = "";
+            if (bs != null && !bs.properties().isEmpty())
+                variant = bs.properties().entrySet().stream()
+                        .map(e -> e.getKey() + "=" + e.getValue())
+                        .collect(java.util.stream.Collectors.joining(","));
+
+            if (domumInfo.length() > 0) domumInfo.append(";");
+            domumInfo.append(name).append("|").append(variant);
+        }
+
         data.putInt(KEY_BUFFER_USED, used);
         data.putInt(KEY_BUFFER_MAX, be.buffer.getSlots());
+        data.putInt(KEY_DOMUM_PATTERNS, domumCount);
+        data.putString(KEY_DOMUM_INFO, domumInfo.toString());
+
+
     }
 
     // ── Affichage HUD client ──────────────────────────────────────────────────
@@ -147,12 +179,36 @@ public class RedirectorJadeProvider implements
         }
 
         // ── Buffer ────────────────────────────────────────────────────────────
-        int bufUsed = data.getInt(KEY_BUFFER_USED);
-        int bufMax  = data.getInt(KEY_BUFFER_MAX);
+        int bufUsed     = data.getInt(KEY_BUFFER_USED);
+        int bufMax      = data.getInt(KEY_BUFFER_MAX);
+        int domumCount  = data.getInt(KEY_DOMUM_PATTERNS);
+        String domumInfo = data.getString(KEY_DOMUM_INFO);
+        tooltip.add(Component.literal("§8──────────────────"));
         if (bufUsed > 0)
         {
-            tooltip.add(Component.literal("§8──────────────────"));
-            tooltip.add(Component.literal("§7Buffer: §f" + bufUsed + "§7/§f" + bufMax + " §7slots used"));
+            tooltip.add(Component.literal("§7Buffer: §f" + bufUsed + "§7/§f" + bufMax
+                    + " §7slots" + (domumCount > 0 ? " §8(§f" + domumCount + " §8Domum)" : "")));
+
+            // Détail des DomumPatterns (nom + variant) — shift only
+            if (domumCount > 0 && !domumInfo.isEmpty()
+                    && net.minecraft.client.gui.screens.Screen.hasShiftDown())
+            {
+                for (String entry : domumInfo.split(";"))
+                {
+                    String[] parts = entry.split("\\|", 2);
+                    String name    = parts[0];
+                    String variant = parts.length > 1 && !parts[1].isEmpty() ? " §8[" + parts[1] + "]" : "";
+                    tooltip.add(Component.literal("§7  • §f" + name + variant));
+                }
+            }
+            else if (domumCount > 0)
+            {
+                tooltip.add(Component.literal("§8Hold §eShift §8to see Domum patterns."));
+            }
+        }
+        else
+        {
+            tooltip.add(Component.literal("§8Buffer: §7empty — add §fDomum Patterns §7to enable crafting."));
         }
     }
 

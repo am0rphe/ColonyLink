@@ -239,6 +239,29 @@ public class SendToBuilderHandler
         // ── Feedback ──────────────────────────────────────────────────────────
         if (totalInserted > 0)
         {
+            // Notify MineColonies that the builder hut inventory changed so the
+            // builder re-evaluates its needed resources immediately — without this
+            // the citizen stays blocked until a manual restart or item re-placement.
+            try
+            {
+                IColony colony = IColonyManager.getInstance().getClosestColony(level, builderPos);
+                if (colony != null)
+                {
+                    for (IBuilding b : colony.getServerBuildingManager().getBuildings().values())
+                    {
+                        if (b.getPosition().equals(builderPos))
+                        {
+                            b.markDirty();
+                            break;
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                ColonyLink.LOGGER.debug("[ColonyLink] markDirty after send failed: {}", e.getMessage());
+            }
+
             player.sendSystemMessage(Component.literal(
                     "§a[ColonyLink] Sent " + totalInserted + "x "
                             + stack.getDisplayName().getString() + " to builder!"));
@@ -367,9 +390,8 @@ public class SendToBuilderHandler
 
     static ItemStack findWandInInventory(ServerPlayer player)
     {
-        for (ItemStack stack : player.getInventory().items)
-            if (stack.getItem() instanceof ColonyLinkWand) return stack;
-        return null;
+        // Delegate to the shared implementation that also checks Curios slots.
+        return ColonyLinkServerTicker.findWandInInventory(player);
     }
 
     private static IWirelessAccessPoint getWap(ItemStack wandStack, ServerLevel level)

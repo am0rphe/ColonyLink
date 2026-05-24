@@ -2,6 +2,8 @@ package com.colonylink.colonylink;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import net.neoforged.api.distmarker.OnlyIn;
+import net.neoforged.api.distmarker.Dist;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
@@ -151,15 +153,123 @@ public class ColonyLinkRedirectorScreen extends AbstractContainerScreen<ColonyLi
         }
     }
 
+    /**
+     * Override renderSlot — même comportement que les terminaux AE2 :
+     * si le slot contient un DomumPatternItem, rend l'item cible à la place.
+     * On reproduit manuellement le rendu vanilla du slot (fond + item + décos)
+     * en substituant l'item.
+     */
     @Override
+    protected void renderSlot(GuiGraphics graphics, net.minecraft.world.inventory.Slot slot)
+    {
+        net.minecraft.world.item.ItemStack inSlot = slot.getItem();
+        if (!inSlot.isEmpty() && inSlot.getItem() instanceof DomumPatternItem)
+        {
+            net.minecraft.world.item.ItemStack target =
+                    DomumPatternItem.getTargetStackClient(inSlot);
+            if (target != null && !target.isEmpty())
+            {
+                // Rendu du fond/highlight du slot via super (sans item)
+                // On crée temporairement un slot "vide" fictif pour le fond
+                // puis on rend l'item cible manuellement
+                int x = slot.x;
+                int y = slot.y;
+
+                // Highlight si slot sélectionné
+                if (this.isHovering(slot.x, slot.y, 16, 16, (double) lastMouseX, (double) lastMouseY))
+                    graphics.fill(x, y, x + 16, y + 16, 0x80FFFFFF);
+
+                // Rend l'item cible
+                graphics.renderItem(target, x, y);
+                graphics.renderItemDecorations(this.font, target, x, y, null);
+                return;
+            }
+        }
+        super.renderSlot(graphics, slot);
+    }
+
+    // Track mouse pos pour le highlight dans renderSlot
+    private int lastMouseX = 0, lastMouseY = 0;
+
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick)
     {
+        lastMouseX = mouseX;
+        lastMouseY = mouseY;
         super.render(graphics, mouseX, mouseY, partialTick);
-        this.renderTooltip(graphics, mouseX, mouseY);
+
+        // Tooltip custom pour les slots DomumPattern du buffer
+        // On intercepte avant renderTooltip vanilla pour afficher les infos du pattern
+        boolean domumTooltipShown = false;
+        for (net.minecraft.world.inventory.Slot slot : menu.slots)
+        {
+            // Vérifie si la souris survole ce slot
+            if (mouseX < this.leftPos + slot.x || mouseX > this.leftPos + slot.x + 16) continue;
+            if (mouseY < this.topPos  + slot.y || mouseY > this.topPos  + slot.y + 16) continue;
+
+            // Cherche l'item réel du slot (avant swap)
+            // Les slots buffer sont de type SlotItemHandler
+            net.minecraft.world.item.ItemStack realStack = slot.getItem();
+            if (!(realStack.getItem() instanceof DomumPatternItem)) continue;
+
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+            if (mc.level == null) continue;
+
+            net.minecraft.world.item.ItemStack target =
+                    DomumPatternItem.getTargetStackClient(realStack);
+
+            int outCount = DomumPatternItem.getOutputCount(realStack);
+            java.util.List<net.minecraft.network.chat.Component> tt = new java.util.ArrayList<>();
+            tt.add(net.minecraft.network.chat.Component.literal("§6Domum Pattern"));
+            tt.add(net.minecraft.network.chat.Component.literal("§eCrafts: §f")
+                    .append(target.getDisplayName())
+                    .append(net.minecraft.network.chat.Component.literal(
+                            outCount > 1 ? " §7(×" + outCount + ")" : "")));
+
+            // Variant — depuis l'ItemStack TARGET (le pattern encode l'item cible avec son blockstate)
+            net.minecraft.world.item.component.BlockItemStateProperties bs =
+                    target.get(net.minecraft.core.component.DataComponents.BLOCK_STATE);
+            if (bs != null && !bs.properties().isEmpty())
+            {
+                for (var entry : bs.properties().entrySet())
+                    tt.add(net.minecraft.network.chat.Component.literal(
+                            "§7" + entry.getKey() + ": §f" + entry.getValue()));
+            }
+            else
+            {
+                tt.add(net.minecraft.network.chat.Component.literal("§8[no variant data]"));
+            }
+
+            if (hasShiftDown())
+            {
+                // Matériaux — shift only
+                java.util.List<DomumPatternItem.MaterialEntry> mats =
+                        DomumPatternItem.getMaterials(realStack, mc.level.registryAccess());
+                if (!mats.isEmpty())
+                {
+                    tt.add(net.minecraft.network.chat.Component.literal("§7Materials:"));
+                    for (var mat : mats)
+                        if (mat.resolved())
+                            tt.add(net.minecraft.network.chat.Component.literal("§7  • §f")
+                                    .append(new net.minecraft.world.item.ItemStack(mat.block())
+                                            .getDisplayName())
+                                    .append(net.minecraft.network.chat.Component.literal(" ×1")));
+                }
+            }
+            else
+            {
+                tt.add(net.minecraft.network.chat.Component.literal("§8Hold §eShift §8for materials.")
+                        .withStyle(net.minecraft.ChatFormatting.DARK_GRAY));
+            }
+
+            graphics.renderComponentTooltip(this.font, tt, mouseX, mouseY);
+            domumTooltipShown = true;
+            break;
+        }
 
         // Tooltip du slot Warehouse Link Card
         int cardSlotX = this.leftPos + 170;
         int cardSlotY = this.topPos + 20;
+        boolean cardTooltipShown = false;
         if (mouseX >= cardSlotX && mouseX <= cardSlotX + 16
                 && mouseY >= cardSlotY && mouseY <= cardSlotY + 16)
         {
@@ -173,6 +283,20 @@ public class ColonyLinkRedirectorScreen extends AbstractContainerScreen<ColonyLi
             else
                 tooltip.add(Component.literal("§8✘ Empty — insert a Warehouse Link Card"));
             graphics.renderComponentTooltip(this.font, tooltip, mouseX, mouseY);
+            cardTooltipShown = true;
         }
+
+        // Vanilla tooltip uniquement si aucun tooltip custom affiché
+        if (!domumTooltipShown && !cardTooltipShown)
+            this.renderTooltip(graphics, mouseX, mouseY);
     }
+    /**
+     * Redessine les slots buffer du Redirector : si un slot contient un DomumPatternItem,
+     * on rend l'item Domum cible PAR-DESSUS l'icône pattern.
+     * Appelé après super.render() pour être au-dessus du rendu vanilla.
+     * Client-side uniquement.
+     */
+
+
+
 }

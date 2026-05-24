@@ -7,6 +7,11 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.neoforge.network.PacketDistributor;
+import com.ldtteam.domumornamentum.block.IMateriallyTexturedBlock;
+import com.ldtteam.domumornamentum.block.IMateriallyTexturedBlockComponent;
+import com.ldtteam.domumornamentum.client.model.data.MaterialTextureData;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.level.block.Block;
 
 import java.util.*;
 
@@ -61,6 +66,18 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
     private static final ResourceLocation TEX_SLIDER =
             ResourceLocation.fromNamespaceAndPath("colonylink", "textures/button/slider.png");
 
+    // ── v1.4.2 — Onglets + Cutter ─────────────────────────────────────────────
+    private static final ResourceLocation TEX_PATTERN_GUI =
+            ResourceLocation.fromNamespaceAndPath("colonylink", "textures/gui/pattern_gui.png");
+    private static final ResourceLocation TEX_TAB_ACTIVE =
+            ResourceLocation.fromNamespaceAndPath("colonylink", "textures/button/active_tab.png");
+    private static final ResourceLocation TEX_TAB_INACTIVE =
+            ResourceLocation.fromNamespaceAndPath("colonylink", "textures/button/inactive_tab.png");
+    private static final ResourceLocation TEX_ICO_CRAFT =
+            ResourceLocation.fromNamespaceAndPath("colonylink", "textures/button/craft_ico.png");
+    private static final ResourceLocation TEX_ICO_CUTTER =
+            ResourceLocation.fromNamespaceAndPath("colonylink", "textures/button/cutter_ico.png");
+
     // ── Couleurs texte / overlays ─────────────────────────────────────────────
     private static final int C_TEXT_WH      = 0xFF9A9FB4;
     private static final int C_TEXT_AE      = 0xFF6699FF;
@@ -98,6 +115,46 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
     private final Set<Integer> whSelected = new LinkedHashSet<>();
     private final Set<Integer> meSelected = new LinkedHashSet<>();
     private boolean shiftWasDown = false;
+
+    // ── v1.4.2 — Onglets ─────────────────────────────────────────────────────
+    // Onglet 0 = Crafting Table (défaut), Onglet 1 = Cutter Domum
+    private static final int TAB_X        = 295;
+    private static final int TAB_CRAFT_Y  = 269;
+    private static final int TAB_CUTTER_Y = 291;
+    private static final int TAB_W        = 22;
+    private static final int TAB_H        = 22;
+    private static final int ICO_SIZE     = 16;
+    private static final int ICO_CRAFT_X  = TAB_X + 3;
+    private static final int ICO_CRAFT_Y  = TAB_CRAFT_Y + 3;
+    private static final int ICO_CUT_X    = TAB_X + 3;
+    private static final int ICO_CUT_Y    = TAB_CUTTER_Y + 3;
+
+    // pattern_gui.png overlay coords
+    private static final int PG_X = 129;
+    private static final int PG_Y = 266;
+    private static final int PG_W = 166;
+    private static final int PG_H = 68;
+
+    // Slots Domum — coords visuelles (slots réels à -2000 dans le Menu)
+    private static final int DOMUM_TARGET_RENDER_X = 139;
+    private static final int DOMUM_TARGET_RENDER_Y = 283;
+    private static final int MAT_START_X = 162;
+    private static final int MAT_Y       = 283;
+    private static final int MAT_PITCH   = 18;
+    private static final int MAT_MAX     = 4;
+    private static final int BLANK_RENDER_X  = 269;
+    private static final int BLANK_RENDER_Y  = 267;
+    private static final int ENCODE_BTN_X    = 271;
+    private static final int ENCODE_BTN_Y    = 292;
+    private static final int ENCODE_BTN_W    = 12;
+    private static final int ENCODE_BTN_H    = 12;
+    private static final int OUTPUT_RENDER_X = 269;
+    private static final int OUTPUT_RENDER_Y = 314;
+
+    private int     activeTab = 0;
+    private boolean encodePushed = false;
+    private final List<ItemStack> cachedMaterials = new ArrayList<>();
+    private ItemStack lastTargetForCache = ItemStack.EMPTY;
 
     // État drag scrollbars
     private boolean draggingWh = false, draggingAe = false;
@@ -303,14 +360,170 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
             hoveredTooltip = "Output \u2192 Inventory";
 
         // 8. Sélection count sur panels
-        // WH : x=136..191, y=15..24 — par-dessus la search bar droite
         if (!whSelected.isEmpty())
             g.drawString(font, "\u00a7e" + whSelected.size() + " selected",
                     x + 136, y + 15, 0xFFFFDD00, false);
-        // AE : x=361..416, y=15..24 — par-dessus la search bar droite AE
         if (!meSelected.isEmpty())
             g.drawString(font, "\u00a7e" + meSelected.size() + " selected",
                     x + 361, y + 15, 0xFFFFDD00, false);
+
+        // 9. v1.4.2 — Onglets
+        renderTabs(g, x, y, mx, my);
+
+        // 10. v1.4.2 — Zone Cutter (sur-impression si onglet 1 actif)
+        if (activeTab == 1)
+            renderCutterOverlay(g, x, y, mx, my);
+    }
+
+    // ── Onglets (x=295, y=269 craft / y=291 cutter) ───────────────────────────
+    private void renderTabs(GuiGraphics g, int x, int y, int mx, int my)
+    {
+        boolean craftActive = (activeTab == 0);
+        g.blit(craftActive ? TEX_TAB_ACTIVE : TEX_TAB_INACTIVE,
+                x + TAB_X, y + TAB_CRAFT_Y, 0, 0, TAB_W, TAB_H, TAB_W, TAB_H);
+        g.blit(TEX_ICO_CRAFT,
+                x + ICO_CRAFT_X, y + ICO_CRAFT_Y, 0, 0, ICO_SIZE, ICO_SIZE, ICO_SIZE, ICO_SIZE);
+        if (over(mx, my, x + TAB_X, y + TAB_CRAFT_Y, TAB_W, TAB_H))
+            hoveredTooltip = "Crafting Table";
+
+        boolean cutActive = (activeTab == 1);
+        g.blit(cutActive ? TEX_TAB_ACTIVE : TEX_TAB_INACTIVE,
+                x + TAB_X, y + TAB_CUTTER_Y, 0, 0, TAB_W, TAB_H, TAB_W, TAB_H);
+        g.blit(TEX_ICO_CUTTER,
+                x + ICO_CUT_X, y + ICO_CUT_Y, 0, 0, ICO_SIZE, ICO_SIZE, ICO_SIZE, ICO_SIZE);
+        if (over(mx, my, x + TAB_X, y + TAB_CUTTER_Y, TAB_W, TAB_H))
+            hoveredTooltip = "Domum Pattern Encoder";
+    }
+
+    // ── Overlay Cutter ────────────────────────────────────────────────────────
+    private void renderCutterOverlay(GuiGraphics g, int x, int y, int mx, int my)
+    {
+        g.blit(TEX_PATTERN_GUI, x + PG_X, y + PG_Y, 0, 0, PG_W, PG_H, PG_W, PG_H);
+
+        // Slot 47 — Target Domum (rendu manuel, slot à -2000)
+        ItemStack target = menu.getDomumTarget();
+        renderSlotOutline(g, x + DOMUM_TARGET_RENDER_X - 1, y + DOMUM_TARGET_RENDER_Y - 1);
+        if (!target.isEmpty())
+        {
+            g.renderItem(target, x + DOMUM_TARGET_RENDER_X, y + DOMUM_TARGET_RENDER_Y);
+            g.renderItemDecorations(font, target, x + DOMUM_TARGET_RENDER_X, y + DOMUM_TARGET_RENDER_Y);
+            if (over(mx, my, x + DOMUM_TARGET_RENDER_X, y + DOMUM_TARGET_RENDER_Y, 16, 16))
+                hoveredTooltip = "Model: " + target.getDisplayName().getString()
+                        + "\n\u00a77Will be encoded into a Domum Pattern";
+            updateMaterialCache(target);
+            renderMaterials(g, x, y, mx, my);
+        }
+        else
+        {
+            if (over(mx, my, x + DOMUM_TARGET_RENDER_X, y + DOMUM_TARGET_RENDER_Y, 16, 16))
+                hoveredTooltip = "\u00a77Place a Domum block here";
+            cachedMaterials.clear();
+            lastTargetForCache = ItemStack.EMPTY;
+        }
+
+        // Slot 48 — Blank Pattern (rendu manuel)
+        ItemStack blank = menu.getSlot(BLANK_PATTERN_SLOT).getItem();
+        renderSlotOutline(g, x + BLANK_RENDER_X - 1, y + BLANK_RENDER_Y - 1);
+        if (!blank.isEmpty())
+        {
+            g.renderItem(blank, x + BLANK_RENDER_X, y + BLANK_RENDER_Y);
+            g.renderItemDecorations(font, blank, x + BLANK_RENDER_X, y + BLANK_RENDER_Y);
+        }
+        if (over(mx, my, x + BLANK_RENDER_X, y + BLANK_RENDER_Y, 16, 16))
+            hoveredTooltip = blank.isEmpty()
+                    ? "\u00a77Insert a Blank Pattern here"
+                    : blank.getDisplayName().getString();
+
+        // Slot 49 — Output : pattern encodé (après clic Encode) OU preview grisé
+        // Si slot 49 vide mais target présent → affiche aperçu grisé (non cliquable)
+        ItemStack output = menu.getDomumOutput();
+        ItemStack target49 = menu.getDomumTarget();
+        renderSlotOutline(g, x + OUTPUT_RENDER_X - 1, y + OUTPUT_RENDER_Y - 1);
+        if (!output.isEmpty())
+        {
+            // Pattern encodé réel → cliquable
+            g.renderItem(output, x + OUTPUT_RENDER_X, y + OUTPUT_RENDER_Y);
+            g.renderItemDecorations(font, output, x + OUTPUT_RENDER_X, y + OUTPUT_RENDER_Y);
+            if (over(mx, my, x + OUTPUT_RENDER_X, y + OUTPUT_RENDER_Y, 16, 16))
+                hoveredTooltip = output.getDisplayName().getString()
+                        + "\n\u00a77Click to pick up the encoded pattern";
+        }
+        else if (!target49.isEmpty())
+        {
+            // Preview grisé — montre l'item cible avec overlay semi-transparent
+            g.renderItem(target49, x + OUTPUT_RENDER_X, y + OUTPUT_RENDER_Y);
+            g.fill(x + OUTPUT_RENDER_X, y + OUTPUT_RENDER_Y,
+                    x + OUTPUT_RENDER_X + 16, y + OUTPUT_RENDER_Y + 16, 0x88000000);
+            if (over(mx, my, x + OUTPUT_RENDER_X, y + OUTPUT_RENDER_Y, 16, 16))
+                hoveredTooltip = "\u00a77Click Encode to create a pattern for "
+                        + target49.getDisplayName().getString();
+        }
+
+        // Bouton Encode — gap vertical entre blank et output
+        boolean canEncode = menu.canEncode();
+        ResourceLocation encodeTex = encodePushed ? TEX_BTN_PUSHED : TEX_BTN;
+        g.blit(encodeTex, x + ENCODE_BTN_X, y + ENCODE_BTN_Y, 0, 0, ENCODE_BTN_W, ENCODE_BTN_H, 12, 12);
+        if (!canEncode)
+            g.fill(x + ENCODE_BTN_X, y + ENCODE_BTN_Y,
+                    x + ENCODE_BTN_X + ENCODE_BTN_W, y + ENCODE_BTN_Y + ENCODE_BTN_H, 0xAA111133);
+        if (over(mx, my, x + ENCODE_BTN_X, y + ENCODE_BTN_Y, ENCODE_BTN_W, ENCODE_BTN_H))
+            hoveredTooltip = canEncode
+                    ? "Encode Domum Pattern\n\u00a77Consumes 1x Blank Pattern"
+                    : "Place a Domum block + Blank Pattern first";
+    }
+
+    // ── Matériaux lecture seule ───────────────────────────────────────────────
+    private void updateMaterialCache(ItemStack target)
+    {
+        if (ItemStack.isSameItemSameComponents(target, lastTargetForCache)) return;
+        lastTargetForCache = target.copy();
+        cachedMaterials.clear();
+        if (!(target.getItem() instanceof BlockItem bi)) return;
+        Block block = bi.getBlock();
+        if (!(block instanceof IMateriallyTexturedBlock tb)) return;
+        MaterialTextureData td = MaterialTextureData.readFromItemStack(target);
+        for (IMateriallyTexturedBlockComponent comp : tb.getComponents())
+        {
+            Block mat = td.getTexturedComponents().get(comp.getId());
+            cachedMaterials.add(mat != null ? new ItemStack(mat, 1) : ItemStack.EMPTY);
+        }
+    }
+
+    private void renderMaterials(GuiGraphics g, int x, int y, int mx, int my)
+    {
+        int count = Math.min(cachedMaterials.size(), MAT_MAX);
+        for (int i = 0; i < count; i++)
+        {
+            int ix = x + MAT_START_X + i * MAT_PITCH;
+            int iy = y + MAT_Y;
+            ItemStack mat = cachedMaterials.get(i);
+            renderSlotOutline(g, ix - 1, iy - 1);
+            if (mat.isEmpty())
+            {
+                g.fill(ix, iy, ix + 16, iy + 16, 0x88FF0000);
+                if (over(mx, my, ix, iy, 16, 16))
+                    hoveredTooltip = "\u00a7cMissing required material!";
+            }
+            else
+            {
+                g.renderItem(mat, ix, iy);
+                if (over(mx, my, ix, iy, 16, 16))
+                    hoveredTooltip = "Material: " + mat.getDisplayName().getString()
+                            + "\n\u00a77Required for this Domum block";
+            }
+        }
+        if (cachedMaterials.size() > MAT_MAX)
+            g.drawString(font, "+" + (cachedMaterials.size() - MAT_MAX),
+                    x + MAT_START_X + MAT_MAX * MAT_PITCH, y + MAT_Y + 4, 0xFF9999BB, false);
+    }
+
+    // ── Outline slot ──────────────────────────────────────────────────────────
+    private void renderSlotOutline(GuiGraphics g, int x, int y)
+    {
+        g.fill(x,      y,      x + 18, y + 1,  0xFF373737);
+        g.fill(x,      y,      x + 1,  y + 18, 0xFF373737);
+        g.fill(x,      y + 17, x + 18, y + 18, 0xFFFFFFFF);
+        g.fill(x + 17, y,      x + 18, y + 18, 0xFFFFFFFF);
     }
 
     // ── Labels WH / AE au dessus des search bars ──────────────────────────────
@@ -553,6 +766,57 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
         mx = toGui(mx, cx, guiScale); my = toGui(my, cy, guiScale);
 
         boolean shift = hasShiftDown();
+
+        // ── v1.4.2 — Clic onglet Crafting ────────────────────────────────────
+        if (over(mx, my, leftPos + TAB_X, topPos + TAB_CRAFT_Y, TAB_W, TAB_H))
+        {
+            activeTab = 0;
+            menu.setTab(0);
+            return true;
+        }
+
+        // ── v1.4.2 — Clic onglet Cutter ──────────────────────────────────────
+        if (over(mx, my, leftPos + TAB_X, topPos + TAB_CUTTER_Y, TAB_W, TAB_H))
+        {
+            activeTab = 1;
+            menu.setTab(1);
+            return true;
+        }
+
+        // ── v1.4.2 — Bouton Encode ────────────────────────────────────────────
+        if (activeTab == 1 && over(mx, my, leftPos + ENCODE_BTN_X, topPos + ENCODE_BTN_Y,
+                ENCODE_BTN_W, ENCODE_BTN_H))
+        {
+            if (menu.canEncode()) { encodePushed = true; menu.sendEncodeRequest(); }
+            return true;
+        }
+
+        // ── v1.4.2 — Clics slots Domum (slots à -2000, rendu manuel) ─────────
+        if (activeTab == 1)
+        {
+            if (over(mx, my, leftPos + DOMUM_TARGET_RENDER_X, topPos + DOMUM_TARGET_RENDER_Y, 16, 16))
+            {
+                this.slotClicked(menu.getSlot(DOMUM_TARGET_SLOT), DOMUM_TARGET_SLOT, btn,
+                        net.minecraft.world.inventory.ClickType.PICKUP);
+                return true;
+            }
+            if (over(mx, my, leftPos + BLANK_RENDER_X, topPos + BLANK_RENDER_Y, 16, 16))
+            {
+                this.slotClicked(menu.getSlot(BLANK_PATTERN_SLOT), BLANK_PATTERN_SLOT, btn,
+                        net.minecraft.world.inventory.ClickType.PICKUP);
+                return true;
+            }
+            // Fix 1 : clic sur le slot output (49) pour récupérer le pattern encodé
+            if (over(mx, my, leftPos + OUTPUT_RENDER_X, topPos + OUTPUT_RENDER_Y, 16, 16))
+            {
+                if (!menu.getDomumOutput().isEmpty())
+                {
+                    this.slotClicked(menu.getSlot(DOMUM_OUTPUT_SLOT), DOMUM_OUTPUT_SLOT, btn,
+                            net.minecraft.world.inventory.ClickType.PICKUP);
+                }
+                return true;
+            }
+        }
 
         // ── Shift+clic inventaire → WH ou ME ────────────────────────────────
         if (shift && !hasControlDown()
@@ -810,6 +1074,7 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
     {
         draggingWh = draggingAe = false;
         btn1Pushed = btn2Pushed = false;
+        encodePushed = false;
 
         // Shift+clic simple (pas de drag vers un autre slot) → transfert 1 stack → inventaire
         if (dragStartSlotWh >= 0 && dragStartSlotWh < whFiltered.size())

@@ -11,5 +11,10 @@
   "item.colonylink.warehouse_link_terminal": "Warehouse Link Terminal",
   "item.colonylink.warehouse_link_terminal.tooltip": "Bidirectional bridge between the MineColonies Warehouse and the AE2 ME network",
   "block.colonylink.warehouse_link_terminal": "Warehouse Link Terminal",
-  "block.colonylink.warehouse_link_terminal.tooltip": "Bidirectional bridge between the MineColonies Warehouse and the AE2 ME network"
+  "block.colonylink.warehouse_link_terminal.tooltip": "Bidirectional bridge between the MineColonies Warehouse and the AE2 ME network",
+
+  "key.categories.colonylink": "ColonyLink",
+  "key.colonylink.open_clipboard": "Open Clipboard",
+  "item.colonylink.domum_pattern": "Domum Pattern",
+  "config.jade.plugin_colonylink.redirector": "Colony Link Redirector"
 }

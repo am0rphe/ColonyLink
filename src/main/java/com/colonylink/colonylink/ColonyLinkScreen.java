@@ -1211,22 +1211,50 @@ public class ColonyLinkScreen extends Screen
                 g.fill(x + 7, ey, x + 7 + listW, ey + ENTRY_HEIGHT, _rowBg);
                 g.renderItem(stack, x + 9, ey + 2);
 
-                String text = rc + "x " + stack.getDisplayName().getString();
-                if (entry.isDomum()) text = "§b[DO] §r" + text;
-                g.drawString(this.font, text, x + 29, ey + 6, 0xFFFFFF, false);
+                // ── Nom avec défilement si trop long ──────────────────────────────
+                String rawName = stack.getDisplayName().getString();
+                String prefix  = entry.isDomum() ? "§b[DO] §r" : "";
+                String fullText = rc + "x " + rawName;
+                int nameAreaW = listW - 65 - 20; // largeur dispo pour le texte
+                int fullW = this.font.width(prefix + fullText);
+                String displayText;
+                if (fullW > nameAreaW)
+                {
+                    // Défilement : offset basé sur le temps, reset en début de ligne
+                    long t = System.currentTimeMillis();
+                    int scrollRange = fullW - nameAreaW + 10;
+                    int period = scrollRange * 120 + 2000; // ms pour un aller-retour
+                    long phase = t % period;
+                    int offset;
+                    if (phase < 1000)                offset = 0;                            // pause début
+                    else if (phase < 1000 + scrollRange * 60L) offset = (int)((phase - 1000) / 60);
+                    else if (phase < 1000 + scrollRange * 60L + 1000) offset = scrollRange; // pause fin
+                    else offset = scrollRange - (int)((phase - 2000 - scrollRange * 60L) / 60);
+
+                    // Clip + translate
+                    g.enableScissor(x + 29, ey, x + 29 + nameAreaW, ey + ENTRY_HEIGHT);
+                    g.drawString(this.font, prefix + fullText, x + 29 - offset, ey + 6, 0xFFFFFF, false);
+                    g.disableScissor();
+                }
+                else
+                {
+                    g.drawString(this.font, prefix + fullText, x + 29, ey + 6, 0xFFFFFF, false);
+                }
+
+                // ── Zone hover de la ligne (hors bouton) ──────────────────────────
+                boolean lineHov = mx >= x + 7 && mx <= x + 7 + listW - 65
+                        && my >= ey && my <= ey + ENTRY_HEIGHT;
 
                 var we = getWarehouseEntry(stack);
                 if (we != null)
                 {
                     long tot = we.inWarehouse() + we.viaCraft();
                     String wt; int wc;
-                    if (tot >= rc)     { wt = "§aWH: " + tot;               wc = 0x00FF88; }
-                    else if (tot > 0)  { wt = "§eWH: " + tot + "/" + rc;   wc = 0xFFCC44; }
-                    else               { wt = "§cWH: 0";                    wc = 0xFF4444; }
+                    if (tot >= rc)     { wt = "§aWH: " + tot;             wc = 0x00FF88; }
+                    else if (tot > 0)  { wt = "§eWH: " + tot + "/" + rc; wc = 0xFFCC44; }
+                    else               { wt = "§cWH: 0";                  wc = 0xFF4444; }
                     g.drawString(this.font, wt, x + 29, ey + 13, wc, false);
 
-                    boolean lineHov = mx >= x + 7 && mx <= x + 7 + listW - 65
-                            && my >= ey && my <= ey + ENTRY_HEIGHT;
                     if (lineHov && !we.tooltipLines().isEmpty())
                     {
                         tip.clear();
@@ -1236,6 +1264,14 @@ public class ColonyLinkScreen extends Screen
                         tip.add(Component.literal("§8──────────"));
                         for (String ln : we.tooltipLines()) tip.add(Component.literal(ln));
                     }
+                }
+
+                // ── Tooltip Domum au survol de la ligne ───────────────────────────
+                if (lineHov && entry.isDomum() && !entry.tooltipLines().isEmpty())
+                {
+                    tip.clear();
+                    tip.add(Component.literal("§b" + rawName));
+                    for (String ln : entry.tooltipLines()) tip.add(Component.literal(ln));
                 }
 
                 int[] btn = new int[4];

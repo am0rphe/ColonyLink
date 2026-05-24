@@ -47,14 +47,9 @@ public record GuiStatePacket(boolean open, BlockPos builderPos, int activeTabInd
                 ColonyLinkServerTicker.sendImmediateUpdate(
                         serverPlayer, packet.builderPos(), packet.activeTabIndex());
 
-                for (net.minecraft.world.item.ItemStack s : serverPlayer.getInventory().items)
-                {
-                    if (s.getItem() instanceof ColonyLinkWand)
-                    {
-                        ColonyLinkWandLinkableHandler.setActiveTab(s, packet.activeTabIndex());
-                        break;
-                    }
-                }
+                net.minecraft.world.item.ItemStack _wand1 = ColonyLinkServerTicker.findWandInInventory(serverPlayer);
+                if (_wand1 != null)
+                    ColonyLinkWandLinkableHandler.setActiveTab(_wand1, packet.activeTabIndex());
             }
             else
             {
@@ -63,14 +58,9 @@ public record GuiStatePacket(boolean open, BlockPos builderPos, int activeTabInd
                 // Fix 3 : sauvegarde la tab active en NBT wand à la fermeture du GUI
                 if (packet.activeTabIndex() >= 0)
                 {
-                    for (net.minecraft.world.item.ItemStack s : serverPlayer.getInventory().items)
-                    {
-                        if (s.getItem() instanceof ColonyLinkWand)
-                        {
-                            ColonyLinkWandLinkableHandler.setActiveTab(s, packet.activeTabIndex());
-                            break;
-                        }
-                    }
+                    net.minecraft.world.item.ItemStack _wand2 = ColonyLinkServerTicker.findWandInInventory(serverPlayer);
+                    if (_wand2 != null)
+                        ColonyLinkWandLinkableHandler.setActiveTab(_wand2, packet.activeTabIndex());
                 }
                 else
                 {

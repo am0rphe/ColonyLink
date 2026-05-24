@@ -173,9 +173,8 @@ public class CraftHandler
 
     static ItemStack findWandInInventory(ServerPlayer player)
     {
-        for (ItemStack stack : player.getInventory().items)
-            if (stack.getItem() instanceof ColonyLinkWand) return stack;
-        return null;
+        // Delegate to the shared implementation that also checks Curios slots.
+        return ColonyLinkServerTicker.findWandInInventory(player);
     }
 
     private static IWirelessAccessPoint getWap(ItemStack wandStack, ServerLevel level)

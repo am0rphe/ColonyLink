@@ -8,21 +8,30 @@ import appeng.api.networking.IGridNodeListener;
 import appeng.api.networking.IManagedGridNode;
 import appeng.api.networking.IInWorldGridNodeHost;
 import appeng.api.networking.crafting.ICraftingLink;
+import appeng.api.networking.crafting.ICraftingProvider;
 import appeng.api.networking.crafting.ICraftingRequester;
+import appeng.api.crafting.IPatternDetails;
 import appeng.api.stacks.AEItemKey;
 import appeng.api.stacks.AEKey;
+import appeng.api.stacks.KeyCounter;
 import com.google.common.collect.ImmutableSet;
+import com.ldtteam.domumornamentum.block.IMateriallyTexturedBlock;
+import com.ldtteam.domumornamentum.block.IMateriallyTexturedBlockComponent;
+import com.ldtteam.domumornamentum.client.model.data.MaterialTextureData;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.MenuProvider;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.entity.BlockEntityType;
@@ -35,10 +44,28 @@ import org.jetbrains.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
-public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInWorldGridNodeHost, ICraftingRequester, MenuProvider
+/**
+ * ColonyLinkRedirectorBlockEntity — v1.4.2
+ *
+ * Ajouts v1.4.2 :
+ *   - Implémente ICraftingProvider → expose les DomumPatterns du buffer au réseau AE2
+ *   - pushPattern() → met le craft Domum en queue, exécuté au tick suivant
+ *   - isBusy() → true si une craft est en cours (1 craft à la fois par Redirector)
+ *   - buffer.isItemValid() → filtre : accepte uniquement DomumPatternItem
+ *     (les Encoded Patterns AE2 sont rejetés)
+ *   - notifyPatternChange() → appelle ICraftingProvider.requestUpdate() quand
+ *     le buffer change, pour que AE2 rescanne les patterns disponibles
+ */
+public class ColonyLinkRedirectorBlockEntity extends BlockEntity
+        implements IInWorldGridNodeHost, ICraftingRequester, ICraftingProvider, MenuProvider
 {
+    // ── Constantes buffer ─────────────────────────────────────────────────────
+
     public static int BUFFER_ROWS() { return ColonyLinkConfig.REDIRECTOR_BUFFER_ROWS.get(); }
     public static int BUFFER_COLS() { return ColonyLinkConfig.REDIRECTOR_BUFFER_COLS.get(); }
     public static int BUFFER_SIZE() { return BUFFER_ROWS() * BUFFER_COLS(); }
@@ -46,6 +73,8 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
     public static final int BUFFER_ROWS = 3;
     public static final int BUFFER_COLS = 9;
     public static final int BUFFER_SIZE = BUFFER_ROWS * BUFFER_COLS;
+
+    // ── État ──────────────────────────────────────────────────────────────────
 
     private BlockPos targetInventoryPos = null;
     private BlockPos linkedBuilderPos   = null;
@@ -56,10 +85,31 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
     private boolean warehousePriority = false;
     private boolean warehousePriorityClientCache = false;
 
+    /** true si un craft Domum est en cours d'exécution ce tick. */
+    private boolean craftBusy = false;
+
+    /** File d'attente des crafts Domum à exécuter (un par tick). */
+    private final Queue<PendingDomumCraft> craftQueue = new ConcurrentLinkedQueue<>();
+
+    // ── Buffer — accepte UNIQUEMENT les DomumPatternItem ─────────────────────
+
     public final ItemStackHandler buffer = new ItemStackHandler(BUFFER_SIZE())
     {
         @Override
-        protected void onContentsChanged(int slot) { setChanged(); }
+        public boolean isItemValid(int slot, ItemStack stack)
+        {
+            // Seuls les DomumPatternItem sont acceptés dans ce buffer.
+            // Les Encoded Patterns AE2 standard sont rejetés.
+            return stack.isEmpty() || stack.getItem() instanceof DomumPatternItem;
+        }
+
+        @Override
+        protected void onContentsChanged(int slot)
+        {
+            setChanged();
+            // Notifie AE2 que la liste de patterns disponibles a changé
+            notifyPatternChange();
+        }
     };
 
     public final ItemStackHandler warehouseCardSlot = new ItemStackHandler(1)
@@ -79,30 +129,43 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
         }
     };
 
+    // ── États Redirector ──────────────────────────────────────────────────────
+
     public enum RedirectorState { NOT_LINKED, LINKED, STANDBY, NO_CONTROLLER }
 
     private RedirectorState state = RedirectorState.NO_CONTROLLER;
 
-    private final IManagedGridNode gridNode = GridHelper.createManagedNode(this, new IGridNodeListener<ColonyLinkRedirectorBlockEntity>()
-            {
-                @Override
-                public void onSaveChanges(ColonyLinkRedirectorBlockEntity owner, IGridNode node)
-                { owner.setChanged(); }
+    // ── Grid node ─────────────────────────────────────────────────────────────
 
-                @Override
-                public void onStateChanged(ColonyLinkRedirectorBlockEntity owner, IGridNode node, IGridNodeListener.State state)
-                { owner.onGridStateChanged(); }
-            })
+    private final IManagedGridNode gridNode = GridHelper.createManagedNode(this,
+                    new IGridNodeListener<ColonyLinkRedirectorBlockEntity>()
+                    {
+                        @Override
+                        public void onSaveChanges(ColonyLinkRedirectorBlockEntity owner, IGridNode node)
+                        { owner.setChanged(); }
+
+                        @Override
+                        public void onStateChanged(ColonyLinkRedirectorBlockEntity owner, IGridNode node,
+                                                   IGridNodeListener.State state)
+                        { owner.onGridStateChanged(); }
+                    })
             .setInWorldNode(true)
             .setFlags(GridFlags.REQUIRE_CHANNEL)
             .setVisualRepresentation(ColonyLinkRegistry.REDIRECTOR_BLOCK_ITEM.get())
             .setIdlePowerUsage(1.0)
-            .addService(ICraftingRequester.class, this);
+            // ICraftingRequester : enregistre les crafts demandés au réseau
+            .addService(ICraftingRequester.class, this)
+            // ICraftingProvider : expose les DomumPatterns au réseau AE2
+            .addService(ICraftingProvider.class, this);
+
+    // ── Constructeur ──────────────────────────────────────────────────────────
 
     public ColonyLinkRedirectorBlockEntity(BlockPos pos, BlockState state)
     {
         super(ColonyLinkRegistry.REDIRECTOR_BLOCK_ENTITY.get(), pos, state);
     }
+
+    // ── MenuProvider ──────────────────────────────────────────────────────────
 
     @Override
     public Component getDisplayName() { return Component.literal("Colony Link Redirector"); }
@@ -111,47 +174,90 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
     public @Nullable AbstractContainerMenu createMenu(int containerId, Inventory playerInventory, Player player)
     { return new ColonyLinkRedirectorMenu(containerId, playerInventory, this); }
 
-    public boolean hasWarehouseCard()
-    { return !warehouseCardSlot.getStackInSlot(0).isEmpty(); }
+    // ── ICraftingProvider — exposition des patterns au réseau AE2 ─────────────
 
-    public boolean isWarehousePriority()
-    {
-        if (level != null && !level.isClientSide()) return warehousePriority;
-        return warehousePriorityClientCache;
-    }
-
-    public void toggleWarehousePriority()
-    {
-        warehousePriority = !warehousePriority;
-        markDirtyAndUpdate();
-    }
-
-    private void onGridStateChanged()
-    {
-        if (level == null) return;
-        level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
-        setChanged();
-    }
-
+    /**
+     * Retourne la liste de tous les DomumPatternDetails disponibles dans le buffer.
+     * AE2 appelle cette méthode pour construire le plan de craft.
+     * Appelée depuis le server thread uniquement.
+     */
     @Override
-    public void onLoad()
+    public List<IPatternDetails> getAvailablePatterns()
     {
-        super.onLoad();
-        if (level != null && !level.isClientSide())
+        if (level == null || level.isClientSide()) return List.of();
+
+        List<IPatternDetails> patterns = new ArrayList<>();
+        HolderLookup.Provider provider = level.registryAccess();
+
+        for (int slot = 0; slot < buffer.getSlots(); slot++)
         {
-            gridNode.create(level, worldPosition);
-            level.scheduleTick(worldPosition, getBlockState().getBlock(), 1);
+            ItemStack stack = buffer.getStackInSlot(slot);
+            if (stack.isEmpty()) continue;
+            if (!(stack.getItem() instanceof DomumPatternItem)) continue;
+
+            DomumPatternDetails details = new DomumPatternDetails(stack, provider);
+            if (details.isValid())
+                patterns.add(details);
         }
+
+        return patterns;
     }
 
+    /**
+     * AE2 envoie un craft à exécuter.
+     * inputs[0] = les matériaux extraits du ME (déjà prélevés par AE2).
+     * On met en queue pour exécution au prochain tick.
+     *
+     * @return true si le craft a été accepté, false si busy ou invalide
+     */
     @Override
-    public void onChunkUnloaded() { super.onChunkUnloaded(); gridNode.destroy(); }
+    public boolean pushPattern(IPatternDetails patternDetails, KeyCounter[] inputs)
+    {
+        if (craftBusy) return false;
+        if (!(patternDetails instanceof DomumPatternDetails domumPattern)) return false;
+        if (!domumPattern.isValid()) return false;
+        if (level == null || level.isClientSide()) return false;
 
-    @Override
-    public void setRemoved() { super.setRemoved(); gridNode.destroy(); }
+        // Construit la liste des matériaux extraits depuis les KeyCounters
+        // KeyCounter implémente Iterable<Object2LongMap.Entry<AEKey>> — pas de forEach(BiConsumer)
+        List<ItemStack> extractedMaterials = new ArrayList<>();
+        for (KeyCounter counter : inputs)
+        {
+            for (var entry : counter)
+            {
+                AEKey key = entry.getKey();
+                long amount = entry.getLongValue();
+                if (key instanceof AEItemKey itemKey)
+                    extractedMaterials.add(itemKey.toStack((int) Math.min(amount, Integer.MAX_VALUE)));
+            }
+        }
 
+        // Lit le count depuis les outputs du pattern (ex: shingles=4)
+        long outputCount = 1L;
+        if (!domumPattern.getOutputs().isEmpty())
+            outputCount = domumPattern.getOutputs().get(0).amount();
+
+        craftQueue.add(new PendingDomumCraft(
+                domumPattern.getTargetStack(),
+                extractedMaterials,
+                (int) Math.max(1L, outputCount)
+        ));
+
+        craftBusy = true;
+        return true;
+    }
+
+    /**
+     * AE2 demande si ce medium est disponible pour recevoir un craft.
+     * On refuse si un craft est déjà en queue.
+     */
     @Override
-    public @Nullable IGridNode getGridNode(Direction dir) { return gridNode.getNode(); }
+    public boolean isBusy()
+    {
+        return craftBusy || !craftQueue.isEmpty();
+    }
+
+    // ── ICraftingRequester ────────────────────────────────────────────────────
 
     @Override
     public ImmutableSet<ICraftingLink> getRequestedJobs()
@@ -166,7 +272,6 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
         ItemStack toInsert = itemKey.toStack((int) Math.min(amount, Integer.MAX_VALUE));
         long inserted = 0;
 
-        // Utilise les racks MineColonies pour l'insertion
         List<IItemHandler> handlers = getBuildingHandlers();
         for (IItemHandler handler : handlers)
         {
@@ -196,15 +301,158 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
 
     public void addCraftingLink(ICraftingLink link) { craftingLinks.add(link); }
 
+    // ── Ticker — exécution des crafts en queue ────────────────────────────────
+
     public static <T extends BlockEntity> BlockEntityTicker<T> createTicker(Level level, BlockEntityType<T> serverType)
     {
         if (level.isClientSide()) return null;
         return (lvl, pos, blockState, be) ->
         {
             if (be instanceof ColonyLinkRedirectorBlockEntity redirector)
+            {
                 redirector.onFirstTick(lvl, pos);
+                redirector.processCraftQueue(lvl);
+            }
         };
     }
+
+    /**
+     * Exécute un craft Domum en attente depuis la queue.
+     * Appelé chaque tick depuis le server thread.
+     * Un seul craft par tick pour éviter les surcharges.
+     */
+    private void processCraftQueue(Level level)
+    {
+        if (craftQueue.isEmpty())
+        {
+            craftBusy = false;
+            return;
+        }
+
+        PendingDomumCraft pending = craftQueue.poll();
+        if (pending == null) { craftBusy = false; return; }
+
+        ItemStack targetStack = pending.targetStack();
+        List<ItemStack> materials = pending.materials();
+
+        if (!DomumCraftHandler.isDomumItem(targetStack))
+        {
+            ColonyLink.LOGGER.warn("[DomumPattern] pushPattern: target is not a Domum item, skipping.");
+            craftBusy = false;
+            return;
+        }
+
+        // Les matériaux ont déjà été extraits du ME par AE2 avant pushPattern().
+        // On produit directement le bloc Domum en mémoire.
+        ItemStack result = buildDomumResult(targetStack, materials, level.registryAccess());
+
+        if (result.isEmpty())
+        {
+            ColonyLink.LOGGER.error("[DomumPattern] Failed to build Domum result for: {}",
+                    targetStack.getDisplayName().getString());
+            craftBusy = false;
+            return;
+        }
+
+        // Applique le count de la recette (ex: shingles=4, panels=4, framed panes=6)
+        result.setCount(pending.outputCount());
+
+        // Les crafts Domum vont toujours dans le ME.
+        injectIntoME(result, level);
+
+        craftBusy = false;
+
+        // S'il y a d'autres crafts en queue, on reste "busy" pour le prochain tick
+        if (!craftQueue.isEmpty())
+            craftBusy = true;
+    }
+
+    /**
+     * Construit l'ItemStack Domum résultat à partir des matériaux fournis.
+     * Reproduit la logique de DomumCraftHandler.handleDomumCraft() mais sans
+     * extraction ME (déjà faite par AE2).
+     */
+    private ItemStack buildDomumResult(ItemStack targetStack, List<ItemStack> materials,
+                                       HolderLookup.Provider provider)
+    {
+        if (!(targetStack.getItem() instanceof BlockItem bi)) return ItemStack.EMPTY;
+        Block block = bi.getBlock();
+        if (!(block instanceof IMateriallyTexturedBlock texturedBlock)) return ItemStack.EMPTY;
+
+        MaterialTextureData textureData = MaterialTextureData.readFromItemStack(targetStack);
+        Map<ResourceLocation, Block> components = textureData.getTexturedComponents();
+
+        // Reconstruit le MaterialTextureData depuis les components connus
+        MaterialTextureData.Builder builder = MaterialTextureData.builder();
+        for (IMateriallyTexturedBlockComponent component : texturedBlock.getComponents())
+        {
+            Block materialBlock = components.get(component.getId());
+            if (materialBlock != null)
+                builder.setComponent(component.getId(), materialBlock);
+            else if (!component.isOptional())
+            {
+                ColonyLink.LOGGER.warn("[DomumPattern] Required component missing: {}", component.getId());
+                return ItemStack.EMPTY;
+            }
+        }
+
+        // Copie l'ItemStack complet (préserve BlockItemStateProperties + tous DataComponents)
+        ItemStack result = targetStack.copy();
+        builder.writeToItemStack(result);
+
+        return result;
+    }
+
+    /**
+     * Réinjecte un ItemStack dans le réseau ME du Redirector.
+     */
+    private void injectIntoME(ItemStack stack, Level level)
+    {
+        IGridNode node = gridNode.getNode();
+        if (node == null || !node.isActive()) return;
+
+        AEItemKey key = AEItemKey.of(stack);
+        if (key == null) return;
+
+        appeng.api.networking.security.IActionSource src =
+                appeng.api.networking.security.IActionSource.ofMachine(this);
+
+        node.getGrid().getStorageService()
+                .getInventory()
+                .insert(key, stack.getCount(), Actionable.MODULATE, src);
+    }
+
+    /**
+     * Notifie AE2 que la liste de patterns a changé (buffer modifié).
+     * AE2 va rescanner getAvailablePatterns() au prochain cycle.
+     */
+    public void notifyPatternChange()
+    {
+        if (level != null && !level.isClientSide())
+            ICraftingProvider.requestUpdate(gridNode);
+    }
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    @Override
+    public void onLoad()
+    {
+        super.onLoad();
+        if (level != null && !level.isClientSide())
+        {
+            gridNode.create(level, worldPosition);
+            level.scheduleTick(worldPosition, getBlockState().getBlock(), 1);
+        }
+    }
+
+    @Override
+    public void onChunkUnloaded() { super.onChunkUnloaded(); gridNode.destroy(); }
+
+    @Override
+    public void setRemoved() { super.setRemoved(); gridNode.destroy(); }
+
+    @Override
+    public @Nullable IGridNode getGridNode(Direction dir) { return gridNode.getNode(); }
 
     private boolean firstTickDone = false;
 
@@ -214,6 +462,32 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
         firstTickDone = true;
         for (Direction dir : Direction.values())
             level.updateNeighborsAt(pos.relative(dir), level.getBlockState(pos.relative(dir)).getBlock());
+        // Annonce initiale des patterns au réseau
+        notifyPatternChange();
+    }
+
+    private void onGridStateChanged()
+    {
+        if (level == null) return;
+        level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+        setChanged();
+    }
+
+    // ── Warehouse helpers ─────────────────────────────────────────────────────
+
+    public boolean hasWarehouseCard()
+    { return !warehouseCardSlot.getStackInSlot(0).isEmpty(); }
+
+    public boolean isWarehousePriority()
+    {
+        if (level != null && !level.isClientSide()) return warehousePriority;
+        return warehousePriorityClientCache;
+    }
+
+    public void toggleWarehousePriority()
+    {
+        warehousePriority = !warehousePriority;
+        markDirtyAndUpdate();
     }
 
     public boolean isAe2Active()
@@ -225,23 +499,8 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
 
     public boolean isAdjacentToController() { return isAe2Active(); }
 
-    // ── Fix #3 : accès aux inventaires via MineColonies IBuilding ─────────────
-    //
-    // DIAGNOSTIC :
-    // Le Builder's Hut MineColonies n'expose PAS d'IItemHandler via la capability
-    // NeoForge standard sur sa position de bloc. level.getCapability(...hut...) = null.
-    // Les vrais inventaires sont dans les RACKS enregistrés via IBuilding.getContainers().
-    // Ces racks exposent bien un IItemHandler via capability sur leur propre position.
-    //
-    // SOLUTION :
-    // getBuildingHandlers() résout les handlers réels via IBuilding.getContainers().
-    // isTargetInventoryFull() et insertItem() utilisent ces handlers.
-    // SendToBuilderHandler.java doit aussi être patché pour utiliser la même logique.
+    // ── MineColonies building handlers ────────────────────────────────────────
 
-    /**
-     * Retourne la liste de tous les IItemHandler des racks du bâtiment MineColonies
-     * lié à targetInventoryPos. Retourne une liste vide si rien n'est trouvé.
-     */
     public List<IItemHandler> getBuildingHandlers()
     {
         List<IItemHandler> handlers = new ArrayList<>();
@@ -256,7 +515,6 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
             for (var b : colony.getServerBuildingManager().getBuildings().values())
             {
                 if (!b.getPosition().equals(targetInventoryPos)) continue;
-
                 for (BlockPos containerPos : b.getContainers())
                 {
                     IItemHandler h = level.getCapability(
@@ -271,24 +529,13 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
         return handlers;
     }
 
-    /**
-     * Retourne true si tous les racks du bâtiment sont pleins.
-     * Retourne false si au moins un slot est libre, ou si aucun rack n'est trouvé
-     * (hut vide = on peut tenter d'envoyer).
-     */
     public boolean isTargetInventoryFull()
     {
         if (targetInventoryPos == null || level == null) return false;
-
         List<IItemHandler> handlers = getBuildingHandlers();
-
-        // Aucun rack enregistré → hut vide ou non encore chargé → pas plein
         if (handlers.isEmpty()) return false;
-
-        // Vérifie chaque rack
         for (IItemHandler handler : handlers)
             if (hasSpace(handler)) return false;
-
         return true;
     }
 
@@ -303,10 +550,6 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
         return false;
     }
 
-    /**
-     * Insère un item dans les racks du bâtiment MineColonies.
-     * Fix #3 : utilise getBuildingHandlers() au lieu de la capability directe.
-     */
     public boolean insertItem(ItemStack stack)
     {
         if (targetInventoryPos == null || level == null) return false;
@@ -314,7 +557,6 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
         List<IItemHandler> handlers = getBuildingHandlers();
         if (handlers.isEmpty())
         {
-            // Fallback : capability directe (compatibilité non-MineColonies)
             IItemHandler direct = level.getCapability(
                     Capabilities.ItemHandler.BLOCK, targetInventoryPos, null);
             if (direct == null) return false;
@@ -329,13 +571,11 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
             if (remainder.isEmpty()) return true;
         }
 
-        if (!remainder.isEmpty())
-        {
-            setState(RedirectorState.STANDBY);
-            return false;
-        }
+        if (!remainder.isEmpty()) { setState(RedirectorState.STANDBY); return false; }
         return true;
     }
+
+    // ── State ─────────────────────────────────────────────────────────────────
 
     public void updateState()
     {
@@ -348,7 +588,6 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
         else
             setState(RedirectorState.LINKED);
 
-        // Résolution lazy du nom du builder
         if ((linkedBuilderName == null || linkedBuilderName.equals("N/A"))
                 && linkedBuilderPos != null && level != null && !level.isClientSide())
         {
@@ -375,6 +614,8 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
         }
     }
 
+    // ── Getters / Setters ─────────────────────────────────────────────────────
+
     public BlockPos getTargetInventoryPos() { return targetInventoryPos; }
     public void setTargetInventoryPos(BlockPos pos) { this.targetInventoryPos = pos; markDirtyAndUpdate(); }
 
@@ -399,7 +640,7 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
             level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
     }
 
-    // ── Synchronisation client ────────────────────────────────────────────────
+    // ── Sync client ───────────────────────────────────────────────────────────
 
     @Override
     public CompoundTag getUpdateTag(HolderLookup.Provider provider)
@@ -430,24 +671,21 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
     public void handleUpdateTag(CompoundTag tag, HolderLookup.Provider provider)
     {
         super.handleUpdateTag(tag, provider);
-        if (tag.contains("ae2_active"))
-            ae2ActiveClientCache = tag.getBoolean("ae2_active");
+        if (tag.contains("ae2_active"))    ae2ActiveClientCache = tag.getBoolean("ae2_active");
         if (tag.contains("state"))
         {
             try { state = RedirectorState.valueOf(tag.getString("state")); }
             catch (Exception ignored) {}
         }
-        if (tag.contains("warehouse_priority"))
-            warehousePriorityClientCache = tag.getBoolean("warehouse_priority");
+        if (tag.contains("warehouse_priority")) warehousePriorityClientCache = tag.getBoolean("warehouse_priority");
         if (tag.contains("target_x"))
             targetInventoryPos = new BlockPos(tag.getInt("target_x"), tag.getInt("target_y"), tag.getInt("target_z"));
         if (tag.contains("builder_x"))
             linkedBuilderPos = new BlockPos(tag.getInt("builder_x"), tag.getInt("builder_y"), tag.getInt("builder_z"));
-        if (tag.contains("linked_builder_name"))
-            linkedBuilderName = tag.getString("linked_builder_name");
+        if (tag.contains("linked_builder_name")) linkedBuilderName = tag.getString("linked_builder_name");
     }
 
-    // ── NBT persistance ───────────────────────────────────────────────────────
+    // ── NBT ───────────────────────────────────────────────────────────────────
 
     @Override
     protected void saveAdditional(CompoundTag tag, HolderLookup.Provider provider)
@@ -478,22 +716,33 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity implements IInW
     {
         super.loadAdditional(tag, provider);
         gridNode.loadFromNBT(tag);
-        if (tag.contains("buffer"))
-            buffer.deserializeNBT(provider, tag.getCompound("buffer"));
-        if (tag.contains("warehouse_card_slot"))
-            warehouseCardSlot.deserializeNBT(provider, tag.getCompound("warehouse_card_slot"));
-        if (tag.contains("warehouse_priority"))
-            warehousePriority = tag.getBoolean("warehouse_priority");
+        if (tag.contains("buffer"))          buffer.deserializeNBT(provider, tag.getCompound("buffer"));
+        if (tag.contains("warehouse_card_slot")) warehouseCardSlot.deserializeNBT(provider, tag.getCompound("warehouse_card_slot"));
+        if (tag.contains("warehouse_priority")) warehousePriority = tag.getBoolean("warehouse_priority");
         if (tag.contains("target_x"))
             targetInventoryPos = new BlockPos(tag.getInt("target_x"), tag.getInt("target_y"), tag.getInt("target_z"));
         if (tag.contains("builder_x"))
             linkedBuilderPos = new BlockPos(tag.getInt("builder_x"), tag.getInt("builder_y"), tag.getInt("builder_z"));
-        if (tag.contains("linked_builder_name"))
-            linkedBuilderName = tag.getString("linked_builder_name");
+        if (tag.contains("linked_builder_name")) linkedBuilderName = tag.getString("linked_builder_name");
         if (tag.contains("state"))
         {
             try { state = RedirectorState.valueOf(tag.getString("state")); }
             catch (Exception e) { state = RedirectorState.NO_CONTROLLER; }
         }
     }
+
+    // ── PendingDomumCraft record ──────────────────────────────────────────────
+
+    /**
+     * Représente un craft Domum en attente d'exécution.
+     * Créé dans pushPattern(), consommé dans processCraftQueue().
+     *
+     * @param targetStack  L'ItemStack Domum cible à produire
+     * @param materials    Les matériaux déjà extraits du ME par AE2
+     */
+    private record PendingDomumCraft(
+            ItemStack targetStack,
+            List<ItemStack> materials,
+            int outputCount
+    ) {}
 }

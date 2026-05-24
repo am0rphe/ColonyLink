@@ -127,6 +127,52 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         { getHost().markForSave(); }
     };
 
+    /** Slot NBT-persisté pour l'item Domum cible (onglet Cutter). Limité à 1 item. */
+    final ItemStackHandler domumTargetSlot = new ItemStackHandler(1)
+    {
+        @Override
+        public int getSlotLimit(int slot) { return 1; }
+
+        @Override
+        public boolean isItemValid(int slot, ItemStack stack)
+        { return stack.isEmpty() || DomumCraftHandler.isDomumItem(stack); }
+
+        @Override
+        protected void onContentsChanged(int slot)
+        { getHost().markForSave(); }
+    };
+
+    /** Slot NBT-persisté pour le Blank Pattern AE2 (onglet Cutter). */
+    final ItemStackHandler blankPatternSlot = new ItemStackHandler(1)
+    {
+        @Override
+        public boolean isItemValid(int slot, ItemStack stack)
+        {
+            if (stack.isEmpty()) return true;
+            net.minecraft.resources.ResourceLocation id =
+                    net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(stack.getItem());
+            return id != null && id.getPath().equals("blank_pattern");
+        }
+
+        @Override
+        protected void onContentsChanged(int slot)
+        { getHost().markForSave(); }
+    };
+
+    /** Slot output preview (non-persisté, recalculé à l'ouverture). */
+    final ItemStackHandler domumOutputSlot = new ItemStackHandler(1)
+    {
+        @Override public boolean isItemValid(int slot, ItemStack stack) { return false; }
+    };
+
+    /** Grille craft 3×3 persistée (9 slots). */
+    final ItemStackHandler craftingGridSlot = new ItemStackHandler(9)
+    {
+        @Override
+        protected void onContentsChanged(int slot)
+        { getHost().markForSave(); }
+    };
+
     /** Joueurs ayant le GUI ouvert — reçoivent les syncs périodiques. */
     private final Set<UUID> viewers = ConcurrentHashMap.newKeySet();
 
@@ -149,8 +195,16 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
     {
         super.addAdditionalDrops(drops, wrenched);
         ItemStack card = warehouseCardSlot.getStackInSlot(0);
-        if (!card.isEmpty())
-            drops.add(card.copy());
+        if (!card.isEmpty()) drops.add(card.copy());
+        ItemStack target = domumTargetSlot.getStackInSlot(0);
+        if (!target.isEmpty()) drops.add(target.copy());
+        ItemStack blank = blankPatternSlot.getStackInSlot(0);
+        if (!blank.isEmpty()) drops.add(blank.copy());
+        for (int i = 0; i < craftingGridSlot.getSlots(); i++)
+        {
+            ItemStack cg = craftingGridSlot.getStackInSlot(i);
+            if (!cg.isEmpty()) drops.add(cg.copy());
+        }
     }
 
     @Override
@@ -166,6 +220,10 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
     {
         super.writeToNBT(data, registries);
         data.put("WarehouseCard", warehouseCardSlot.serializeNBT(registries));
+        data.put("DomumTarget", domumTargetSlot.serializeNBT(registries));
+        data.put("BlankPattern", blankPatternSlot.serializeNBT(registries));
+        // domumOutputSlot intentionnellement NON persisté — slot preview temporaire
+        data.put("CraftingGrid", craftingGridSlot.serializeNBT(registries));
     }
 
     @Override
@@ -174,6 +232,13 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         super.readFromNBT(data, registries);
         if (data.contains("WarehouseCard"))
             warehouseCardSlot.deserializeNBT(registries, data.getCompound("WarehouseCard"));
+        if (data.contains("DomumTarget"))
+            domumTargetSlot.deserializeNBT(registries, data.getCompound("DomumTarget"));
+        if (data.contains("BlankPattern"))
+            blankPatternSlot.deserializeNBT(registries, data.getCompound("BlankPattern"));
+        // domumOutputSlot toujours vide à l'ouverture — pas de désérialisation
+        if (data.contains("CraftingGrid"))
+            craftingGridSlot.deserializeNBT(registries, data.getCompound("CraftingGrid"));
     }
 
     // ── Activation (clic droit) ───────────────────────────────────────────────

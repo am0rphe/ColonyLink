@@ -30,9 +30,7 @@ public record RemoveBuilderPacket(int tabIndex) implements CustomPacketPayload
         context.enqueueWork(() -> {
             if (!(context.player() instanceof ServerPlayer player)) return;
 
-            ItemStack wandStack = null;
-            for (ItemStack s : player.getInventory().items)
-                if (s.getItem() instanceof ColonyLinkWand) { wandStack = s; break; }
+            ItemStack wandStack = ColonyLinkServerTicker.findWandInInventory(player);
             if (wandStack == null) return;
 
             int index = packet.tabIndex();

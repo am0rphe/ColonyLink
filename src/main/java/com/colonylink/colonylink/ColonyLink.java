@@ -64,10 +64,11 @@ public class ColonyLink
                             .displayItems((parameters, output) -> {
                                 output.accept(COLONY_LINK_WAND.get());
                                 output.accept(ColonyLinkRegistry.REDIRECTOR_BLOCK_ITEM.get());
-                                // Terminal Part item (placed on cable bus)
                                 output.accept(ColonyLinkRegistry.WAREHOUSE_LINK_TERMINAL_ITEM.get());
                                 output.accept(WAREHOUSE_LINK_CARD.get());
                                 output.accept(COLONY_LINK_PACKAGE.get());
+                                // v1.4.2 — DomumPatternItem dans l'onglet créatif
+                                output.accept(ColonyLinkRegistry.DOMUM_PATTERN_ITEM.get());
                             }).build());
 
     // ── AE2 linkable handler ──────────────────────────────────────────────────
@@ -87,12 +88,12 @@ public class ColonyLink
             modEventBus.addListener(ColonyLinkClient::onRegisterAdditionalModels);
         modEventBus.addListener(ColonyLinkRegistry::registerCapabilities);
 
-        // ── v1.3.0 — Client-side: ItemColor handlers for terminal item ───
-        // Must be registered on the mod event bus (not Forge event bus) and
-        // only on the client side, since RegisterColorHandlersEvent.Item is
-        // a client-only mod-bus event.
+        if (net.neoforged.fml.loading.FMLEnvironment.dist.isClient())
+            modEventBus.addListener(ColonyLinkClient::onRegisterItemDecorations);
         if (net.neoforged.fml.loading.FMLEnvironment.dist.isClient())
             modEventBus.addListener(ColonyLinkClient::onRegisterItemColors);
+        if (net.neoforged.fml.loading.FMLEnvironment.dist.isClient())
+            modEventBus.addListener(ColonyLinkClient::onRegisterKeyMappings);
 
         ITEMS.register(modEventBus);
         CREATIVE_MODE_TABS.register(modEventBus);
@@ -104,46 +105,16 @@ public class ColonyLink
 
         ColonyLinkRecipes.RECIPE_SERIALIZERS.register(modEventBus);
 
-        // ── v1.3.7 — AE2 part-model registration ─────────────────────────
-        //
-        // CRITICAL TIMING: this MUST happen synchronously in the mod
-        // constructor, NOT in FMLCommonSetupEvent and NOT inside
-        // event.enqueueWork(...).
-        //
-        // AE2 calls PartModelsInternal.freeze() during its own
-        // FMLCommonSetupEvent handler. Any registerModels() call after
-        // that throws IllegalStateException:
-        //
-        //   "Cannot register models after the pre-initialization phase!"
-        //
-        // v1.3.6 placed this call inside event.enqueueWork(...) in our
-        // own commonSetup — which defers it to the sync work queue that
-        // runs AFTER all commonSetup listeners (including AE2's freeze).
-        // That's the wrong phase.
-        //
-        // The mod constructor runs during the mod-loader bootstrap, well
-        // before any FMLCommonSetupEvent. By this point, all our
-        // DeferredRegister entries are queued (we registered the buses
-        // above) and class loading for WarehouseLinkTerminalPart is fine
-        // — we only need the static @PartModels fields, not the
-        // instances. Server-safe: PartModels/PartModelsHelper are common
-        // API classes, no client-only types referenced.
-        //
-        // This is the canonical pattern used by AE2 addons (appflux,
-        // merequester, etc.).
-        //
-        // Note: ColonyLinkClient.onRegisterAdditionalModels stays in
-        // place — it's the NeoForge side of model registration (so the
-        // JSON files get baked). Both registrations are required:
-        //   - NeoForge ModelEvent.RegisterAdditional → bakes the JSONs
-        //   - AE2 PartModels.registerModels          → CableBus whitelist
         PartModels.registerModels(
                 PartModelsHelper.createModels(WarehouseLinkTerminalPart.class));
 
         NeoForge.EVENT_BUS.register(ColonyLinkServerTicker.class);
+        NeoForge.EVENT_BUS.register(ColonyLinkCommand.class);
 
         if (net.neoforged.fml.loading.FMLEnvironment.dist.isClient())
             NeoForge.EVENT_BUS.addListener(ColonyLinkHudRenderer::onRenderGuiPostStatic);
+        if (net.neoforged.fml.loading.FMLEnvironment.dist.isClient())
+            NeoForge.EVENT_BUS.addListener(ColonyLinkClient::onKeyInput);
         NeoForge.EVENT_BUS.addListener(ColonyLink::onRightClickBlock);
 
         modContainer.registerConfig(ModConfig.Type.COMMON, ColonyLinkConfig.SPEC,
@@ -166,13 +137,8 @@ public class ColonyLink
     private void commonSetup(FMLCommonSetupEvent event)
     {
         event.enqueueWork(() -> {
-            // Register wand as AE2 linkable (WAP pairing).
-            // GridLinkables stays in enqueueWork — it needs the Item to be
-            // fully constructed via DeferredRegister, which happens in the
-            // registry events between mod-ctor and commonSetup.
             GridLinkables.register(COLONY_LINK_WAND.get(), LINKABLE_HANDLER);
-
-            LOGGER.info("ColonyLink v1.3.7 loaded — Warehouse Link Terminal Part registered.");
+            LOGGER.info("ColonyLink v1.4.2 loaded — DomumCutterLink / ICraftingProvider registered.");
         });
     }
 
@@ -218,6 +184,13 @@ public class ColonyLink
                     case LINKED ->
                     {
                         player.sendSystemMessage(Component.literal("§a[Redirector] Operational!"));
+                        // v1.4.2 — Affiche le nombre de patterns Domum chargés
+                        int patternCount = 0;
+                        for (int slot = 0; slot < redirector.buffer.getSlots(); slot++)
+                            if (!redirector.buffer.getStackInSlot(slot).isEmpty()) patternCount++;
+                        if (patternCount > 0)
+                            player.sendSystemMessage(Component.literal(
+                                    "§b[Redirector] §f" + patternCount + " Domum pattern(s) loaded."));
                         if (redirector.getTargetInventoryPos() != null)
                             player.sendSystemMessage(Component.literal(
                                     "§7Target: " + redirector.getTargetInventoryPos().toShortString()));
@@ -244,10 +217,6 @@ public class ColonyLink
     {
         PayloadRegistrar registrar = event.registrar("1");
 
-        // ── Existing packets ───────────────────────────────────────────────
-
-        // S→C — handlers dans ClientPacketHandler (@OnlyIn CLIENT)
-        // Les lambdas évitent le chargement de Minecraft.class au classload côté serveur.
         registrar.playToClient(ColonyLinkPacket.TYPE, ColonyLinkPacket.STREAM_CODEC,
                 (p, c) -> ClientPacketHandler.handleColonyLink(p, c));
         registrar.playToClient(TabCountsPacket.TYPE, TabCountsPacket.STREAM_CODEC,
@@ -259,7 +228,6 @@ public class ColonyLink
         registrar.playToClient(PackageTokenSyncPacket.TYPE, PackageTokenSyncPacket.STREAM_CODEC,
                 (p, c) -> ClientPacketHandler.handlePackageTokenSync(p, c));
 
-        // C→S
         registrar.playToServer(GuiStatePacket.TYPE, GuiStatePacket.STREAM_CODEC,
                 GuiStatePacket::handle);
         registrar.playToServer(CraftRequestPacket.TYPE, CraftRequestPacket.STREAM_CODEC,
@@ -287,11 +255,9 @@ public class ColonyLink
         registrar.playToServer(PackageLoadPacket.TYPE, PackageLoadPacket.STREAM_CODEC,
                 PackageLoadPacket::handle);
 
-        // ── v1.3.0 — Warehouse Link Terminal ──────────────────────────────
+        registrar.playToServer(OpenWandGuiPacket.TYPE, OpenWandGuiPacket.STREAM_CODEC,
+                OpenWandGuiPacket::handle);
 
-        // S→C — lambdas pour éviter le chargement de WarehouseLinkTerminalScreen
-        // (extends Screen = @OnlyIn CLIENT) par RuntimeDistCleaner sur serveur dédié.
-        // Les lambdas ne référencent pas Screen dans leur bytecode → safe both sides.
         registrar.playToClient(WarehouseTerminalSyncPacket.TYPE,
                 WarehouseTerminalSyncPacket.STREAM_CODEC,
                 (p, c) -> TerminalClientPacketHandler.handleWarehouseSync(p, c));
@@ -299,12 +265,16 @@ public class ColonyLink
                 TerminalMeSyncPacket.STREAM_CODEC,
                 (p, c) -> TerminalClientPacketHandler.handleMeSync(p, c));
 
-        // C→S
         registrar.playToServer(TerminalGuiStatePacket.TYPE,
                 TerminalGuiStatePacket.STREAM_CODEC, TerminalGuiStatePacket::handle);
         registrar.playToServer(TerminalTransferPacket.TYPE,
                 TerminalTransferPacket.STREAM_CODEC, TerminalTransferPacket::handle);
         registrar.playToServer(TerminalCraftPacket.TYPE,
                 TerminalCraftPacket.STREAM_CODEC, TerminalCraftPacket::handle);
+
+        // ── v1.4.2 — Domum Pattern encoding ──────────────────────────────────
+        registrar.playToServer(DomumEncodePatternPacket.TYPE,
+                DomumEncodePatternPacket.STREAM_CODEC,
+                DomumEncodePatternPacket::handle);
     }
 }

@@ -6,9 +6,6 @@ import appeng.api.networking.crafting.ICraftingService;
 import appeng.api.networking.storage.IStorageService;
 import appeng.api.stacks.AEItemKey;
 import appeng.api.stacks.KeyCounter;
-import com.ldtteam.domumornamentum.block.IMateriallyTexturedBlock;
-import com.ldtteam.domumornamentum.block.IMateriallyTexturedBlockComponent;
-import com.ldtteam.domumornamentum.client.model.data.MaterialTextureData;
 import com.minecolonies.api.colony.IColony;
 import com.minecolonies.api.colony.ICitizenData;
 import com.minecolonies.api.colony.permissions.Action;
@@ -325,19 +322,25 @@ public class ColonyLinkServerTicker
 
                 ItemStack ms = st2.copy(); ms.setCount(Math.min(miss, 64));
 
+                // v1.4.2 — Domum items: flow AE2 standard via ICraftingProvider
+                // Le Redirector expose les DomumPatternDetails → cs.isCraftable() retourne true
+                // si un pattern correspondant est dans un Redirector connecté.
                 if (DomumCraftHandler.isDomumItem(st2))
                 {
-                    DomumCraftHandler.DomumStatus ds =
-                            DomumCraftHandler.computeStatus(st2, grid, miss, rPos, level);
-                    if (ds != null)
-                    {
-                        if (!showCrafting && ds.status() == ResourceStatus.CRAFTING) continue;
-                        if (!showNoPattern && ds.status() == ResourceStatus.NO_PATTERN) continue;
-                        entries.add(new ColonyLinkPacket.ResourceEntry(
-                                ms, ds.status(), miss, true, safeR,
-                                buildDomumTooltip(st2, ds, inv, cs, miss)));
-                        continue;
-                    }
+                    AEItemKey dk = AEItemKey.of(st2);
+                    long dInSt = inv.get(dk);
+                    ResourceStatus dStat;
+                    if (dInSt >= miss)            dStat = ResourceStatus.AVAILABLE;
+                    else if (cs.isRequesting(dk)) dStat = ResourceStatus.CRAFTING;
+                    else if (cs.isCraftable(dk))  dStat = ResourceStatus.CRAFTABLE;
+                    else                          dStat = ResourceStatus.NO_PATTERN;
+
+                    if (!showCrafting && dStat == ResourceStatus.CRAFTING) continue;
+                    if (!showNoPattern && dStat == ResourceStatus.NO_PATTERN) continue;
+                    entries.add(new ColonyLinkPacket.ResourceEntry(
+                            ms, dStat, miss, false, safeR,
+                            buildDomumTooltip(st2, dStat, miss)));
+                    continue;
                 }
 
                 AEItemKey k = AEItemKey.of(st2); long inSt = inv.get(k);
@@ -394,12 +397,16 @@ public class ColonyLinkServerTicker
 
                         if (DomumCraftHandler.isDomumItem(rs))
                         {
-                            DomumCraftHandler.DomumStatus ds2 =
-                                    DomumCraftHandler.computeStatus(rs, grid, cnt, rPos, level);
-                            if (ds2 != null)
-                                return new ColonyLinkPacket.BuilderRequest(
-                                        disp, cnt, ds2.status(), rPos,
-                                        buildDomumTooltip(rs, ds2, inv, cs, cnt));
+                            AEItemKey dk = AEItemKey.of(rs);
+                            long dInSt = inv.get(dk);
+                            ResourceStatus dStat;
+                            if (dInSt >= cnt)             dStat = ResourceStatus.AVAILABLE;
+                            else if (cs.isRequesting(dk)) dStat = ResourceStatus.CRAFTING;
+                            else if (cs.isCraftable(dk))  dStat = ResourceStatus.CRAFTABLE;
+                            else                          dStat = ResourceStatus.NO_PATTERN;
+                            return new ColonyLinkPacket.BuilderRequest(
+                                    disp, cnt, dStat, rPos,
+                                    buildDomumTooltip(rs, dStat, cnt));
                         }
 
                         if (toolUpgrade && BuilderToolHelper.isTool(rs))
@@ -463,12 +470,16 @@ public class ColonyLinkServerTicker
 
                 if (DomumCraftHandler.isDomumItem(st2))
                 {
-                    DomumCraftHandler.DomumStatus ds2 =
-                            DomumCraftHandler.computeStatus(st2, grid, miss, rPos, level);
-                    if (ds2 != null)
-                        return new ColonyLinkPacket.BuilderRequest(
-                                disp, miss, ds2.status(), rPos,
-                                buildDomumTooltip(st2, ds2, inv, cs, miss));
+                    AEItemKey dk = AEItemKey.of(st2);
+                    long dInSt = inv.get(dk);
+                    ResourceStatus dStat;
+                    if (dInSt >= miss)            dStat = ResourceStatus.AVAILABLE;
+                    else if (cs.isRequesting(dk)) dStat = ResourceStatus.CRAFTING;
+                    else if (cs.isCraftable(dk))  dStat = ResourceStatus.CRAFTABLE;
+                    else                          dStat = ResourceStatus.NO_PATTERN;
+                    return new ColonyLinkPacket.BuilderRequest(
+                            disp, miss, dStat, rPos,
+                            buildDomumTooltip(st2, dStat, miss));
                 }
 
                 if (toolUpgrade && BuilderToolHelper.isTool(st2))
@@ -612,27 +623,56 @@ public class ColonyLinkServerTicker
         return lines;
     }
 
-    private static List<String> buildDomumTooltip(ItemStack stack, DomumCraftHandler.DomumStatus ds,
-                                                  KeyCounter inv, ICraftingService cs, int missing)
+
+
+    /**
+     * Tooltip pour les lignes Domum dans le Clipboard.
+     * Affiche le statut + les matériaux bruts nécessaires.
+     */
+    private static List<String> buildDomumTooltip(ItemStack stack, ResourceStatus status, int missing)
     {
         List<String> lines = new ArrayList<>();
-        if (!(stack.getItem() instanceof BlockItem bi)) return lines;
-        Block block = bi.getBlock();
-        if (!(block instanceof IMateriallyTexturedBlock tb)) return lines;
-        MaterialTextureData td = MaterialTextureData.readFromItemStack(stack);
-        lines.add("§b[Domum Ornamentum] §7Components:");
-        for (IMateriallyTexturedBlockComponent comp : tb.getComponents())
+
+        // Statut
+        switch (status)
         {
-            Block mb = td.getTexturedComponents().get(comp.getId());
-            if (mb == null) { lines.add("§c  - " + comp.getId().getPath() + ": §4MISSING"); continue; }
-            ItemStack ms = new ItemStack(mb);
-            AEItemKey k = AEItemKey.of(ms); long inSt = inv.get(k);
-            String s;
-            if (inSt >= missing)         s = "§a✔ " + inSt + " in ME";
-            else if (cs.isRequesting(k)) s = "§6⟳ Crafting...";
-            else if (cs.isCraftable(k))  s = "§e⚒ Craftable (" + inSt + "/" + missing + ")";
-            else                         s = "§c✘ No pattern (" + inSt + "/" + missing + ")";
-            lines.add("§7  - " + ms.getDisplayName().getString() + ": " + s);
+            case NO_PATTERN -> lines.add("§c✘ No Domum Pattern found in any Redirector");
+            case CRAFTABLE  -> lines.add("§a⚒ Craftable via Redirector (AE2)");
+            case CRAFTING   -> lines.add("§6⟳ Crafting in progress...");
+            default         -> {}
+        }
+        lines.add("§8  Needed: §f" + missing + "x");
+
+        // Variant du bloc (ex: Full, Panel, Half, etc.)
+        net.minecraft.world.item.component.BlockItemStateProperties blockState =
+                stack.get(net.minecraft.core.component.DataComponents.BLOCK_STATE);
+        if (blockState != null && !blockState.properties().isEmpty())
+        {
+            for (var entry : blockState.properties().entrySet())
+                lines.add("§7  " + entry.getKey() + ": §f" + entry.getValue());
+        }
+
+        // Matériaux bruts depuis MaterialTextureData
+        if (stack.getItem() instanceof net.minecraft.world.item.BlockItem bi)
+        {
+            net.minecraft.world.level.block.Block block = bi.getBlock();
+            if (block instanceof com.ldtteam.domumornamentum.block.IMateriallyTexturedBlock tb)
+            {
+                com.ldtteam.domumornamentum.client.model.data.MaterialTextureData td =
+                        com.ldtteam.domumornamentum.client.model.data.MaterialTextureData
+                                .readFromItemStack(stack);
+                lines.add("§7Materials:");
+                for (var comp : tb.getComponents())
+                {
+                    net.minecraft.world.level.block.Block mat =
+                            td.getTexturedComponents().get(comp.getId());
+                    if (mat != null)
+                        lines.add("§7  • §f" + new net.minecraft.world.item.ItemStack(mat)
+                                .getDisplayName().getString() + " ×1");
+                    else if (!comp.isOptional())
+                        lines.add("§c  • MISSING: " + comp.getId().getPath());
+                }
+            }
         }
         return lines;
     }
@@ -704,10 +744,21 @@ public class ColonyLinkServerTicker
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    /**
+     * Finds the ColonyLink Wand in the player's inventory or, if Curios is
+     * installed, also in curio slots. Inventory takes priority (checked first).
+     * Returns null if not found anywhere.
+     */
     static ItemStack findWandInInventory(ServerPlayer player)
     {
+        // 1. Standard inventory (hotbar + main)
         for (ItemStack stack : player.getInventory().items)
             if (stack.getItem() instanceof ColonyLinkWand) return stack;
+
+        // 2. Curio slots (optional — no-op if Curios not installed)
+        ItemStack curio = ColonyLinkCuriosCompat.findWandInCurioSlots(player);
+        if (!curio.isEmpty()) return curio;
+
         return null;
     }
 

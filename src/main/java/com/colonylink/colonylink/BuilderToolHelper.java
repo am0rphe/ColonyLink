@@ -367,16 +367,39 @@ public class BuilderToolHelper
 
     // ── Détection d'outil ─────────────────────────────────────────────────────
 
+    // ── Tool type tags (c:tools/*) — NeoForge convention ────────────────────
+    // Used to detect modded tools for GUI display (not substitution).
+    // MineColonies only accepts TieredItem subclasses for actual tool requests.
+    private static final net.minecraft.tags.TagKey<Item> TAG_PICKAXES =
+            net.minecraft.tags.TagKey.create(net.minecraft.core.registries.Registries.ITEM,
+                    ResourceLocation.fromNamespaceAndPath("c", "tools/pickaxe"));
+    private static final net.minecraft.tags.TagKey<Item> TAG_AXES =
+            net.minecraft.tags.TagKey.create(net.minecraft.core.registries.Registries.ITEM,
+                    ResourceLocation.fromNamespaceAndPath("c", "tools/axe"));
+    private static final net.minecraft.tags.TagKey<Item> TAG_SHOVELS =
+            net.minecraft.tags.TagKey.create(net.minecraft.core.registries.Registries.ITEM,
+                    ResourceLocation.fromNamespaceAndPath("c", "tools/shovel"));
+    private static final net.minecraft.tags.TagKey<Item> TAG_HOES =
+            net.minecraft.tags.TagKey.create(net.minecraft.core.registries.Registries.ITEM,
+                    ResourceLocation.fromNamespaceAndPath("c", "tools/hoe"));
+    private static final net.minecraft.tags.TagKey<Item> TAG_SWORDS =
+            net.minecraft.tags.TagKey.create(net.minecraft.core.registries.Registries.ITEM,
+                    ResourceLocation.fromNamespaceAndPath("c", "tools/sword"));
+
     public static boolean isTool(ItemStack stack)
     {
         if (stack.isEmpty()) return false;
         Item item = stack.getItem();
-        return item instanceof PickaxeItem
-                || item instanceof AxeItem
-                || item instanceof ShovelItem
-                || item instanceof HoeItem
-                || item instanceof SwordItem
-                || item instanceof TieredItem;
+        // Vanilla instanceof check (fast path)
+        if (item instanceof PickaxeItem || item instanceof AxeItem
+                || item instanceof ShovelItem || item instanceof HoeItem
+                || item instanceof SwordItem || item instanceof TieredItem)
+            return true;
+        // Tag-based check for modded tools — GUI display only.
+        // Substitution stays restricted to TieredItem (what MineColonies accepts).
+        return stack.is(TAG_PICKAXES) || stack.is(TAG_AXES)
+                || stack.is(TAG_SHOVELS) || stack.is(TAG_HOES)
+                || stack.is(TAG_SWORDS);
     }
 
     // ── Détection et substitution d'armure ───────────────────────────────────
