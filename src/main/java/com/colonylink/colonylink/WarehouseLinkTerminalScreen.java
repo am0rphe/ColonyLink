@@ -3,6 +3,7 @@ package com.colonylink.colonylink;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.neoforge.network.PacketDistributor;
@@ -12,81 +13,69 @@ import java.util.*;
 import static com.colonylink.colonylink.WarehouseLinkTerminalMenu.*;
 
 /**
- * Warehouse Link Terminal — Screen v1.3.8
+ * WarehouseLinkTerminalScreen — v2.0.0
  *
- * v1.3.8 :
- *  - Compteurs items en police ~75% (taille AE2-like) pour ne plus jamais déborder
- *  - Format AE2 standard pour les grands nombres : 999, 1.0K, 9.9K, 10K, 999K, 1.0M, 1.0B, 999B
+ * Refonte complète basée sur le fond PNG warehouse_terminalcolony.png (420×432 px).
  *
- * Pick system (fake cursor, 100% client-side) :
- *  - Clic gauche panel WH/ME  : PICKUP_FROM_WH/ME → serveur extrait + setCarried
- *  - Clic droit panel WH/ME   : PICKUP avec moitié du stack
- *  - Carried non-vide + clic panel : PUT_INTO_WH/ME → insère le carried
- *  - Dépôt dans inventaire    : WH_TO_PLAYER ou ME_TO_PLAYER(item, count)
- *  - Dépôt dans grille craft  : WH_TO_PLAYER ou ME_TO_PLAYER → item va en inventaire,
- *                                le joueur place ensuite manuellement dans la grille
- *  - ESC ou clic ailleurs     : annulation, item reste à la source
+ * Textures utilisées :
+ *   colonylink:textures/gui/warehouse_terminalcolony.png  — fond principal
+ *   colonylink:textures/button/button_1.png               — bouton normal  (12×12)
+ *   colonylink:textures/button/button_pushed.png          — bouton enfoncé (12×12)
+ *   colonylink:textures/button/checkbox_wh.png            — slider WH actif (22×12)
+ *   colonylink:textures/button/checkbox_ae.png            — slider AE actif (22×12)
+ *   colonylink:textures/button/slider.png                 — thumb scrollbar (13×16)
  *
- * Le serveur extrait l'item UNIQUEMENT au moment du dépôt (packet deposit).
- * Si le joueur annule (ESC), rien n'est prélevé.
+ * Layout :
+ *   Panel WH : x=8..175,  y=31..227  (9 col × 11 lignes, pitch 18px)
+ *   Panel AE : x=233..400, y=31..227
+ *   Slot card : x=202..217, y=2..17
+ *   Grille 3×3 : x=147..200, y=273..326
+ *   Output : x=253..274, y=289..310
+ *   Inventaire : x=130..289, y=348..401  (3×9)
+ *   Hotbar : x=130..289, y=406..423
  *
- * Pick depuis inventaire → WH/ME : shift+clic sur slot inventaire → INV_TO_WH/ME
+ * Scrollbar verticale WH : x=176..185, thumb initial y=33, fin y=227
+ * Scrollbar verticale AE : x=401..410, thumb initial y=33, fin y=227
+ * Slider horizontal WH/ME : x=189..229, y=241..254 (checkbox 22×12)
+ * Boutons push ×2 : (204,32) et (204,47), taille 11×11 (crop sur 12×12)
+ * Boutons croix :
+ *   7 clear→inv  : (136,273) 7×7
+ *   8 result→WH  : (252,279) 7×7
+ *   9 result→ME  : (268,279) 7×7
+ *  10 result→inv : (260,313) 7×7
  */
+@net.neoforged.api.distmarker.OnlyIn(net.neoforged.api.distmarker.Dist.CLIENT)
 public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<WarehouseLinkTerminalMenu>
 {
-    // ── Palette ───────────────────────────────────────────────────────────────
-    private static final int C_BORDER_HI     = 0xFF8B89B0;
-    private static final int C_BORDER_LO     = 0xFF1E1C2E;
-    private static final int C_BORDER_MID    = 0xFF3F3E56;
-    private static final int C_PANEL_BG      = 0xFF6E6E8A;
-    private static final int C_ITEM_AREA_BG  = 0xFF18172A;
-    private static final int C_HEADER_BG     = 0xFF32303E;
-    private static final int C_CTR_BG        = 0xFF28263A;
-    private static final int C_SLOT_BG       = 0xFF8B8FA8;
-    private static final int C_SLOT_DARK     = 0xFF373550;
-    private static final int C_SLOT_LIGHT    = 0xFFFFFFFF;
-    private static final int C_SCROLL_BG     = 0xFF18172A;
-    private static final int C_SCROLL_TH     = 0xFF9A9FB4;
-    private static final int C_BTN_NORMAL    = 0xFF3C3A50;
-    private static final int C_BTN_HOVER     = 0xFF54527A;
-    private static final int C_BTN_HI        = 0xFF8888AA;
-    private static final int C_BTN_LO        = 0xFF2A2840;
-    private static final int C_ARROW         = 0xFFF3F3F3;
-    private static final int C_TEXT_MUTED    = 0xFF9A9FB4;
-    private static final int C_TEXT_WH       = 0xFF9A9FB4;
-    private static final int C_TEXT_ME       = 0xFF6699FF;
-    private static final int C_CRAFTABLE_DOT = 0xFF00FF88;
-    private static final int C_CRAFTONLY_OV  = 0x4400AAFF;
-    private static final int C_OFFLINE_OV    = 0xBB220000;
-    private static final int C_NOCARD_OV     = 0xBB111122;
-    private static final int C_HOVER_SL      = 0x5500CCFF;
-    private static final int C_SELECTED      = 0x8800AAFF;
-    private static final int C_SEPARATOR     = 0xFF4A4860;
-    private static final int C_SLIDE_TRACK   = 0xFF1A1A2E;
-    private static final int C_SLIDE_ACTIVE  = 0xFF6664A0;
-    private static final int C_SLIDE_THUMB   = 0xFF9A9FB4;
-    private static final int C_SF_OUTER      = 0xFFF2F2F2;
-    private static final int C_SF_BG         = 0xFF0E0D1A;
-    private static final int C_SF_INNER      = 0xFF3F3E56;
-    private static final int C_SF_TEXT       = 0xFFCCCDFF;
-    private static final int C_SF_PH         = 0xFF555577;
-    private static final int C_ICON_BOX      = 0xFFB8A070;
-    private static final int C_ICON_ME       = 0xFF6699FF;
-    private static final int C_ICON_PLAYER   = 0xFF88CCAA;
+    // ── Textures ──────────────────────────────────────────────────────────────
+    private static final ResourceLocation TEX_BG =
+            ResourceLocation.fromNamespaceAndPath("colonylink", "textures/gui/warehouse_terminalcolony.png");
+    private static final ResourceLocation TEX_BTN =
+            ResourceLocation.fromNamespaceAndPath("colonylink", "textures/button/button_1.png");
+    private static final ResourceLocation TEX_BTN_PUSHED =
+            ResourceLocation.fromNamespaceAndPath("colonylink", "textures/button/button_pushed.png");
+    private static final ResourceLocation TEX_CHK_WH =
+            ResourceLocation.fromNamespaceAndPath("colonylink", "textures/button/checkbox_wh.png");
+    private static final ResourceLocation TEX_CHK_AE =
+            ResourceLocation.fromNamespaceAndPath("colonylink", "textures/button/checkbox_ae.png");
+    private static final ResourceLocation TEX_SLIDER =
+            ResourceLocation.fromNamespaceAndPath("colonylink", "textures/button/slider.png");
 
-    // ── v1.3.8 — Compteur items ──────────────────────────────────────────────
-    /** Échelle de la police du compteur sur les slots (1.0 = taille MC standard ~7px). */
+    // ── Couleurs texte / overlays ─────────────────────────────────────────────
+    private static final int C_TEXT_WH      = 0xFF9A9FB4;
+    private static final int C_TEXT_AE      = 0xFF6699FF;
+    private static final int C_TEXT_MUTED   = 0xFF9A9FB4;
+    private static final int C_SF_TEXT      = 0xFFCCCDFF;
+    private static final int C_SF_PH        = 0xFF555577;
+    private static final int C_HOVER_SL     = 0x5500CCFF;
+    private static final int C_SELECTED     = 0x8800AAFF;
+    private static final int C_CRAFTABLE_DOT= 0xFF00FF88;
+    private static final int C_CRAFTONLY_OV = 0x4400AAFF;
+    private static final int C_OFFLINE_OV   = 0xBB220000;
+    private static final int C_NOCARD_OV    = 0xBB111122;
+    private static final int C_COUNT_TEXT   = 0xFFFFFFFF;
+    private static final int C_COUNT_SHADOW = 0xFF3F3F3F;
     private static final float COUNT_FONT_SCALE = 0.72f;
-    /** Couleur du compteur. */
-    private static final int   C_COUNT_TEXT    = 0xFFFFFFFF;
-    /** Couleur de l'ombre du compteur (drop shadow). */
-    private static final int   C_COUNT_SHADOW  = 0xFF3F3F3F;
-
-    // Spacing boutons centraux
-    private static final int BTN_W_CTR = 18;
-    private static final int BTN_H_CTR = 14;
-    private static final int BTN_SP    = 28;
-    private static final int SLIDE_H   = 12;
 
     // ── État ──────────────────────────────────────────────────────────────────
     private final List<WarehouseTerminalSyncPacket.WarehouseItemEntry> whItems    = new ArrayList<>();
@@ -96,10 +85,8 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
     private boolean hasWarehouseCard = false;
     private String  whErrorMsg = "";
 
-    // Champs statiques : survivent au remplacement du Screen (ex: retour de CraftAmountMenu AE2)
     private static String savedWhSearch = "";
     private static String savedMeSearch = "";
-    // true = l'utilisateur a fermé manuellement → removed() ne doit PAS sauvegarder
     private boolean closedManually = false;
 
     private String  whSearch = "", meSearch = "";
@@ -108,19 +95,39 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
 
     private boolean warehouseFirst = true;
 
-    // Sélection shift+drag
     private final Set<Integer> whSelected = new LinkedHashSet<>();
     private final Set<Integer> meSelected = new LinkedHashSet<>();
     private boolean shiftWasDown = false;
 
-    // Le curseur est géré par le carried vanilla (server setCarried + broadcastCarriedItem).
-    // Le client voit l'item sous la souris via AbstractContainerScreen.renderSlot(-1).
-    // Clic sur panel WH/ME → PICKUP_FROM_WH/ME → serveur extrait + setCarried.
-    // Clic sur panel WH/ME avec carried non-vide → PUT_INTO_WH/ME → insère le carried.
-    // Dépôt dans inventaire/craft : géré automatiquement par vanilla carried.
+    // État drag scrollbars
+    private boolean draggingWh = false, draggingAe = false;
+    private int     dragStartY = 0, dragStartScroll = 0;
+    private int     dragStartSlotWh = -1, dragStartSlotAe = -1; // slot où le drag a commencé
 
-    // Tooltip QoL
+    // ── État animation boutons push
+    private boolean btn1Pushed = false, btn2Pushed = false;
+
     private String hoveredTooltip = null;
+
+    // ── Fit-to-window scale ───────────────────────────────────────────────────
+    // Si le GUI est plus grand que la fenêtre de jeu (GUI scale 3/4+),
+    // on le réduit automatiquement pour qu'il tienne entièrement à l'écran.
+    private float guiScale = 1.0f;
+
+    private float computeFitScale()
+    {
+        if (minecraft == null) return 1.0f;
+        // Taille de la fenêtre en coords GUI (après division par guiScale Minecraft)
+        int sw = this.width;
+        int sh = this.height;
+        float fx = (float) sw / GUI_W;
+        float fy = (float) sh / GUI_H;
+        float fit = Math.min(fx, fy);
+        return fit < 1.0f ? fit : 1.0f; // on ne scale jamais au-dessus de 1.0
+    }
+
+    private int toGui(double v, float pivot, float scale)
+    { return scale == 1.0f ? (int) v : (int)((v - pivot) / scale + pivot); }
 
     // ── Constructeur ──────────────────────────────────────────────────────────
     public WarehouseLinkTerminalScreen(WarehouseLinkTerminalMenu menu,
@@ -133,9 +140,11 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
 
     @Override protected void init()
     {
+        imageWidth  = GUI_W;
+        imageHeight = GUI_H;
         super.init();
+        guiScale = computeFitScale();
         titleLabelX = inventoryLabelX = -10000;
-        // Restaurer les search bars (survivent à CraftAmountMenu AE2)
         whSearch = savedWhSearch;
         meSearch = savedMeSearch;
         rebuildWh();
@@ -144,27 +153,17 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
         PacketDistributor.sendToServer(new TerminalGuiStatePacket(true, partHostPos(), partSide()));
     }
 
-    /**
-     * Appelé quand le joueur ferme manuellement le GUI (ESC/E).
-     * On vide les saved search pour repartir propre à la prochaine ouverture.
-     */
     @Override public void onClose()
     {
-        closedManually = true; // empêche removed() de sauvegarder
+        closedManually = true;
         savedWhSearch = "";
         savedMeSearch = "";
         PacketDistributor.sendToServer(new TerminalGuiStatePacket(false, partHostPos(), partSide()));
         super.onClose();
     }
 
-    /**
-     * Appelé quand ce Screen est remplacé par un autre (ex: CraftAmountMenu AE2).
-     * C'est ICI qu'on sauvegarde les search bars pour le retour via returnToMainMenu().
-     */
     @Override public void removed()
     {
-        // Ne sauvegarder que si remplacé par un autre screen (CraftAmountMenu AE2)
-        // et non si fermé manuellement par le joueur
         if (!closedManually)
         {
             savedWhSearch = whSearch;
@@ -173,7 +172,7 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
         super.removed();
     }
 
-    // ── Packets ───────────────────────────────────────────────────────────────
+    // ── Mises à jour depuis packets ───────────────────────────────────────────
     public void updateWarehouseSnapshot(WarehouseTerminalSyncPacket p)
     {
         whItems.clear(); whItems.addAll(p.entries());
@@ -191,369 +190,358 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
     }
 
     private void rebuildWh()
-    { whFiltered.clear(); String q=whSearch.toLowerCase(); for(var e:whItems) if(q.isEmpty()||e.stack().getDisplayName().getString().toLowerCase().contains(q)) whFiltered.add(e); whScroll=clamp(whScroll,whFiltered.size()); }
+    {
+        whFiltered.clear();
+        String q = whSearch.toLowerCase();
+        for (var e : whItems)
+            if (q.isEmpty() || e.stack().getDisplayName().getString().toLowerCase().contains(q))
+                whFiltered.add(e);
+        whScroll = clamp(whScroll, whFiltered.size());
+    }
 
     private void rebuildMe()
-    { meFiltered.clear(); String q=meSearch.toLowerCase(); for(var e:meItems) if(q.isEmpty()||e.stack().getDisplayName().getString().toLowerCase().contains(q)) meFiltered.add(e); meScroll=clamp(meScroll,meFiltered.size()); }
+    {
+        meFiltered.clear();
+        String q = meSearch.toLowerCase();
+        for (var e : meItems)
+            if (q.isEmpty() || e.stack().getDisplayName().getString().toLowerCase().contains(q))
+                meFiltered.add(e);
+        meScroll = clamp(meScroll, meFiltered.size());
+    }
 
     // =========================================================================
-    // RENDER
+    // RENDER PRINCIPAL
     // =========================================================================
-    @Override public void render(GuiGraphics g, int mx, int my, float pt)
+    @Override public void render(GuiGraphics g, int rawMx, int rawMy, float pt)
     {
         hoveredTooltip = null;
         boolean shiftNow = hasShiftDown();
         if (shiftWasDown && !shiftNow) { whSelected.clear(); meSelected.clear(); }
         shiftWasDown = shiftNow;
 
-        renderBackground(g, mx, my, pt);
+        float cx = this.width  / 2f;
+        float cy = this.height / 2f;
+        int mx = toGui(rawMx, cx, guiScale);
+        int my = toGui(rawMy, cy, guiScale);
+
+        // Rectangle opaque plein écran en coords brutes, avant la pose
+        // 0xD8000000 = noir à 85% opacité — correspond au voile vanilla renderBackground
+        g.fill(0, 0, this.width, this.height, 0xD8000000);
+
+        if (guiScale != 1.0f)
+        {
+            g.pose().pushPose();
+            g.pose().translate(cx, cy, 0);
+            g.pose().scale(guiScale, guiScale, 1f);
+            g.pose().translate(-cx, -cy, 0);
+        }
+
         super.render(g, mx, my, pt);
-        renderPanelItems(g, leftPos+X_WH, topPos, true);
-        renderPanelItems(g, leftPos+X_ME, topPos, false);
+        renderPanelItems(g, leftPos + X_ITEMS_WH, topPos, true);
+        renderPanelItems(g, leftPos + X_ITEMS_AE, topPos, false);
         renderTooltipForPanel(g, mx, my);
-        renderTooltip(g, mx, my);
+
+        if (guiScale != 1.0f)
+            g.pose().popPose();
+
+        renderTooltip(g, rawMx, rawMy);
 
         if (hoveredTooltip != null)
         {
-            // Support multi-line tooltips via \n separator
             String[] lines = hoveredTooltip.split("\n");
             if (lines.length == 1)
-                g.renderTooltip(font, Component.literal(hoveredTooltip), mx, my);
+                g.renderTooltip(font, Component.literal(hoveredTooltip), rawMx, rawMy);
             else
             {
-                java.util.List<net.minecraft.network.chat.Component> ttLines = new java.util.ArrayList<>();
+                List<Component> ttLines = new ArrayList<>();
                 for (String line : lines) ttLines.add(Component.literal(line));
-                g.renderComponentTooltip(font, ttLines, mx, my);
+                g.renderComponentTooltip(font, ttLines, rawMx, rawMy);
             }
         }
-
-        // Le carried vanilla est rendu automatiquement par AbstractContainerScreen
     }
 
     @Override protected void renderLabels(GuiGraphics g, int mx, int my) {}
 
+    // ── renderBg : fond + tous les widgets ───────────────────────────────────
     @Override protected void renderBg(GuiGraphics g, float pt, int mx, int my)
     {
-        int x=leftPos, y=topPos;
-        drawGuiFill(g, x, y);
-        drawItemPanel(g, x+X_WH, y, true, mx, my);
-        drawScrollbar(g, x+X_SCROLL_WH, y+H_HEADER, SCROLL_W, ROWS_H, whFiltered.size(), PANEL_ROWS*PANEL_COLS, whScroll);
-        drawCentreColumn(g, x+X_CTR, y, mx, my);
-        drawScrollbar(g, x+X_SCROLL_ME, y+H_HEADER, SCROLL_W, ROWS_H, meFiltered.size(), PANEL_ROWS*PANEL_COLS, meScroll);
-        drawItemPanel(g, x+X_ME, y, false, mx, my);
-        drawCraftZone(g, x, y, mx, my);
-        drawInventoryZone(g, x, y);
-        drawGuiBorder(g, x, y);
+        int x = leftPos, y = topPos;
+
+        // 1. Fond principal (texture PNG complète)
+        g.blit(TEX_BG, x, y, 0, 0, GUI_W, GUI_H, GUI_W, GUI_H);
+
+        // 2. Labels texte WH / AE (au dessus des search bars)
+        renderPanelLabels(g, x, y);
+
+        // 3. Search bars
+        renderSearch(g, x + SEARCH_WH_X, y + SEARCH_Y, SEARCH_WH_W, SEARCH_H,
+                whSearch, whSearchFocused, whFiltered.size(), true);
+        renderSearch(g, x + SEARCH_AE_X, y + SEARCH_Y, SEARCH_AE_W, SEARCH_H,
+                meSearch, meSearchFocused, meFiltered.size(), false);
+
+        // 4. Scrollbars verticales
+        renderScrollbar(g, x + SCROLL_WH_X, y, whFiltered.size(), whScroll);
+        renderScrollbar(g, x + SCROLL_AE_X, y, meFiltered.size(), meScroll);
+
+        // 5. Slider horizontal WH/ME
+        renderSlider(g, x, y, mx, my);
+
+        // 6. Boutons push centre colonne
+        renderPushButton(g, mx, my, x + BTN1_X, y + BTN1_Y, btn1Pushed,
+                "Transfer selected WH \u2194 ME\n\u00a77Shift+click to select items");
+        renderPushButton(g, mx, my, x + BTN2_X, y + BTN2_Y, btn2Pushed,
+                "Transfer selected \u2192 Inventory\n\u00a77Shift+click to select items");
+
+        // 7. Tooltips des boutons croix craft (hitboxes invisibles sur fond PNG)
+        if (over(mx, my, x + 136, y + 273, 7, 7))
+            hoveredTooltip = "Clear crafting grid \u2192 Inventory\n\u00a77Shift: also clear output";
+        if (over(mx, my, x + 252, y + 279, 7, 7))
+            hoveredTooltip = "Output \u2192 Warehouse\n\u00a77Shift: full stack";
+        if (over(mx, my, x + 268, y + 279, 8, 7))
+            hoveredTooltip = "Output \u2192 ME Network\n\u00a77Shift: full stack";
+        if (over(mx, my, x + 260, y + 313, 7, 7))
+            hoveredTooltip = "Output \u2192 Inventory";
+
+        // 8. Sélection count sur panels
+        // WH : x=136..191, y=15..24 — par-dessus la search bar droite
+        if (!whSelected.isEmpty())
+            g.drawString(font, "\u00a7e" + whSelected.size() + " selected",
+                    x + 136, y + 15, 0xFFFFDD00, false);
+        // AE : x=361..416, y=15..24 — par-dessus la search bar droite AE
+        if (!meSelected.isEmpty())
+            g.drawString(font, "\u00a7e" + meSelected.size() + " selected",
+                    x + 361, y + 15, 0xFFFFDD00, false);
     }
 
-    // =========================================================================
-    // PRIMITIVES
-    // =========================================================================
-    private void drawGuiFill(GuiGraphics g, int x, int y)
-    { g.fill(x+2, y+2, x+GUI_W-2, y+Y_CRAFT_LABEL, C_PANEL_BG); }
-
-    private void drawGuiBorder(GuiGraphics g, int x, int y)
+    // ── Labels WH / AE au dessus des search bars ──────────────────────────────
+    private void renderPanelLabels(GuiGraphics g, int x, int y)
     {
-        int bot = y+Y_CRAFT_LABEL;
-        g.fill(x,y,x+GUI_W,y+1,C_BORDER_HI); g.fill(x,y+1,x+1,bot+1,C_BORDER_HI);
-        g.fill(x+1,bot,x+GUI_W,bot+1,C_BORDER_LO); g.fill(x+GUI_W-1,y,x+GUI_W,bot,C_BORDER_LO);
-        g.fill(x+1,y+1,x+GUI_W-1,y+2,C_BORDER_MID); g.fill(x+1,bot-1,x+GUI_W-1,bot,C_BORDER_MID);
-        g.fill(x+1,y+2,x+2,bot-1,C_BORDER_MID); g.fill(x+GUI_W-2,y+2,x+GUI_W-1,bot-1,C_BORDER_MID);
+        // Zone label WH : x=9..133, y=2..14
+        String wh = "Warehouse";
+        String whCnt = String.valueOf(whFiltered.size());
+        g.drawString(font, wh,    x + 9, y + 3, C_TEXT_WH, false);
+        g.drawString(font, whCnt, x + 9 + SEARCH_WH_W - font.width(whCnt) - 1, y + 3, C_TEXT_MUTED, false);
+
+        // Zone label AE : x=233..358, y=2..14
+        String ae = "Applied";
+        String aeCnt = String.valueOf(meFiltered.size());
+        g.drawString(font, ae,    x + SEARCH_AE_X, y + 3, C_TEXT_AE, false);
+        g.drawString(font, aeCnt, x + SEARCH_AE_X + SEARCH_AE_W - font.width(aeCnt) - 1, y + 3, C_TEXT_MUTED, false);
     }
 
-    private void drawSlot(GuiGraphics g, int x, int y)
+    // ── Search bar ────────────────────────────────────────────────────────────
+    private void renderSearch(GuiGraphics g, int x, int y, int w, int h,
+                              String txt, boolean focused, int count, boolean isWh)
     {
-        g.fill(x,y,x+16,y+16,C_SLOT_BG);
-        g.fill(x-1,y-1,x+17,y,C_SLOT_DARK); g.fill(x-1,y,x,y+17,C_SLOT_DARK);
-        g.fill(x,y,x+16,y+1,0xFF4A4860); g.fill(x,y+1,x+1,y+16,0xFF4A4860);
-        g.fill(x,y+16,x+17,y+17,C_SLOT_LIGHT); g.fill(x+16,y,x+17,y+17,C_SLOT_LIGHT);
+        // Le fond de la search bar est déjà dans le PNG ; on dessine juste le texte
+        if (txt.isEmpty())
+            g.drawString(font, "Search...", x + 2, y + 1, C_SF_PH, false);
+        else
+            g.drawString(font, txt, x + 2, y + 1, C_SF_TEXT, false);
+        if (focused && (System.currentTimeMillis() / 500) % 2 == 0)
+            g.drawString(font, "|", x + 2 + font.width(txt), y + 1, C_SF_TEXT, false);
     }
 
-    private void drawScrollbar(GuiGraphics g, int x, int y, int w, int h, int total, int visible, int scroll)
+    // ── Scrollbar verticale ───────────────────────────────────────────────────
+    // Track dans le PNG : 10px large (x=176..185 WH, x=401..410 AE)
+    // Rail actif central : 4px (x=179..182 WH, x=404..407 AE)
+    // slider.png 13×16 : coins noirs x=0 et x=12 ; corps utile x=1..11 = 11px
+    // → blit srcX=1, w=11 ; dest trackX-1 pour centrer le thumb 11px sur la track 10px
+    private static final int SCROLL_THUMB_H = 16;
+
+    private void renderScrollbar(GuiGraphics g, int trackX, int guiY,
+                                 int totalItems, int scroll)
     {
-        g.fill(x,y,x+w,y+h,C_BORDER_MID); g.fill(x+1,y+1,x+w-1,y+h-1,C_SCROLL_BG);
-        if (total<=visible||total==0) return;
-        int tH=Math.max(10,(int)(h*(float)visible/total));
-        int tY=y+1+(int)((h-2-tH)*(float)scroll/Math.max(1,total-visible));
-        g.fill(x+1,tY,x+w-1,tY+tH,C_SCROLL_TH); g.fill(x+1,tY,x+w-1,tY+1,0xFFBBBFD4);
-        g.fill(x+1,tY+tH-1,x+w-1,tY+tH,0xFF6A6E88);
+        if (totalItems <= 0) return;
+        int maxRows   = (int) Math.ceil(totalItems / (double) PANEL_COLS);
+        int maxScroll = maxRows - PANEL_ROWS;
+        if (maxScroll <= 0) return;
+
+        int trackH = SCROLL_BOT_Y - SCROLL_TOP_Y; // 194px
+        int thumbY = guiY + SCROLL_TOP_Y
+                + (int) ((trackH - SCROLL_THUMB_H) * (float) scroll / maxScroll);
+
+        // Corps utile du PNG = cols 1..11 = 11px
+        // On décale d'1px à gauche (trackX-1) pour centrer sur la track 10px
+        g.blit(TEX_SLIDER,
+                trackX - 1, thumbY,  // dest : 1px à gauche de la track
+                1, 0,                // src  : skip coin gauche (col 0)
+                11,                  // dest width = 11px (corps complet)
+                SCROLL_THUMB_H,      // dest height = 16px
+                13, 16);             // texture full size
     }
 
-    private boolean drawBtn(GuiGraphics g, int mx, int my, int bx, int by, int bw, int bh)
+    // ── Slider WH/ME (horizontal, un seul checkbox centré) ───────────────────
+    private void renderSlider(GuiGraphics g, int x, int y, int mx, int my)
     {
-        boolean hov=mx>=bx&&mx<bx+bw&&my>=by&&my<by+bh;
-        g.fill(bx,by,bx+bw,by+bh,hov?C_BTN_HOVER:C_BTN_NORMAL);
-        g.fill(bx,by,bx+bw,by+1,C_BTN_HI); g.fill(bx,by+1,bx+1,by+bh-1,C_BTN_HI);
-        g.fill(bx,by+bh-1,bx+bw,by+bh,C_BTN_LO); g.fill(bx+bw-1,by+1,bx+bw,by+bh-1,C_BTN_LO);
-        return hov;
+        int sx = x + SLIDER_X;
+        int sy = y + SLIDER_Y;
+        // Un seul checkbox 22×12 centré dans la zone 40×13
+        // WH first → checkbox_wh.png, AE first → checkbox_ae.png
+        ResourceLocation tex = warehouseFirst ? TEX_CHK_WH : TEX_CHK_AE;
+        int offsetX = (SLIDER_W - 22) / 2;  // (40-22)/2 = 9 → centré
+        g.blit(tex, sx + offsetX, sy, 0, 0, 22, 12, 22, 12);
+
+        if (over(mx, my, sx, sy, SLIDER_W, SLIDER_H))
+            hoveredTooltip = warehouseFirst
+                    ? "JEI priority: Warehouse first"
+                    : "JEI priority: ME first";
     }
 
-    private void arrowRight(GuiGraphics g, int cx, int cy, int c)
-    { g.fill(cx,cy+2,cx+4,cy+3,c); g.fill(cx+2,cy+1,cx+5,cy+4,c); g.fill(cx+4,cy,cx+7,cy+5,c); }
-    private void arrowLeft(GuiGraphics g, int cx, int cy, int c)
-    { g.fill(cx+3,cy+2,cx+7,cy+3,c); g.fill(cx+2,cy+1,cx+5,cy+4,c); g.fill(cx,cy,cx+3,cy+5,c); }
-    private void arrowDown(GuiGraphics g, int cx, int cy, int c)
-    { g.fill(cx,cy,cx+7,cy+2,c); g.fill(cx+1,cy+2,cx+6,cy+4,c); g.fill(cx+2,cy+4,cx+5,cy+5,c); g.fill(cx+3,cy+5,cx+4,cy+6,c); }
-
-    private void drawSlide(GuiGraphics g, int mx, int my, int bx, int by, int w, int h)
+    // ── Bouton push (centre colonne) ──────────────────────────────────────────
+    private void renderPushButton(GuiGraphics g, int mx, int my,
+                                  int bx, int by, boolean pushed, String tooltip)
     {
-        int half=(w-2)/2;
-        g.fill(bx,by,bx+w,by+h,C_BORDER_MID); g.fill(bx+1,by+1,bx+w-1,by+h-1,C_SLIDE_TRACK);
-        if (warehouseFirst) g.fill(bx+1,by+1,bx+1+half,by+h-1,C_SLIDE_ACTIVE);
-        else                g.fill(bx+1+half,by+1,bx+w-1,by+h-1,C_SLIDE_ACTIVE);
-        g.fill(bx+1+half,by+1,bx+2+half,by+h-1,C_BORDER_MID);
-        int tx=warehouseFirst?bx+1:bx+1+half;
-        g.fill(tx,by+1,tx+half,by+h-1,C_SLIDE_THUMB); g.fill(tx,by+1,tx+half,by+2,0xFFBBBFD4); g.fill(tx,by+2,tx+1,by+h-1,0xFFBBBFD4);
-        if (mx>=bx&&mx<bx+w&&my>=by&&my<by+h)
-        { g.fill(bx,by,bx+w,by+1,C_BTN_HI); g.fill(bx,by+h-1,bx+w,by+h,C_BTN_HI);
-            hoveredTooltip = warehouseFirst ? "JEI priority: Warehouse first" : "JEI priority: ME first"; }
+        boolean hov = over(mx, my, bx, by, BTN_SZ, BTN_SZ);
+        ResourceLocation tex = pushed ? TEX_BTN_PUSHED : TEX_BTN;
+        // Les textures font 12×12 ; on les dessine à 11×11 (BTN_SZ) en décalant d'1px
+        g.blit(tex, bx, by, 0, 0, BTN_SZ, BTN_SZ, 12, 12);
+        if (hov) hoveredTooltip = tooltip;
     }
 
-    private void drawSearch(GuiGraphics g, int x, int y, int w, int h, String txt, boolean focused)
+    // ── Items des panels ──────────────────────────────────────────────────────
+    private void renderPanelItems(GuiGraphics g, int panelX, int guiY, boolean isWh)
     {
-        g.fill(x-1,y-1,x+w+1,y+h+1,C_SF_OUTER); g.fill(x,y,x+w,y+h,C_SF_BG);
-        g.fill(x,y,x+w,y+1,C_SF_INNER); g.fill(x,y+1,x+1,y+h,C_SF_INNER);
-        if (txt.isEmpty()) g.drawString(font,"Search...",x+2,y+1,C_SF_PH,false);
-        else               g.drawString(font,txt,x+2,y+1,C_SF_TEXT,false);
-        if (focused&&(System.currentTimeMillis()/500)%2==0)
-            g.drawString(font,"|",x+2+font.width(txt),y+1,C_SF_TEXT,false);
-    }
-
-    // ── Icônes pixel-art boutons craft ────────────────────────────────────────
-    private void drawIconStorage(GuiGraphics g, int bx, int by, int bw, int bh, boolean isWh)
-    {
-        int ox=bx+(bw-11)/2, oy=by+(bh-7)/2;
-        int boxC=C_ICON_BOX, netC=isWh?0xFFC8A060:C_ICON_ME;
-        g.fill(ox,oy,ox+4,oy+1,boxC); g.fill(ox,oy+3,ox+4,oy+4,boxC);
-        g.fill(ox,oy+1,ox+1,oy+3,boxC); g.fill(ox+3,oy+1,ox+4,oy+3,boxC);
-        g.fill(ox+1,oy+1,ox+3,oy+2,0xFF7A6035);
-        g.fill(ox+4,oy+2,ox+7,oy+3,C_ARROW); g.fill(ox+7,oy+1,ox+8,oy+4,C_ARROW); g.fill(ox+8,oy+2,ox+9,oy+3,C_ARROW);
-        g.fill(ox+9,oy+2,ox+11,oy+3,netC); g.fill(ox+10,oy+1,ox+11,oy+4,netC);
-        g.fill(ox+9,oy+1,ox+10,oy+2,netC); g.fill(ox+9,oy+3,ox+10,oy+4,netC);
-    }
-
-    private void drawIconInventory(GuiGraphics g, int bx, int by, int bw, int bh)
-    {
-        int ox=bx+(bw-11)/2, oy=by+(bh-7)/2;
-        g.fill(ox,oy,ox+4,oy+1,C_ICON_BOX); g.fill(ox,oy+3,ox+4,oy+4,C_ICON_BOX);
-        g.fill(ox,oy+1,ox+1,oy+3,C_ICON_BOX); g.fill(ox+3,oy+1,ox+4,oy+3,C_ICON_BOX);
-        g.fill(ox+1,oy+1,ox+3,oy+2,0xFF7A6035);
-        g.fill(ox+4,oy+2,ox+7,oy+3,C_ARROW); g.fill(ox+7,oy+1,ox+8,oy+4,C_ARROW); g.fill(ox+8,oy+2,ox+9,oy+3,C_ARROW);
-        g.fill(ox+9,oy+1,ox+12,oy+4,C_ICON_PLAYER); g.fill(ox+10,oy,ox+11,oy+1,C_ICON_PLAYER);
-        g.fill(ox+9,oy+4,ox+12,oy+5,0xFF5FAA80);
-    }
-
-    // =========================================================================
-    // SECTIONS
-    // =========================================================================
-    private void drawItemPanel(GuiGraphics g, int px, int py, boolean isWh, int mx, int my)
-    {
-        g.fill(px,py,px+PANEL_W,py+H_HEADER,C_HEADER_BG);
-        g.fill(px,py+H_HEADER-1,px+PANEL_W,py+H_HEADER,C_BORDER_MID);
-        String ttl=isWh?"Warehouse":"Applied";
-        g.drawString(font,ttl,px+PANEL_W/2-font.width(ttl)/2,py+3,isWh?C_TEXT_WH:C_TEXT_ME,false);
-        String cnt=String.valueOf(isWh?whFiltered.size():meFiltered.size());
-        g.drawString(font,cnt,px+PANEL_W-font.width(cnt)-2,py+3,C_TEXT_MUTED,false);
-        drawSearch(g,px+2,py+H_HEADER-10,PANEL_W-4,8,isWh?whSearch:meSearch,isWh?whSearchFocused:meSearchFocused);
-        Set<Integer> sel=isWh?whSelected:meSelected;
-        if (!sel.isEmpty()) g.drawString(font,"§e"+sel.size()+" selected",px+2,py+3,0xFFFFDD00,false);
-
-        int rTop=py+H_HEADER;
-        g.fill(px,rTop,px+PANEL_W,rTop+ROWS_H,C_ITEM_AREA_BG);
-        for(int r=0;r<PANEL_ROWS;r++) for(int c=0;c<PANEL_COLS;c++)
-        { int sx=px+c*SLOT,sy=rTop+r*SLOT; g.fill(sx+1,sy+1,sx+SLOT-1,sy+SLOT-1,C_SLOT_BG); g.fill(sx,sy,sx+SLOT,sy+1,0xFF232234); g.fill(sx,sy,sx+1,sy+SLOT,0xFF232234); }
-
-        if (isWh&&!hasWarehouseCard)
-        { g.fill(px,rTop,px+PANEL_W,rTop+ROWS_H,C_NOCARD_OV); g.drawCenteredString(font,"Insert Warehouse",px+PANEL_W/2,rTop+ROWS_H/2-10,0xFF8888BB); g.drawCenteredString(font,"Link Card",px+PANEL_W/2,rTop+ROWS_H/2+2,0xFF8888BB); return; }
-        if (isWh&&!whErrorMsg.isEmpty())
-        { g.fill(px,rTop,px+PANEL_W,rTop+ROWS_H,C_NOCARD_OV); g.drawCenteredString(font,whErrorMsg,px+PANEL_W/2,rTop+ROWS_H/2,0xFF8888BB); return; }
-        if (!isWh&&!menu.getPart().isAe2Active())
-        { g.fill(px,rTop,px+PANEL_W,rTop+ROWS_H,C_OFFLINE_OV); g.drawCenteredString(font,"AE2 Offline",px+PANEL_W/2,rTop+ROWS_H/2,0xFFFF4444); return; }
-
-        int scroll=isWh?whScroll:meScroll;
-        for(int r=0;r<PANEL_ROWS;r++) for(int c=0;c<PANEL_COLS;c++)
+        if (isWh && (!hasWarehouseCard || !whErrorMsg.isEmpty()))
         {
-            int idx=(scroll*PANEL_COLS)+r*PANEL_COLS+c;
-            int gx=px+c*SLOT, gy=rTop+r*SLOT;
-            boolean hov=mx>=gx&&mx<gx+SLOT&&my>=gy&&my<gy+SLOT;
-            if (sel.contains(idx)) g.fill(gx+1,gy+1,gx+SLOT-1,gy+SLOT-1,C_SELECTED);
-            else if (hov)         g.fill(gx+1,gy+1,gx+SLOT-1,gy+SLOT-1,C_HOVER_SL);
+            // Overlay "pas de card"
+            g.fill(panelX, guiY + Y_ITEMS,
+                    panelX + PANEL_COLS * SLOT_PITCH,
+                    guiY + Y_ITEMS + PANEL_ROWS * SLOT_PITCH,
+                    C_NOCARD_OV);
+            String msg1 = "Insert Warehouse";
+            String msg2 = "Link Card";
+            int cx = panelX + (PANEL_COLS * SLOT_PITCH) / 2;
+            int cy = guiY + Y_ITEMS + (PANEL_ROWS * SLOT_PITCH) / 2;
+            g.drawCenteredString(font, msg1, cx, cy - 10, 0xFF8888BB);
+            g.drawCenteredString(font, msg2, cx, cy + 2, 0xFF8888BB);
+            return;
         }
-    }
-
-    private void drawCentreColumn(GuiGraphics g, int cx, int cy, int mx, int my)
-    {
-        g.fill(cx,cy,cx+CTR_W,cy+H_HEADER+ROWS_H,C_CTR_BG);
-        g.fill(cx,cy,cx+1,cy+H_HEADER+ROWS_H,C_BORDER_MID); g.fill(cx+CTR_W-1,cy,cx+CTR_W,cy+H_HEADER+ROWS_H,C_BORDER_MID);
-        int cX=cx+(CTR_W-16)/2, cY=cy+(H_HEADER-16)/2;
-        drawSlot(g,cX,cY);
-        ItemStack card=menu.getPart().getWarehouseCardSlot().getStackInSlot(0);
-        if (!card.isEmpty()) g.renderItem(card,cX,cY);
-        else g.drawCenteredString(font,"?",cx+CTR_W/2,cY+5,0xFF6664A0);
-
-        int totalH=2*BTN_H_CTR+(BTN_SP-BTN_H_CTR)+6+SLIDE_H;
-        int sY=cy+H_HEADER+(ROWS_H-totalH)/2;
-        int bX=cx+(CTR_W-BTN_W_CTR)/2;
-        boolean hasWhSel=!whSelected.isEmpty(), hasMeSel=!meSelected.isEmpty(), hasSel=hasWhSel||hasMeSel;
-
-        if (drawBtn(g,mx,my,bX,sY,BTN_W_CTR,BTN_H_CTR))
-        { if(hasWhSel) hoveredTooltip="Transfer selected WH → ME"; else if(hasMeSel) hoveredTooltip="Transfer selected ME → Warehouse"; else hoveredTooltip="Select items first\n§7Shift+click or drag over items to highlight them"; }
-        if (hasWhSel)      arrowLeft(g,bX+BTN_W_CTR/2-3,sY+(BTN_H_CTR-5)/2,C_ARROW);
-        else if (hasMeSel) arrowRight(g,bX+BTN_W_CTR/2-3,sY+(BTN_H_CTR-5)/2,C_ARROW);
-        else               arrowLeft(g,bX+BTN_W_CTR/2-3,sY+(BTN_H_CTR-5)/2,C_TEXT_MUTED);
-
-        if (drawBtn(g,mx,my,bX,sY+BTN_SP,BTN_W_CTR,BTN_H_CTR))
-            hoveredTooltip=hasSel?"Transfer selected → Inventory":"Select items first\n§7Shift+click or drag over items to highlight them";
-        arrowDown(g,bX+BTN_W_CTR/2-3,sY+BTN_SP+(BTN_H_CTR-6)/2,hasSel?C_ARROW:C_TEXT_MUTED);
-
-        drawSlide(g,mx,my,cx+1,sY+BTN_SP+BTN_H_CTR+6,CTR_W-2,SLIDE_H);
-    }
-
-    private void drawCraftZone(GuiGraphics g, int x, int y, int mx, int my)
-    {
-        int bX=x+BLOC_BAS_X, bW=BLOC_BAS_W, zY=y+Y_CRAFT_LABEL;
-        g.fill(bX+2,zY+2,bX+bW-2,y+GUI_H-2,C_PANEL_BG);
-        g.fill(bX+2,zY+2,bX+bW-2,y+Y_INV_LABEL-2,C_CTR_BG);
-        g.fill(bX,zY,bX+bW,zY+1,C_BORDER_HI); g.fill(bX,zY+1,bX+1,y+GUI_H,C_BORDER_HI);
-        g.fill(bX+1,y+GUI_H-1,bX+bW,y+GUI_H,C_BORDER_LO); g.fill(bX+bW-1,zY,bX+bW,y+GUI_H-1,C_BORDER_LO);
-        g.fill(bX+1,zY+1,bX+bW-1,zY+2,C_BORDER_MID); g.fill(bX+1,zY+2,bX+2,y+GUI_H-1,C_BORDER_MID);
-        g.fill(bX+1,y+GUI_H-2,bX+bW-1,y+GUI_H-1,C_BORDER_MID); g.fill(bX+bW-2,zY+2,bX+bW-1,y+GUI_H-2,C_BORDER_MID);
-        g.fill(bX+2,zY+2,bX+bW-2,zY+3,C_BTN_HI);
-        String lbl=Component.translatable("gui.ae2.CraftingTerminal").getString();
-        g.drawCenteredString(font,lbl,bX+bW/2,zY+4,C_TEXT_MUTED);
-
-        int cY=y+Y_CRAFT_TOP;
-        for(int r=0;r<3;r++) for(int c=0;c<3;c++) drawSlot(g,x+CRAFT_GRID_X+c*SLOT,cY+r*SLOT);
-        arrowRight(g,x+CRAFT_GRID_X+3*SLOT+5,cY+SLOT+4,0xFF9A9FB4);
-        drawSlot(g,x+CRAFT_OUT_X,cY+SLOT);
-
-        int bY=y+BTN_CRAFT_Y;
-        if (drawBtn(g,mx,my,x+BTN_STORAGE_X,bY,BTN_W,BTN_H))
-            hoveredTooltip="Clear grid \u2192 "+(warehouseFirst?"Warehouse":"ME Network")+" | Shift: also clear output";
-        drawIconStorage(g,x+BTN_STORAGE_X,bY,BTN_W,BTN_H,warehouseFirst);
-        if (drawBtn(g,mx,my,x+BTN_INV_X,bY,BTN_W,BTN_H))
-            hoveredTooltip="Clear grid \u2192 Inventory | Shift: also clear output";
-        drawIconInventory(g,x+BTN_INV_X,bY,BTN_W,BTN_H);
-    }
-
-    private void drawInventoryZone(GuiGraphics g, int x, int y)
-    {
-        g.drawCenteredString(font,Component.translatable("container.inventory").getString(),x+BLOC_BAS_X+BLOC_BAS_W/2,y+Y_INV_LABEL+2,C_TEXT_MUTED);
-        for(int r=0;r<3;r++) for(int c=0;c<9;c++) drawSlot(g,x+INV_LEFT+c*SLOT,y+Y_INV+r*SLOT);
-        g.fill(x+INV_LEFT,y+Y_HOTBAR-3,x+INV_LEFT+9*SLOT,y+Y_HOTBAR-2,C_SEPARATOR);
-        for(int c=0;c<9;c++) drawSlot(g,x+INV_LEFT+c*SLOT,y+Y_HOTBAR);
-    }
-
-    // ── Items ─────────────────────────────────────────────────────────────────
-    private void renderPanelItems(GuiGraphics g, int px, int py, boolean isWh)
-    {
-        if (isWh&&(!hasWarehouseCard||!whErrorMsg.isEmpty())) return;
-        if (!isWh&&!menu.getPart().isAe2Active()) return;
-        int rTop=py+H_HEADER, scroll=isWh?whScroll:meScroll, start=scroll*PANEL_COLS;
-        List<?> list=isWh?whFiltered:meFiltered;
-        for(int r=0;r<PANEL_ROWS;r++) for(int c=0;c<PANEL_COLS;c++)
+        if (isWh && !whErrorMsg.isEmpty())
         {
-            int idx=start+r*PANEL_COLS+c; if(idx>=list.size()) return;
-            int sx=px+c*SLOT+1, sy=rTop+r*SLOT+1;
-            ItemStack stack; long count; boolean craftable=false;
-            if(isWh){var e=whFiltered.get(idx);stack=e.stack();count=e.count();}
-            else    {var e=meFiltered.get(idx);stack=e.stack();count=e.count();craftable=e.craftable();}
+            g.fill(panelX, guiY + Y_ITEMS,
+                    panelX + PANEL_COLS * SLOT_PITCH,
+                    guiY + Y_ITEMS + PANEL_ROWS * SLOT_PITCH,
+                    C_NOCARD_OV);
+            g.drawCenteredString(font, whErrorMsg,
+                    panelX + (PANEL_COLS * SLOT_PITCH) / 2,
+                    guiY + Y_ITEMS + (PANEL_ROWS * SLOT_PITCH) / 2, 0xFF8888BB);
+            return;
+        }
+        if (!isWh && !menu.getPart().isAe2Active())
+        {
+            g.fill(panelX, guiY + Y_ITEMS,
+                    panelX + PANEL_COLS * SLOT_PITCH,
+                    guiY + Y_ITEMS + PANEL_ROWS * SLOT_PITCH,
+                    C_OFFLINE_OV);
+            g.drawCenteredString(font, "AE2 Offline",
+                    panelX + (PANEL_COLS * SLOT_PITCH) / 2,
+                    guiY + Y_ITEMS + (PANEL_ROWS * SLOT_PITCH) / 2, 0xFFFF4444);
+            return;
+        }
 
-            // Rendu de l'item SEUL (sans le count vanilla, qui est trop gros et déborde)
-            g.renderItem(stack,sx,sy);
-            // Rendu des décorations vanilla (durabilité, cooldown) mais SANS texte count
-            g.renderItemDecorations(font,stack,sx,sy,"");
+        int scroll = isWh ? whScroll : meScroll;
+        Set<Integer> sel = isWh ? whSelected : meSelected;
+        List<?> list = isWh ? whFiltered : meFiltered;
 
-            // Indicateurs craftable côté ME
-            if (!isWh)
+        for (int r = 0; r < PANEL_ROWS; r++)
+        {
+            for (int c = 0; c < PANEL_COLS; c++)
             {
-                if (craftable && count<=0)
-                {
-                    // Craftable-only : overlay bleu + "+"
-                    g.fill(sx,sy,sx+16,sy+16,C_CRAFTONLY_OV);
-                    g.drawString(font,"+",sx+4,sy+4,0xFF00CCFF,true);
-                    // Pas de count à afficher
-                    continue;
-                }
-                if (craftable)
-                {
-                    // Stocked ET craftable : petit dot vert en haut-droite
-                    g.fill(sx+13,sy,sx+16,sy+3,C_CRAFTABLE_DOT);
-                }
-            }
+                int idx = scroll * PANEL_COLS + r * PANEL_COLS + c;
+                if (idx >= list.size()) return;
 
-            // ── v1.3.8 — Count compact, police scalée à droite-bas du slot ──
-            if (count > 0)
-                drawCount(g, sx, sy, count);
+                int sx = panelX + c * SLOT_PITCH;
+                int sy = guiY + Y_ITEMS + r * SLOT_PITCH;
+                boolean hov = minecraft.mouseHandler.xpos() - leftPos >= sx
+                        && minecraft.mouseHandler.xpos() - leftPos < sx + SLOT_SZ
+                        && minecraft.mouseHandler.ypos() - topPos >= sy
+                        && minecraft.mouseHandler.ypos() - topPos < sy + SLOT_SZ;
+
+                if (sel.contains(idx))      g.fill(sx, sy, sx + SLOT_SZ, sy + SLOT_SZ, C_SELECTED);
+                else if (hov)               g.fill(sx, sy, sx + SLOT_SZ, sy + SLOT_SZ, C_HOVER_SL);
+
+                ItemStack stack; long count; boolean craftable = false;
+                if (isWh) { var e = whFiltered.get(idx); stack = e.stack(); count = e.count(); }
+                else      { var e = meFiltered.get(idx); stack = e.stack(); count = e.count(); craftable = e.craftable(); }
+
+                g.renderItem(stack, sx, sy);
+                g.renderItemDecorations(font, stack, sx, sy, "");
+
+                if (!isWh)
+                {
+                    if (craftable && count <= 0)
+                    {
+                        g.fill(sx, sy, sx + SLOT_SZ, sy + SLOT_SZ, C_CRAFTONLY_OV);
+                        g.drawString(font, "+", sx + 4, sy + 4, 0xFF00CCFF, true);
+                        continue;
+                    }
+                    if (craftable) g.fill(sx + 13, sy, sx + 16, sy + 3, C_CRAFTABLE_DOT);
+                }
+
+                if (count > 0) drawCount(g, sx, sy, count);
+            }
         }
     }
 
-    /**
-     * v1.3.8 — Dessine le compteur d'items dans le coin bas-droit du slot
-     * avec une police réduite (~72% de la taille standard).
-     *
-     * Format style AE2 : 1-999 brut, 1.0K-9.9K, 10K-999K, 1.0M-999M, 1.0B-999B.
-     * Tous les formats tiennent en ≤ 4 caractères.
-     *
-     * Le texte est rendu avec une matrice scale + un drop shadow manuel
-     * (le drawString natif avec shadow rend une ombre à l'échelle 1x qui
-     * paraît ridicule sur du texte à 0.72x ; on dessine donc l'ombre
-     * manuellement, décalée d'1 px).
-     */
+    // ── Compteur items (style AE2) ────────────────────────────────────────────
     private void drawCount(GuiGraphics g, int slotX, int slotY, long count)
     {
-        String txt = fmtCount(count);
-        float scale = COUNT_FONT_SCALE;
-
-        // Taille rendue du texte (font.width retourne la largeur à scale 1)
-        int wRaw = font.width(txt);
-        int hRaw = font.lineHeight; // = 9 px standard
-
-        // Position : coin bas-droit du slot 16x16, ancrée à 1px du bord
-        // (slotX, slotY) = coin haut-gauche du slot rendu (sx, sy dans renderPanelItems)
-        int slotRight  = slotX + 16;
-        int slotBottom = slotY + 16;
-        // Position en coords scalées (à diviser par scale dans la matrice scalée)
-        float drawX = (slotRight  - 1) / scale - wRaw;
-        float drawY = (slotBottom - 1) / scale - hRaw;
+        String txt   = fmtCount(count);
+        float  scale = COUNT_FONT_SCALE;
+        int    wRaw  = font.width(txt);
+        int    hRaw  = font.lineHeight;
+        float  drawX = (slotX + 15) / scale - wRaw;
+        float  drawY = (slotY + 15) / scale - hRaw;
 
         var pose = g.pose();
         pose.pushPose();
-        // Z élevé pour que le compteur passe devant l'item rendu
         pose.translate(0f, 0f, 200f);
         pose.scale(scale, scale, 1f);
-
-        // Drop shadow manuel : on draw d'abord en sombre décalé d'1 px (en coords scalées),
-        // puis le texte en clair par-dessus. Le shadow=false du drawString évite le shadow
-        // vanilla qui serait à l'échelle 1.
-        g.drawString(font, txt, (int)Math.round(drawX) + 1, (int)Math.round(drawY) + 1,
-                C_COUNT_SHADOW, false);
-        g.drawString(font, txt, (int)Math.round(drawX), (int)Math.round(drawY),
-                C_COUNT_TEXT, false);
-
+        g.drawString(font, txt, (int) Math.round(drawX) + 1, (int) Math.round(drawY) + 1, C_COUNT_SHADOW, false);
+        g.drawString(font, txt, (int) Math.round(drawX),     (int) Math.round(drawY),     C_COUNT_TEXT,   false);
         pose.popPose();
     }
 
-    // ── Tooltips ──────────────────────────────────────────────────────────────
+    // ── Tooltips items ────────────────────────────────────────────────────────
     private void renderTooltipForPanel(GuiGraphics g, int mx, int my)
     {
-        int s=slot(mx,my,leftPos+X_WH);
-        if(s>=0&&hasWarehouseCard&&whErrorMsg.isEmpty()){
-            int i=whScroll*PANEL_COLS+s; if(i<whFiltered.size()){
-                var e=whFiltered.get(i);
-                g.renderComponentTooltip(font,List.of(e.stack().getDisplayName(),
-                        Component.literal("\u00a77In warehouse: \u00a7f"+e.count()),
-                        Component.literal("\u00a78Left: pick stack  Right: pick half  Shift+drag: select")),mx,my); return; }}
-        s=slot(mx,my,leftPos+X_ME);
-        if(s>=0&&menu.getPart().isAe2Active()){
-            int i=meScroll*PANEL_COLS+s; if(i<meFiltered.size()){
-                var e=meFiltered.get(i);
-                List<Component> lines=new ArrayList<>(); lines.add(e.stack().getDisplayName());
-                if(e.craftable()&&e.count()<=0) lines.add(Component.literal("\u00a7aCraftable-only \u00a7e(middle-click to autocraft)"));
-                else if(e.craftable()) lines.add(Component.literal("\u00a77In ME: \u00a7f"+e.count()+" \u00a7a\u25cf craftable"));
-                else lines.add(Component.literal("\u00a77In ME: \u00a7f"+e.count()));
-                lines.add(Component.literal("\u00a78Left: pick stack  Right: pick half  Middle: autocraft"));
-                g.renderComponentTooltip(font,lines,mx,my); }}
+        // WH
+        int s = itemSlot(mx, my, leftPos + X_ITEMS_WH);
+        if (s >= 0 && hasWarehouseCard && whErrorMsg.isEmpty())
+        {
+            int i = whScroll * PANEL_COLS + s;
+            if (i < whFiltered.size())
+            {
+                var e = whFiltered.get(i);
+                g.renderComponentTooltip(font, List.of(
+                                e.stack().getDisplayName(),
+                                Component.literal("\u00a77In warehouse: \u00a7f" + e.count()),
+                                Component.literal("\u00a78Left: pick  Right: half  Shift+drag: select")),
+                        mx, my);
+                return;
+            }
+        }
+        // AE
+        s = itemSlot(mx, my, leftPos + X_ITEMS_AE);
+        if (s >= 0 && menu.getPart().isAe2Active())
+        {
+            int i = meScroll * PANEL_COLS + s;
+            if (i < meFiltered.size())
+            {
+                var e = meFiltered.get(i);
+                List<Component> lines = new ArrayList<>();
+                lines.add(e.stack().getDisplayName());
+                if (e.craftable() && e.count() <= 0)
+                    lines.add(Component.literal("\u00a7aCraftable-only \u00a7e(middle-click to autocraft)"));
+                else if (e.craftable())
+                    lines.add(Component.literal("\u00a77In ME: \u00a7f" + e.count() + " \u00a7a\u25cf craftable"));
+                else
+                    lines.add(Component.literal("\u00a77In ME: \u00a7f" + e.count()));
+                lines.add(Component.literal("\u00a78Left: pick  Right: half  Middle: autocraft"));
+                g.renderComponentTooltip(font, lines, mx, my);
+            }
+        }
     }
 
     // =========================================================================
@@ -561,29 +549,33 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
     // =========================================================================
     @Override public boolean mouseClicked(double mx, double my, int btn)
     {
+        float cx = this.width / 2f, cy = this.height / 2f;
+        mx = toGui(mx, cx, guiScale); my = toGui(my, cy, guiScale);
+
         boolean shift = hasShiftDown();
 
-        // ── Shift+clic inventaire → WH ou ME selon slider ────────────────────
-        // Vérifie que la destination est disponible avant d'envoyer
+        // ── Shift+clic inventaire → WH ou ME ────────────────────────────────
         if (shift && !hasControlDown()
-                && mx >= leftPos+INV_LEFT && mx < leftPos+INV_LEFT+9*SLOT)
+                && mx >= leftPos + INV_X && mx < leftPos + INV_X + 9 * SLOT_PITCH)
         {
-            // Destination WH : nécessite une card valide et aucune erreur
             boolean canSendToWh = hasWarehouseCard && whErrorMsg.isEmpty();
-            // Destination ME : nécessite AE2 actif
             boolean canSendToMe = menu.getPart().isAe2Active();
-            // Destination effective selon le slider
-            boolean sendToWh = warehouseFirst ? canSendToWh : (!canSendToMe && canSendToWh);
-            boolean sendToMe = !warehouseFirst ? canSendToMe : (!canSendToWh && canSendToMe);
-            boolean canSend  = warehouseFirst ? canSendToWh : canSendToMe;
+            boolean canSend     = warehouseFirst ? canSendToWh : canSendToMe;
 
             if (canSend)
             {
                 int invSlotIdx = -1;
-                if (my >= topPos+Y_INV && my < topPos+Y_INV+3*SLOT)
-                { int r=((int)my-topPos-Y_INV)/SLOT, c=((int)mx-leftPos-INV_LEFT)/SLOT; invSlotIdx=PLAYER_INV_START+r*9+c; }
-                else if (my >= topPos+Y_HOTBAR && my < topPos+Y_HOTBAR+SLOT)
-                { int c=((int)mx-leftPos-INV_LEFT)/SLOT; invSlotIdx=PLAYER_HOTBAR_START+c; }
+                if (my >= topPos + INV_Y && my < topPos + INV_Y + 3 * SLOT_PITCH)
+                {
+                    int r = ((int) my - topPos - INV_Y) / SLOT_PITCH;
+                    int c = ((int) mx - leftPos - INV_X) / SLOT_PITCH;
+                    invSlotIdx = PLAYER_INV_START + r * 9 + c;
+                }
+                else if (my >= topPos + HOTBAR_Y && my < topPos + HOTBAR_Y + SLOT_PITCH)
+                {
+                    int c = ((int) mx - leftPos - INV_X) / SLOT_PITCH;
+                    invSlotIdx = PLAYER_HOTBAR_START + c;
+                }
                 if (invSlotIdx >= 0 && invSlotIdx < menu.slots.size())
                 {
                     ItemStack invStack = menu.slots.get(invSlotIdx).getItem();
@@ -599,241 +591,418 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
                     }
                 }
             }
-            // Si destination indisponible mais clic dans inventaire avec shift → absorber
-            // pour éviter que vanilla fasse un quickMove vers la grille craft
-            if (my >= topPos+Y_INV && my < topPos+Y_HOTBAR+SLOT)
-                return true;
+            if (my >= topPos + INV_Y && my < topPos + HOTBAR_Y + SLOT_PITCH) return true;
+        }
+
+        // ── Drag scrollbar WH ─────────────────────────────────────────────────
+        // Hitbox alignée sur le thumb rendu : trackX-1, width=11
+        if (over(mx, my, leftPos + SCROLL_WH_X - 1, topPos + SCROLL_TOP_Y,
+                11, SCROLL_BOT_Y - SCROLL_TOP_Y))
+        {
+            draggingWh = true; draggingAe = false;
+            dragStartY = (int) my;
+            dragStartScroll = whScroll;
+            return true;
+        }
+
+        // ── Drag scrollbar AE ─────────────────────────────────────────────────
+        if (over(mx, my, leftPos + SCROLL_AE_X - 1, topPos + SCROLL_TOP_Y,
+                11, SCROLL_BOT_Y - SCROLL_TOP_Y))
+        {
+            draggingAe = true; draggingWh = false;
+            dragStartY = (int) my;
+            dragStartScroll = meScroll;
+            return true;
         }
 
         // ── Search bars ───────────────────────────────────────────────────────
-        int sfY = topPos+H_HEADER-10;
-        if (my >= sfY && my < sfY+8) {
-            if (mx>=leftPos+X_WH+1&&mx<leftPos+X_WH+PANEL_W-1){whSearchFocused=true;meSearchFocused=false;return true;}
-            if (mx>=leftPos+X_ME+1&&mx<leftPos+X_ME+PANEL_W-1){meSearchFocused=true;whSearchFocused=false;return true;}
+        if (my >= topPos + SEARCH_Y && my < topPos + SEARCH_Y + SEARCH_H)
+        {
+            if (mx >= leftPos + SEARCH_WH_X && mx < leftPos + SEARCH_WH_X + SEARCH_WH_W)
+            { whSearchFocused = true; meSearchFocused = false; return true; }
+            if (mx >= leftPos + SEARCH_AE_X && mx < leftPos + SEARCH_AE_X + SEARCH_AE_W)
+            { meSearchFocused = true; whSearchFocused = false; return true; }
         }
         whSearchFocused = meSearchFocused = false;
 
-        // ── Panel WH — style AE2 PICKUP_OR_SET_DOWN ───────────────────────────
-        // Panel WH :
-        // - Si carried non-vide → PUT_INTO_WH (quelle que soit la cible, même slot vide)
-        // - Si carried vide ET slot non-vide → PICKUP_FROM_WH
-        // - Shift+clic → sélection
-        int ws = slot((int)mx,(int)my,leftPos+X_WH);
-        if (ws >= 0 && hasWarehouseCard && whErrorMsg.isEmpty()) {
-            int idx = whScroll*PANEL_COLS+ws;
+        // ── Slider WH/ME ──────────────────────────────────────────────────────
+        if (over(mx, my, leftPos + SLIDER_X, topPos + SLIDER_Y, SLIDER_W, SLIDER_H))
+        {
+            warehouseFirst = !warehouseFirst;
+            WarehouseLinkTerminalMenu.warehouseFirst = warehouseFirst;
+            return true;
+        }
+
+        // ── Bouton B1 : transférer sélection WH↔ME ───────────────────────────
+        if (over(mx, my, leftPos + BTN1_X, topPos + BTN1_Y, BTN_SZ, BTN_SZ))
+        {
+            btn1Pushed = true;
+            if (!whSelected.isEmpty())
+            {
+                for (int i : new ArrayList<>(whSelected))
+                    if (i < whFiltered.size())
+                    { var e = whFiltered.get(i); sendTx(e.stack(), (int) Math.min(e.count(), e.stack().getMaxStackSize()), TerminalTransferPacket.Direction.WH_TO_ME); }
+                whSelected.clear();
+            }
+            else if (!meSelected.isEmpty())
+            {
+                for (int i : new ArrayList<>(meSelected))
+                    if (i < meFiltered.size())
+                    { var e = meFiltered.get(i); sendTx(e.stack(), (int) Math.min(e.count(), e.stack().getMaxStackSize()), TerminalTransferPacket.Direction.ME_TO_WH); }
+                meSelected.clear();
+            }
+            return true;
+        }
+
+        // ── Bouton B2 : transférer sélection → inventaire ────────────────────
+        if (over(mx, my, leftPos + BTN2_X, topPos + BTN2_Y, BTN_SZ, BTN_SZ))
+        {
+            btn2Pushed = true;
+            if (!whSelected.isEmpty())
+            {
+                for (int i : new ArrayList<>(whSelected))
+                    if (i < whFiltered.size())
+                    { var e = whFiltered.get(i); sendTx(e.stack(), (int) Math.min(e.count(), e.stack().getMaxStackSize()), TerminalTransferPacket.Direction.WH_TO_PLAYER); }
+                whSelected.clear();
+            }
+            else if (!meSelected.isEmpty())
+            {
+                for (int i : new ArrayList<>(meSelected))
+                    if (i < meFiltered.size())
+                    { var e = meFiltered.get(i); sendTx(e.stack(), (int) Math.min(e.count(), e.stack().getMaxStackSize()), TerminalTransferPacket.Direction.ME_TO_PLAYER); }
+                meSelected.clear();
+            }
+            return true;
+        }
+
+        // ── Bouton 7 : clear grille → inventaire (hitbox invisible sur fond PNG) ───
+        if (over(mx, my, leftPos + 136, topPos + 273, 7, 7))
+        {
+            clearGridToInventory(shift);
+            return true;
+        }
+
+        // ── Bouton 8 : result → WH (hitbox invisible sur fond PNG) ──────────────
+        // count=1 → 1 craft ; count>1 (shift) → boucle max côté serveur
+        if (over(mx, my, leftPos + 252, topPos + 279, 7, 7))
+        {
+            ItemStack r = menu.getCraftResult().getItem(0);
+            if (!r.isEmpty())
+                sendTx(r.copy(), shift ? r.getMaxStackSize() : 1,
+                        TerminalTransferPacket.Direction.RESULT_TO_WH);
+            return true;
+        }
+
+        // ── Bouton 9 : result → ME (hitbox invisible sur fond PNG) ──────────────
+        if (over(mx, my, leftPos + 268, topPos + 279, 8, 7))
+        {
+            ItemStack r = menu.getCraftResult().getItem(0);
+            if (!r.isEmpty())
+                sendTx(r.copy(), shift ? r.getMaxStackSize() : 1,
+                        TerminalTransferPacket.Direction.RESULT_TO_ME);
+            return true;
+        }
+
+        // ── Bouton 10 : result → inventaire (hitbox invisible sur fond PNG) ──────
+        if (over(mx, my, leftPos + 260, topPos + 313, 7, 7))
+        {
+            ItemStack r = menu.getCraftResult().getItem(0);
+            if (!r.isEmpty())
+                this.slotClicked(menu.getSlot(CRAFT_OUTPUT_SLOT), CRAFT_OUTPUT_SLOT, 0,
+                        net.minecraft.world.inventory.ClickType.QUICK_MOVE);
+            return true;
+        }
+
+        // ── Panel WH — pick / set-down / select ──────────────────────────────
+        int ws = itemSlot((int) mx, (int) my, leftPos + X_ITEMS_WH);
+        if (ws >= 0 && hasWarehouseCard && whErrorMsg.isEmpty())
+        {
+            int idx = whScroll * PANEL_COLS + ws;
             ItemStack carried = minecraft.player.containerMenu.getCarried();
-            if (!shift && !carried.isEmpty()) {
-                // Carried non-vide : toujours déposer dans le WH (slot vide ou non)
+            if (!shift && !carried.isEmpty())
+            {
                 sendTx(carried.copy(), carried.getCount(), TerminalTransferPacket.Direction.PUT_INTO_WH);
                 whSelected.clear(); meSelected.clear();
                 return true;
             }
-            if (idx < whFiltered.size()) {
+            if (idx < whFiltered.size())
+            {
                 var e = whFiltered.get(idx);
-                if (shift) {
-                    if (whSelected.contains(idx)) whSelected.remove(idx); else whSelected.add(idx);
+                if (shift)
+                {
+                    // Shift+clic simple → transfert 1 stack vers inventaire
+                    // (si drag démarre, dragStartSlotWh permettra de distinguer)
+                    dragStartSlotWh = idx;
+                    dragStartSlotAe = -1;
+                    // On ne transfère pas encore — on attend mouseReleased
+                    // pour savoir si c'était un clic (1 slot) ou un drag (2+ slots)
                     meSelected.clear();
-                } else {
-                    // Carried vide : PICKUP depuis le WH
+                }
+                else
+                {
                     int pickCount = (btn == 1)
-                            ? (int)Math.min(Math.max(1,(e.count()+1)/2), e.stack().getMaxStackSize())
-                            : (int)Math.min(e.count(), e.stack().getMaxStackSize());
+                            ? (int) Math.min(Math.max(1, (e.count() + 1) / 2), e.stack().getMaxStackSize())
+                            : (int) Math.min(e.count(), e.stack().getMaxStackSize());
                     sendPickup(e.stack(), pickCount, TerminalTransferPacket.Direction.PICKUP_FROM_WH);
                     whSelected.clear(); meSelected.clear();
                 }
-                return true;
             }
-            // Slot vide dans le panel, carried vide aussi → absorber le clic
             return true;
         }
 
-        // Panel ME :
-        // - Si carried non-vide → PUT_INTO_ME (quelle que soit la cible, même slot vide)
-        // - Si carried vide ET slot non-vide → PICKUP_FROM_ME ou autocraft (middle)
-        // - Shift+clic → sélection
-        int ms = slot((int)mx,(int)my,leftPos+X_ME);
-        if (ms >= 0 && menu.getPart().isAe2Active()) {
-            int idx = meScroll*PANEL_COLS+ms;
+        // ── Panel AE — pick / set-down / select / autocraft ──────────────────
+        int ms = itemSlot((int) mx, (int) my, leftPos + X_ITEMS_AE);
+        if (ms >= 0 && menu.getPart().isAe2Active())
+        {
+            int idx = meScroll * PANEL_COLS + ms;
             ItemStack carried = minecraft.player.containerMenu.getCarried();
-            if (!shift && btn != 2 && !carried.isEmpty()) {
-                // Carried non-vide : toujours déposer dans le ME (slot vide ou non)
+            if (!shift && btn != 2 && !carried.isEmpty())
+            {
                 sendTx(carried.copy(), carried.getCount(), TerminalTransferPacket.Direction.PUT_INTO_ME);
                 whSelected.clear(); meSelected.clear();
                 return true;
             }
-            if (idx < meFiltered.size()) {
+            if (idx < meFiltered.size())
+            {
                 var e = meFiltered.get(idx);
-                if (btn == 2) {
-                    if (e.craftable()) PacketDistributor.sendToServer(new TerminalCraftPacket(
-                            TerminalCraftPacket.Mode.AUTOCRAFT, e.stack().copyWithCount(1), 1, partHostPos(), partSide()));
+                if (btn == 2)
+                {
+                    if (e.craftable())
+                        PacketDistributor.sendToServer(new TerminalCraftPacket(
+                                TerminalCraftPacket.Mode.AUTOCRAFT, e.stack().copyWithCount(1), 1,
+                                partHostPos(), partSide()));
                     return true;
                 }
-                if (shift) {
-                    if (meSelected.contains(idx)) meSelected.remove(idx); else meSelected.add(idx);
+                if (shift)
+                {
+                    // Shift+clic simple → transfert 1 stack vers inventaire
+                    // On attend mouseReleased pour distinguer clic (1 slot) vs drag (2+ slots)
+                    dragStartSlotAe = idx;
+                    dragStartSlotWh = -1;
                     whSelected.clear();
-                } else {
-                    // Carried vide : PICKUP depuis le ME
+                }
+                else
+                {
                     int pickCount;
-                    if (btn == 1) {
-                        long half=(e.count()+1)/2;
-                        pickCount=(int)Math.min(Math.max(1,half),e.stack().getMaxStackSize());
-                        if (e.count()<=0) pickCount=0;
-                    } else {
-                        pickCount = e.count()>0 ? (int)Math.min(e.count(),e.stack().getMaxStackSize()) : 1;
+                    if (btn == 1)
+                    {
+                        long half = (e.count() + 1) / 2;
+                        pickCount = (int) Math.min(Math.max(1, half), e.stack().getMaxStackSize());
+                        if (e.count() <= 0) pickCount = 0;
+                    }
+                    else
+                    {
+                        pickCount = e.count() > 0
+                                ? (int) Math.min(e.count(), e.stack().getMaxStackSize()) : 1;
                     }
                     if (pickCount > 0)
                         sendPickup(e.stack(), pickCount, TerminalTransferPacket.Direction.PICKUP_FROM_ME);
                     whSelected.clear(); meSelected.clear();
                 }
-                return true;
             }
-            // Slot vide dans le panel, carried vide aussi → absorber le clic
             return true;
         }
 
-        // ── Boutons centre ────────────────────────────────────────────────────
-        int totalH=2*BTN_H_CTR+(BTN_SP-BTN_H_CTR)+6+SLIDE_H;
-        int sY=topPos+H_HEADER+(ROWS_H-totalH)/2;
-        int bX=leftPos+X_CTR+(CTR_W-BTN_W_CTR)/2;
+        return super.mouseClicked(mx, my, btn);
+    }
 
-        if (over(mx,my,bX,sY,BTN_W_CTR,BTN_H_CTR)) {
-            if (!whSelected.isEmpty()) { for(int i:new ArrayList<>(whSelected)){ if(i<whFiltered.size()){var e=whFiltered.get(i);sendTx(e.stack(),(int)Math.min(e.count(),e.stack().getMaxStackSize()),TerminalTransferPacket.Direction.WH_TO_ME);} } whSelected.clear(); }
-            else if (!meSelected.isEmpty()) { for(int i:new ArrayList<>(meSelected)){ if(i<meFiltered.size()){var e=meFiltered.get(i);sendTx(e.stack(),(int)Math.min(e.count(),e.stack().getMaxStackSize()),TerminalTransferPacket.Direction.ME_TO_WH);} } meSelected.clear(); }
-            return true;
+    @Override public boolean mouseReleased(double mx, double my, int btn)
+    {
+        draggingWh = draggingAe = false;
+        btn1Pushed = btn2Pushed = false;
+
+        // Shift+clic simple (pas de drag vers un autre slot) → transfert 1 stack → inventaire
+        if (dragStartSlotWh >= 0 && dragStartSlotWh < whFiltered.size())
+        {
+            var e = whFiltered.get(dragStartSlotWh);
+            int count = (int) Math.min(e.count(), e.stack().getMaxStackSize());
+            if (count > 0)
+                sendTx(e.stack().copy(), count, TerminalTransferPacket.Direction.WH_TO_PLAYER);
         }
-        if (over(mx,my,bX,sY+BTN_SP,BTN_W_CTR,BTN_H_CTR)) {
-            if (!whSelected.isEmpty()) { for(int i:new ArrayList<>(whSelected)){ if(i<whFiltered.size()){var e=whFiltered.get(i);sendTx(e.stack(),(int)Math.min(e.count(),e.stack().getMaxStackSize()),TerminalTransferPacket.Direction.WH_TO_PLAYER);} } whSelected.clear(); }
-            else if (!meSelected.isEmpty()) { for(int i:new ArrayList<>(meSelected)){ if(i<meFiltered.size()){var e=meFiltered.get(i);sendTx(e.stack(),(int)Math.min(e.count(),e.stack().getMaxStackSize()),TerminalTransferPacket.Direction.ME_TO_PLAYER);} } meSelected.clear(); }
-            return true;
+        dragStartSlotWh = -1;
+
+        if (dragStartSlotAe >= 0 && dragStartSlotAe < meFiltered.size())
+        {
+            var e = meFiltered.get(dragStartSlotAe);
+            int count = e.count() > 0 ? (int) Math.min(e.count(), e.stack().getMaxStackSize()) : 0;
+            if (count > 0)
+                sendTx(e.stack().copy(), count, TerminalTransferPacket.Direction.ME_TO_PLAYER);
         }
-        if (over(mx,my,leftPos+X_CTR+1,sY+BTN_SP+BTN_H_CTR+6,CTR_W-2,SLIDE_H))
-        { warehouseFirst=!warehouseFirst; WarehouseLinkTerminalMenu.warehouseFirst=warehouseFirst; return true; }
+        dragStartSlotAe = -1;
 
-        // ── Boutons craft (Option A) ───────────────────────────────────────────
-        if (over(mx,my,leftPos+BTN_STORAGE_X,topPos+BTN_CRAFT_Y,BTN_W,BTN_H)) { clearGridToStorage(shift); return true; }
-        if (over(mx,my,leftPos+BTN_INV_X,topPos+BTN_CRAFT_Y,BTN_W,BTN_H))     { clearGridToInventory(shift); return true; }
-
-        return super.mouseClicked(mx,my,btn);
+        return super.mouseReleased(mx, my, btn);
     }
 
     @Override public boolean mouseDragged(double mx, double my, int btn, double dx, double dy)
     {
+        float cx = this.width / 2f, cy = this.height / 2f;
+        mx = toGui(mx, cx, guiScale); my = toGui(my, cy, guiScale);
+
+        // ── Drag scrollbar ────────────────────────────────────────────────────
+        if (draggingWh || draggingAe)
+        {
+            int trackH    = SCROLL_BOT_Y - SCROLL_TOP_Y; // 194px
+            int deltaPx   = (int) my - dragStartY;
+            List<?> list  = draggingWh ? whFiltered : meFiltered;
+            int maxRows   = (int) Math.ceil(list.size() / (double) PANEL_COLS);
+            int maxScroll = Math.max(1, maxRows - PANEL_ROWS);
+            int pixPerRow = Math.max(1, (trackH - SCROLL_THUMB_H) / maxScroll);
+            int newScroll = dragStartScroll + deltaPx / pixPerRow;
+            if (draggingWh) whScroll = clamp(newScroll, whFiltered.size());
+            else             meScroll = clamp(newScroll, meFiltered.size());
+            return true;
+        }
+
+        // ── Shift+drag sélection items (commence à 2 slots différents) ──────────
         if (hasShiftDown())
         {
-            int ws=slot((int)mx,(int)my,leftPos+X_WH);
-            if(ws>=0&&hasWarehouseCard){ int idx=whScroll*PANEL_COLS+ws; if(idx<whFiltered.size()){ meSelected.clear(); whSelected.add(idx); return true; } }
-            int ms=slot((int)mx,(int)my,leftPos+X_ME);
-            if(ms>=0&&menu.getPart().isAe2Active()){ int idx=meScroll*PANEL_COLS+ms; if(idx<meFiltered.size()){ whSelected.clear(); meSelected.add(idx); return true; } }
+            int ws = itemSlot((int) mx, (int) my, leftPos + X_ITEMS_WH);
+            if (ws >= 0 && hasWarehouseCard)
+            {
+                int idx = whScroll * PANEL_COLS + ws;
+                if (idx < whFiltered.size() && idx != dragStartSlotWh)
+                {
+                    // On est sur un slot différent du départ → mode sélection activé
+                    if (dragStartSlotWh >= 0) whSelected.add(dragStartSlotWh); // ajouter le slot de départ
+                    whSelected.add(idx);
+                    meSelected.clear();
+                    dragStartSlotWh = -1; // neutralise le transfert au release
+                    return true;
+                }
+            }
+            int ms = itemSlot((int) mx, (int) my, leftPos + X_ITEMS_AE);
+            if (ms >= 0 && menu.getPart().isAe2Active())
+            {
+                int idx = meScroll * PANEL_COLS + ms;
+                if (idx < meFiltered.size() && idx != dragStartSlotAe)
+                {
+                    if (dragStartSlotAe >= 0) meSelected.add(dragStartSlotAe);
+                    meSelected.add(idx);
+                    whSelected.clear();
+                    dragStartSlotAe = -1;
+                    return true;
+                }
+            }
         }
-        return super.mouseDragged(mx,my,btn,dx,dy);
+        return super.mouseDragged(mx, my, btn, dx, dy);
     }
 
     @Override public boolean mouseScrolled(double mx, double my, double dx, double dy)
     {
-        int rT=topPos+H_HEADER, rB=rT+ROWS_H;
-        if(my>=rT&&my<rB){
-            if(mx>=leftPos+X_WH&&mx<leftPos+X_WH+PANEL_W+SCROLL_W){ whScroll=clamp(whScroll-(int)Math.signum(dy),whFiltered.size()); return true; }
-            if(mx>=leftPos+X_ME&&mx<leftPos+X_ME+PANEL_W+SCROLL_W){ meScroll=clamp(meScroll-(int)Math.signum(dy),meFiltered.size()); return true; }
-        }
-        return super.mouseScrolled(mx,my,dx,dy);
+        float cx = this.width / 2f, cy = this.height / 2f;
+        mx = toGui(mx, cx, guiScale); my = toGui(my, cy, guiScale);
+
+        int rT = topPos + Y_ITEMS;
+        int rB = rT + PANEL_ROWS * SLOT_PITCH;
+
+        // Scroll WH : souris sur le panel WH uniquement (pas sur la track scrollbar)
+        if (my >= rT && my < rB
+                && mx >= leftPos + X_ITEMS_WH
+                && mx < leftPos + X_ITEMS_WH + PANEL_COLS * SLOT_PITCH)
+        { whScroll = clamp(whScroll - (int) Math.signum(dy), whFiltered.size()); return true; }
+
+        // Scroll AE : souris sur le panel AE uniquement (pas sur la track scrollbar)
+        if (my >= rT && my < rB
+                && mx >= leftPos + X_ITEMS_AE
+                && mx < leftPos + X_ITEMS_AE + PANEL_COLS * SLOT_PITCH)
+        { meScroll = clamp(meScroll - (int) Math.signum(dy), meFiltered.size()); return true; }
+
+        return super.mouseScrolled(mx, my, dx, dy);
     }
 
     @Override public boolean keyPressed(int key, int scan, int mod)
     {
-        if(whSearchFocused){ if(key==259&&!whSearch.isEmpty())whSearch=whSearch.substring(0,whSearch.length()-1); else if(key==256)whSearchFocused=false; rebuildWh(); return true; }
-        if(meSearchFocused){ if(key==259&&!meSearch.isEmpty())meSearch=meSearch.substring(0,meSearch.length()-1); else if(key==256)meSearchFocused=false; rebuildMe(); return true; }
-        return super.keyPressed(key,scan,mod);
+        if (whSearchFocused)
+        {
+            if (key == 259 && !whSearch.isEmpty()) whSearch = whSearch.substring(0, whSearch.length() - 1);
+            else if (key == 256) whSearchFocused = false;
+            rebuildWh(); return true;
+        }
+        if (meSearchFocused)
+        {
+            if (key == 259 && !meSearch.isEmpty()) meSearch = meSearch.substring(0, meSearch.length() - 1);
+            else if (key == 256) meSearchFocused = false;
+            rebuildMe(); return true;
+        }
+        return super.keyPressed(key, scan, mod);
     }
 
     @Override public boolean charTyped(char c, int mod)
     {
-        if(whSearchFocused){ whSearch+=c; rebuildWh(); return true; }
-        if(meSearchFocused){ meSearch+=c; rebuildMe(); return true; }
-        return super.charTyped(c,mod);
+        if (whSearchFocused) { whSearch += c; rebuildWh(); return true; }
+        if (meSearchFocused) { meSearch += c; rebuildMe(); return true; }
+        return super.charTyped(c, mod);
     }
 
     // =========================================================================
     // ACTIONS BOUTONS CRAFT
     // =========================================================================
-    private void clearGridToStorage(boolean shift)
-    {
-        PacketDistributor.sendToServer(new TerminalTransferPacket(ItemStack.EMPTY,0,
-                warehouseFirst ? TerminalTransferPacket.Direction.CRAFT_TO_WH
-                        : TerminalTransferPacket.Direction.CRAFT_TO_ME,
-                partHostPos(),partSide()));
-        if (shift)
-        {
-            ItemStack r=menu.getCraftResult().getItem(0);
-            if (!r.isEmpty()) sendTx(r.copy(),r.getCount(),
-                    warehouseFirst ? TerminalTransferPacket.Direction.RESULT_TO_WH
-                            : TerminalTransferPacket.Direction.RESULT_TO_ME);
-        }
-    }
-
     private void clearGridToInventory(boolean shift)
     {
-        PacketDistributor.sendToServer(new TerminalTransferPacket(ItemStack.EMPTY,0,
-                TerminalTransferPacket.Direction.CRAFT_TO_PLAYER,partHostPos(),partSide()));
+        PacketDistributor.sendToServer(new TerminalTransferPacket(
+                ItemStack.EMPTY, 0,
+                TerminalTransferPacket.Direction.CRAFT_TO_PLAYER,
+                partHostPos(), partSide()));
         if (shift)
         {
-            ItemStack r=menu.getCraftResult().getItem(0);
-            if (!r.isEmpty()) this.slotClicked(menu.getSlot(CRAFT_OUTPUT_SLOT),CRAFT_OUTPUT_SLOT,0,net.minecraft.world.inventory.ClickType.QUICK_MOVE);
+            ItemStack r = menu.getCraftResult().getItem(0);
+            if (!r.isEmpty())
+                this.slotClicked(menu.getSlot(CRAFT_OUTPUT_SLOT), CRAFT_OUTPUT_SLOT, 0,
+                        net.minecraft.world.inventory.ClickType.QUICK_MOVE);
         }
     }
 
     // =========================================================================
     // HELPERS
     // =========================================================================
-    /** Envoie un packet PICKUP : template (count=1) + count demandé. */
     private void sendPickup(ItemStack template, int count, TerminalTransferPacket.Direction dir)
     { PacketDistributor.sendToServer(new TerminalTransferPacket(template.copyWithCount(1), count, dir, partHostPos(), partSide())); }
 
     private void sendTx(ItemStack s, int n, TerminalTransferPacket.Direction d)
-    { PacketDistributor.sendToServer(new TerminalTransferPacket(s.copyWithCount(n),n,d,partHostPos(),partSide())); }
+    { PacketDistributor.sendToServer(new TerminalTransferPacket(s.copyWithCount(n), n, d, partHostPos(), partSide())); }
 
-    private int slot(int mx, int my, int pX)
-    { int rT=topPos+H_HEADER; if(mx<pX||mx>=pX+PANEL_W||my<rT||my>=rT+PANEL_ROWS*SLOT)return -1; int col=(mx-pX)/SLOT,row=(my-rT)/SLOT; if(col>=PANEL_COLS||row>=PANEL_ROWS)return -1; return row*PANEL_COLS+col; }
+    /** Retourne l'index linéaire (row*PANEL_COLS+col) du slot survolé dans un panel, ou -1. */
+    private int itemSlot(int mx, int my, int panelX)
+    {
+        int rT = topPos + Y_ITEMS;
+        int rB = rT + PANEL_ROWS * SLOT_PITCH;
+        if (mx < panelX || mx >= panelX + PANEL_COLS * SLOT_PITCH || my < rT || my >= rB) return -1;
+        int col = (mx - panelX) / SLOT_PITCH;
+        int row = (my - rT)     / SLOT_PITCH;
+        if (col >= PANEL_COLS || row >= PANEL_ROWS) return -1;
+        return row * PANEL_COLS + col;
+    }
 
-    private int clamp(int s, int tot) { int max=Math.max(0,(int)Math.ceil(tot/(double)PANEL_COLS)-PANEL_ROWS); return Math.max(0,Math.min(s,max)); }
-    private boolean over(double mx, double my, int bx, int by, int bw, int bh) { return mx>=bx&&mx<bx+bw&&my>=by&&my<by+bh; }
+    private int clamp(int s, int tot)
+    {
+        int max = Math.max(0, (int) Math.ceil(tot / (double) PANEL_COLS) - PANEL_ROWS);
+        return Math.max(0, Math.min(s, max));
+    }
 
-    /**
-     * v1.3.8 — Format compact style AE2 pour les compteurs d'items.
-     *
-     * Règles (max 4 caractères) :
-     *   0-999          → "0", "1", ..., "999"
-     *   1000-9999      → "1.0K", "1.5K", ..., "9.9K"     (1 décimale)
-     *   10_000-999_999 → "10K", "11K", ..., "999K"        (pas de décimale)
-     *   1M-9.9M        → "1.0M", ..., "9.9M"              (1 décimale)
-     *   10M-999M       → "10M", "11M", ..., "999M"
-     *   1B-9.9B        → "1.0B", ..., "9.9B"
-     *   10B+           → "10B", "11B", ..., "999B" (plafond fonctionnel)
-     *   au-delà        → "∞"  (improbable mais on évite tout overflow visuel)
-     */
+    private boolean over(double mx, double my, int bx, int by, int bw, int bh)
+    { return mx >= bx && mx < bx + bw && my >= by && my < by + bh; }
+
     private static String fmtCount(long n)
     {
-        if (n < 0)             return "0";
-        if (n < 1_000)         return Long.toString(n);
-        if (n < 10_000)        return fmtDecimal(n, 1_000)  + "K";   // 1.0K..9.9K
-        if (n < 1_000_000)     return (n / 1_000)           + "K";   // 10K..999K
-        if (n < 10_000_000)    return fmtDecimal(n, 1_000_000) + "M";// 1.0M..9.9M
-        if (n < 1_000_000_000) return (n / 1_000_000)       + "M";   // 10M..999M
-        if (n < 10_000_000_000L)  return fmtDecimal(n, 1_000_000_000L) + "B"; // 1.0B..9.9B
-        if (n < 1_000_000_000_000L) return (n / 1_000_000_000L) + "B";        // 10B..999B
-        return "\u221e"; // ∞ — au-delà de 1T, indicateur fonctionnel
+        if (n < 0)               return "0";
+        if (n < 1_000)           return Long.toString(n);
+        if (n < 10_000)          return fmtDecimal(n, 1_000)       + "K";
+        if (n < 1_000_000)       return (n / 1_000)                + "K";
+        if (n < 10_000_000)      return fmtDecimal(n, 1_000_000)   + "M";
+        if (n < 1_000_000_000)   return (n / 1_000_000)            + "M";
+        if (n < 10_000_000_000L) return fmtDecimal(n, 1_000_000_000L) + "B";
+        if (n < 1_000_000_000_000L) return (n / 1_000_000_000L)   + "B";
+        return "\u221e";
     }
 
-    /** Helper : formate n/divisor avec 1 décimale, ex: fmtDecimal(1500, 1000) = "1.5". */
     private static String fmtDecimal(long n, long divisor)
-    {
-        long whole = n / divisor;
-        long frac  = (n * 10 / divisor) % 10;
-        return whole + "." + frac;
-    }
+    { return (n / divisor) + "." + ((n * 10 / divisor) % 10); }
 
     private net.minecraft.core.BlockPos partHostPos()
-    { var be=menu.getPart().getHostBlockEntity(); return be!=null?be.getBlockPos():net.minecraft.core.BlockPos.ZERO; }
-    private int partSide() { var s=menu.getPart().getSide(); return s!=null?s.ordinal():0; }
+    { var be = menu.getPart().getHostBlockEntity(); return be != null ? be.getBlockPos() : net.minecraft.core.BlockPos.ZERO; }
+
+    private int partSide()
+    { var s = menu.getPart().getSide(); return s != null ? s.ordinal() : 0; }
 
     public record MeItemEntry(ItemStack stack, long count, boolean craftable) {}
 }
