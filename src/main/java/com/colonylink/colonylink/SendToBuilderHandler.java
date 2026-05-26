@@ -124,6 +124,15 @@ public class SendToBuilderHandler
             return;
         }
 
+        // Vérification chunk chargé — si le chunk du Builder's Hut n'est pas chargé,
+        // on refuse l'envoi pour éviter de déduire les items sans les livrer.
+        if (!level.isLoaded(targetPos))
+        {
+            player.sendSystemMessage(Component.literal(
+                    "§c[ColonyLink] Builder's Hut chunk is not loaded. Move closer and try again."));
+            return;
+        }
+
         // ── Fix #3 : utilise getBuildingHandlers() au lieu de getCapability direct ──
         // Le Builder's Hut MineColonies n'expose pas d'IItemHandler via capability
         // sur sa position de bloc. On passe par getBuildingHandlers() qui interroge

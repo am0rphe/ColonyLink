@@ -110,6 +110,7 @@ public class ColonyLinkWandCharger
         long stored   = WandEnergyStorage.getStoredRF(wandStack);
         long capacity = ColonyLinkConfig.WAND_RF_CAPACITY.get();
         int threshold = ColonyLinkConfig.LOW_POWER_THRESHOLD_PERCENT.get();
+        if (capacity <= 0) return false;
         return (stored * 100L / capacity) < threshold;
     }
 

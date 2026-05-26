@@ -86,7 +86,7 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
     private boolean warehousePriorityClientCache = false;
 
     /** true si un craft Domum est en cours d'exécution ce tick. */
-    private boolean craftBusy = false;
+    private volatile boolean craftBusy = false;
 
     /** File d'attente des crafts Domum à exécuter (un par tick). */
     private final Queue<PendingDomumCraft> craftQueue = new ConcurrentLinkedQueue<>();
@@ -348,8 +348,21 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
 
         if (result.isEmpty())
         {
-            ColonyLink.LOGGER.error("[DomumPattern] Failed to build Domum result for: {}",
+            ColonyLink.LOGGER.error("[DomumPattern] Failed to build Domum result for: {}. Returning materials to ME.",
                     targetStack.getDisplayName().getString());
+            // Retourner les matériaux extraits au réseau ME
+            for (ItemStack mat : materials)
+            {
+                if (mat.isEmpty()) continue;
+                AEItemKey matKey = AEItemKey.of(mat);
+                if (matKey == null) continue;
+                appeng.api.networking.security.IActionSource src =
+                        appeng.api.networking.security.IActionSource.ofMachine(this);
+                IGridNode node = gridNode.getNode();
+                if (node != null && node.isActive())
+                    node.getGrid().getStorageService().getInventory()
+                            .insert(matKey, mat.getCount(), Actionable.MODULATE, src);
+            }
             craftBusy = false;
             return;
         }
@@ -417,9 +430,15 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
         appeng.api.networking.security.IActionSource src =
                 appeng.api.networking.security.IActionSource.ofMachine(this);
 
-        node.getGrid().getStorageService()
+        long inserted = node.getGrid().getStorageService()
                 .getInventory()
                 .insert(key, stack.getCount(), Actionable.MODULATE, src);
+
+        if (inserted < stack.getCount())
+        {
+            ColonyLink.LOGGER.warn("[DomumPattern] ME network could not accept full output. Inserted {}/{} of {}",
+                    inserted, stack.getCount(), stack.getDisplayName().getString());
+        }
     }
 
     /**
@@ -440,7 +459,6 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
         super.onLoad();
         if (level != null && !level.isClientSide())
         {
-            gridNode.create(level, worldPosition);
             level.scheduleTick(worldPosition, getBlockState().getBlock(), 1);
         }
     }
@@ -460,6 +478,8 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
     {
         if (firstTickDone) return;
         firstTickDone = true;
+        // Créer le nœud AE2 au premier tick serveur (pas dans onLoad — chargement async)
+        gridNode.create(level, worldPosition);
         for (Direction dir : Direction.values())
             level.updateNeighborsAt(pos.relative(dir), level.getBlockState(pos.relative(dir)).getBlock());
         // Annonce initiale des patterns au réseau

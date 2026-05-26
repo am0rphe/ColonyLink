@@ -331,6 +331,14 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
             ColonyLinkServerTicker.unregisterTerminalPart(this);
     }
 
+    /** Appelé par le handler de déconnexion pour purger un viewer sans référence au Player. */
+    public void removeViewerById(UUID playerId)
+    {
+        viewers.remove(playerId);
+        if (viewers.isEmpty())
+            ColonyLinkServerTicker.unregisterTerminalPart(this);
+    }
+
     public void requestImmediateSync()
     {
         if (viewers.isEmpty()) return;

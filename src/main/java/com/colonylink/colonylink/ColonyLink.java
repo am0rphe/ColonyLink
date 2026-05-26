@@ -138,7 +138,7 @@ public class ColonyLink
     {
         event.enqueueWork(() -> {
             GridLinkables.register(COLONY_LINK_WAND.get(), LINKABLE_HANDLER);
-            LOGGER.info("ColonyLink v1.4.2 loaded — DomumCutterLink / ICraftingProvider registered.");
+            LOGGER.info("ColonyLink v1.4.4 loaded — DomumCutterLink / ICraftingProvider registered.");
         });
     }
 

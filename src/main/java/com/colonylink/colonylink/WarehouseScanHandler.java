@@ -58,6 +58,12 @@ public class WarehouseScanHandler
     /** Dernier tick de scan par UUID joueur. */
     private static final Map<java.util.UUID, Long> lastScanTick = new HashMap<>();
 
+    /** Appelé lors de la déconnexion d'un joueur pour libérer l'entrée de cooldown. */
+    public static void clearPlayer(java.util.UUID playerId)
+    {
+        lastScanTick.remove(playerId);
+    }
+
     // ────────────────────────────────────────────────────────────────────────
     // Point d'entrée
     // ────────────────────────────────────────────────────────────────────────

@@ -71,7 +71,18 @@ public class ColonyLinkServerTicker
     public static void onPlayerLogout(PlayerEvent.PlayerLoggedOutEvent event)
     {
         if (event.getEntity() instanceof ServerPlayer sp)
-            activeViewers.remove(sp.getUUID());
+        {
+            UUID uid = sp.getUUID();
+            activeViewers.remove(uid);
+
+            // v1.4.4 — Nettoyage cooldown warehouse scan
+            WarehouseScanHandler.clearPlayer(uid);
+
+            // v1.4.4 — Purge le viewer de toutes les Parts terminal actives
+            // (déconnexion brutale sans paquet de fermeture propre)
+            for (WarehouseLinkTerminalPart part : activeTerminalParts)
+                part.removeViewerById(uid);
+        }
     }
 
     // ── Immediate update ──────────────────────────────────────────────────────
