@@ -22,7 +22,7 @@ import java.util.List;
 public class ColonyLinkScreen extends Screen
 {
     // ── #5 : Badge hotbar — expose le compte de tabs non lues pour le renderer ──
-    // Mis à jour à chaque applyPacket(). Lu par ColonyLinkHudRenderer.
+    // Mis à jour à chaque applyPacket().
     public static int UNREAD_TAB_COUNT = 0;
 
     private static final int GUI_WIDTH  = 276;
@@ -303,6 +303,10 @@ public class ColonyLinkScreen extends Screen
     private int getRestartBtnW() { return 52; }
     private int getRestartBtnH() { return 14; }
 
+    // Locate button dimensions (position calculée dynamiquement dans drawInfoPanel / mouseClicked)
+    private static final int LOCATE_BTN_W = 40;
+    private static final int LOCATE_BTN_H = 14;
+
     private int getDeleteBtnX() { return getGuiX() + 8; }
     private int getDeleteBtnY() { return getGuiY() + 4; }
     private int getDeleteBtnW() { return 46; }
@@ -464,6 +468,8 @@ public class ColonyLinkScreen extends Screen
         if (isButtonClickable(status)) return true;
         if (status == ResourceStatus.NO_PATTERN)
         {
+            // Items Domum sans pattern → toujours cliquable (envoie dans la queue terminal)
+            if (DomumCraftHandler.isDomumItem(stack)) return true;
             WarehouseResultPacket.WarehouseEntry we = getWarehouseEntry(stack);
             return we != null && (we.inWarehouse() > 0 || we.viaCraft() > 0);
         }
@@ -768,7 +774,7 @@ public class ColonyLinkScreen extends Screen
     }
 
     // ── Info panel ────────────────────────────────────────────────────────────
-    private void drawInfoPanel(GuiGraphics g, int x, int y)
+    private void drawInfoPanel(GuiGraphics g, int x, int y, int mx, int my)
     {
         ColonyLinkGuiConfig _c = ColonyLinkGuiConfig.get();
         int panelH = 58;
@@ -781,6 +787,17 @@ public class ColonyLinkScreen extends Screen
         if (!isOutOfPower())
         {
             g.drawString(this.font, "§7Builder: §f" + builderName,   x + 10, y + 26, 0xFFFFFF, false);
+
+            // Bouton Locate — à droite sur la ligne Builder, masqué sur l'onglet Citizens
+            if (activeTabIndex != CITIZENS_TAB_INDEX)
+            {
+                int lbX = x + GUI_WIDTH - 6 - LOCATE_BTN_W - 4;
+                int lbY = y + 22;
+                boolean lHov = mx >= lbX && mx <= lbX + LOCATE_BTN_W
+                        && my >= lbY && my <= lbY + LOCATE_BTN_H;
+                drawButton(g, lbX, lbY, LOCATE_BTN_W, LOCATE_BTN_H,
+                        lHov ? 0xFF1A5C2E : 0xFF0F3A1E, "Locate", 0xFF44DD88);
+            }
             g.drawString(this.font, "§7Building: §f" + buildingName, x + 10, y + 36, 0xFFFFFF, false);
 
             String sl = "§7Status: ";
@@ -1067,7 +1084,7 @@ public class ColonyLinkScreen extends Screen
         }
         else
         {
-            drawInfoPanel(g, x, y);
+            drawInfoPanel(g, x, y, mx, my);
             if (!isOutOfPower())
                 drawRequestPanel(g, x, y, mx, my, tip);
         }
@@ -1422,6 +1439,20 @@ public class ColonyLinkScreen extends Screen
             tip.add(Component.literal("§8The Redirector itself is not affected."));
         }
 
+        // Tooltip bouton Locate (dans le panel info)
+        if (activeTabIndex != CITIZENS_TAB_INDEX && !isOutOfPower())
+        {
+            int lbXT = x + GUI_WIDTH - 6 - LOCATE_BTN_W - 4;
+            int lbYT = y + 22;
+            if (mx >= lbXT && mx <= lbXT + LOCATE_BTN_W && my >= lbYT && my <= lbYT + LOCATE_BTN_H)
+            {
+                tip.clear();
+                tip.add(Component.literal("§aLocate Builder"));
+                tip.add(Component.literal("§7Applies §fGlowing§7 to the assigned builder NPC"));
+                tip.add(Component.literal("§7for §f" + ColonyLinkConfig.LOCATE_GLOW_DURATION_SECONDS.get() + "s§7. Visible through walls."));
+            }
+        }
+
         if (ColonyLinkGuiConfig.get().scale != 1.0f)
             g.pose().popPose();
 
@@ -1540,6 +1571,18 @@ public class ColonyLinkScreen extends Screen
             return true;
         }
 
+        // Bouton Locate — dans le panel info, uniquement hors onglet Citizens
+        if (activeTabIndex != CITIZENS_TAB_INDEX && !isOutOfPower())
+        {
+            int lbX = getGuiX() + GUI_WIDTH - 6 - LOCATE_BTN_W - 4;
+            int lbY = getGuiY() + 22;
+            if (mx >= lbX && mx <= lbX + LOCATE_BTN_W && my >= lbY && my <= lbY + LOCATE_BTN_H)
+            {
+                PacketDistributor.sendToServer(new LocateBuilderPacket(builderPos));
+                return true;
+            }
+        }
+
         if (isOutOfPower()) return super.mouseClicked(mx, my, btn);
 
         if (hasWarehouseCard && !redirectorPos.equals(BlockPos.ZERO))
@@ -1569,7 +1612,7 @@ public class ColonyLinkScreen extends Screen
         {
             int rbX2 = getReqBtnX(), rbY2 = getReqBtnY(), rbW2 = getReqBtnW(), rbH2 = getReqBtnH();
             if (mx >= rbX2 && mx <= rbX2 + rbW2 && my >= rbY2 && my <= rbY2 + rbH2
-                    && isButtonClickable(builderRequest.status()))
+                    && isButtonClickable(builderRequest.status(), builderRequest.stack()))
             {
                 switch (builderRequest.status())
                 {
@@ -1580,21 +1623,21 @@ public class ColonyLinkScreen extends Screen
                     }
                     case CRAFTABLE ->
                     {
-                        // Domum CRAFTABLE → craft virtuel via composants (AE2 et RS2)
-                        if (DomumCraftHandler.isDomumItem(builderRequest.stack()))
-                            PacketDistributor.sendToServer(new CraftRequestPacket(
-                                    builderRequest.stack(), builderRequest.count(),
-                                    true, builderRequest.redirectorPos(), ResourceStatus.CRAFTABLE));
-                        else
-                            PacketDistributor.sendToServer(new CraftRequestPacket(
-                                    builderRequest.stack(), builderRequest.count(),
-                                    false, BlockPos.ZERO, ResourceStatus.CRAFTABLE));
+                        PacketDistributor.sendToServer(new CraftRequestPacket(
+                                builderRequest.stack(), builderRequest.count(),
+                                false, BlockPos.ZERO, ResourceStatus.CRAFTABLE));
                     }
                     case MISSING ->
                     {
                         PacketDistributor.sendToServer(new CraftRequestPacket(
                                 builderRequest.stack(), builderRequest.count(),
                                 DomumCraftHandler.isDomumItem(builderRequest.stack()), builderRequest.redirectorPos(), ResourceStatus.MISSING));
+                    }
+                    case NO_PATTERN ->
+                    {
+                        if (DomumCraftHandler.isDomumItem(builderRequest.stack()))
+                            PacketDistributor.sendToServer(new DomumQueuePacket(
+                                    builderRequest.redirectorPos(), builderRequest.stack()));
                     }
                     default -> {}
                 }
@@ -1626,10 +1669,9 @@ public class ColonyLinkScreen extends Screen
                 if (entry.status() == ResourceStatus.CRAFTABLE)
                 {
                     submitted++;
-                    if (entry.isDomum())
-                        PacketDistributor.sendToServer(new CraftRequestPacket(
-                                entry.stack(), entry.realCount(), true, entry.redirectorPos(), ResourceStatus.CRAFTABLE));
-                    else { toCraft.add(entry.stack()); counts.add(entry.realCount()); }
+                    // Domum CRAFTABLE depuis v1.4.3 : même chemin que standard (ICraftingProvider)
+                    toCraft.add(entry.stack());
+                    counts.add(entry.realCount());
                 }
                 else if (entry.status() == ResourceStatus.MISSING)
                 {
@@ -1653,12 +1695,25 @@ public class ColonyLinkScreen extends Screen
         int saX = getSendAllBtnX(), saY = getSendAllBtnY(), saW = getSendAllBtnW(), saH = getSendAllBtnH();
         if (mx >= saX && mx <= saX + saW && my >= saY && my <= saY + saH && hasAvailableItems())
         {
+            // Envoyer la Priority Request en premier si elle est AVAILABLE
+            if (builderRequest != null && !builderRequest.stack().isEmpty()
+                    && builderRequest.status() == ResourceStatus.AVAILABLE)
+            {
+                PacketDistributor.sendToServer(new SendToBuilderPacket(
+                        builderRequest.stack(), builderPos, builderRequest.count()));
+            }
+            // Puis envoyer le reste de la liste (sauf la priority request si déjà envoyée)
             for (var entry : entries)
-                if (entry.status() == ResourceStatus.AVAILABLE)
-                {
-                    PacketDistributor.sendToServer(new SendToBuilderPacket(
-                            entry.stack(), builderPos, entry.realCount()));
-                }
+            {
+                if (entry.status() != ResourceStatus.AVAILABLE) continue;
+                // Éviter le double envoi si la priority request est aussi dans la liste
+                if (builderRequest != null && !builderRequest.stack().isEmpty()
+                        && builderRequest.status() == ResourceStatus.AVAILABLE
+                        && ItemStack.isSameItemSameComponents(entry.stack(), builderRequest.stack()))
+                    continue;
+                PacketDistributor.sendToServer(new SendToBuilderPacket(
+                        entry.stack(), builderPos, entry.realCount()));
+            }
             return true;
         }
 
@@ -1782,10 +1837,19 @@ public class ColonyLinkScreen extends Screen
                 }
                 else if (entry.status() == ResourceStatus.NO_PATTERN)
                 {
-                    var we = getWarehouseEntry(entry.stack());
-                    if (we != null && (we.inWarehouse() > 0 || we.viaCraft() > 0))
-                        PacketDistributor.sendToServer(new WarehouseCraftPacket(
-                                entry.stack(), entry.realCount(), entry.isDomum(), entry.redirectorPos()));
+                    if (entry.isDomum())
+                    {
+                        // v1.4.8 — Envoie l'item Domum dans la queue du terminal
+                        PacketDistributor.sendToServer(new DomumQueuePacket(
+                                entry.redirectorPos(), entry.stack()));
+                    }
+                    else
+                    {
+                        var we = getWarehouseEntry(entry.stack());
+                        if (we != null && (we.inWarehouse() > 0 || we.viaCraft() > 0))
+                            PacketDistributor.sendToServer(new WarehouseCraftPacket(
+                                    entry.stack(), entry.realCount(), entry.isDomum(), entry.redirectorPos()));
+                    }
                 }
                 return true;
             }

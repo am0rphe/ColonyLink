@@ -7,14 +7,12 @@ import appeng.api.networking.IGridNode;
 import appeng.api.networking.IGridNodeListener;
 import appeng.api.networking.IManagedGridNode;
 import appeng.api.networking.IInWorldGridNodeHost;
-import appeng.api.networking.crafting.ICraftingLink;
 import appeng.api.networking.crafting.ICraftingProvider;
-import appeng.api.networking.crafting.ICraftingRequester;
+import appeng.api.networking.security.IActionHost;
 import appeng.api.crafting.IPatternDetails;
 import appeng.api.stacks.AEItemKey;
 import appeng.api.stacks.AEKey;
 import appeng.api.stacks.KeyCounter;
-import com.google.common.collect.ImmutableSet;
 import com.ldtteam.domumornamentum.block.IMateriallyTexturedBlock;
 import com.ldtteam.domumornamentum.block.IMateriallyTexturedBlockComponent;
 import com.ldtteam.domumornamentum.client.model.data.MaterialTextureData;
@@ -42,11 +40,9 @@ import net.neoforged.neoforge.items.ItemStackHandler;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
-import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
@@ -62,7 +58,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  *     le buffer change, pour que AE2 rescanne les patterns disponibles
  */
 public class ColonyLinkRedirectorBlockEntity extends BlockEntity
-        implements IInWorldGridNodeHost, ICraftingRequester, ICraftingProvider, MenuProvider
+        implements IInWorldGridNodeHost, ICraftingProvider, IActionHost, MenuProvider
 {
     // ── Constantes buffer ─────────────────────────────────────────────────────
 
@@ -79,7 +75,6 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
     private BlockPos targetInventoryPos = null;
     private BlockPos linkedBuilderPos   = null;
     private String  linkedBuilderName  = "N/A";
-    private final Set<ICraftingLink> craftingLinks = new HashSet<>();
 
     private boolean ae2ActiveClientCache = false;
     private boolean warehousePriority = false;
@@ -153,8 +148,6 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
             .setFlags(GridFlags.REQUIRE_CHANNEL)
             .setVisualRepresentation(ColonyLinkRegistry.REDIRECTOR_BLOCK_ITEM.get())
             .setIdlePowerUsage(1.0)
-            // ICraftingRequester : enregistre les crafts demandés au réseau
-            .addService(ICraftingRequester.class, this)
             // ICraftingProvider : expose les DomumPatterns au réseau AE2
             .addService(ICraftingProvider.class, this);
 
@@ -257,49 +250,10 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
         return craftBusy || !craftQueue.isEmpty();
     }
 
-    // ── ICraftingRequester ────────────────────────────────────────────────────
-
-    @Override
-    public ImmutableSet<ICraftingLink> getRequestedJobs()
-    { return ImmutableSet.copyOf(craftingLinks); }
-
-    @Override
-    public long insertCraftedItems(ICraftingLink link, AEKey what, long amount, Actionable mode)
-    {
-        if (!(what instanceof AEItemKey itemKey)) return 0;
-        if (targetInventoryPos == null || level == null) return 0;
-
-        ItemStack toInsert = itemKey.toStack((int) Math.min(amount, Integer.MAX_VALUE));
-        long inserted = 0;
-
-        List<IItemHandler> handlers = getBuildingHandlers();
-        for (IItemHandler handler : handlers)
-        {
-            if (toInsert.isEmpty()) break;
-            for (int i = 0; i < handler.getSlots() && !toInsert.isEmpty(); i++)
-            {
-                ItemStack remainder = handler.insertItem(i, toInsert, mode == Actionable.SIMULATE);
-                inserted += toInsert.getCount() - remainder.getCount();
-                toInsert = remainder;
-            }
-        }
-
-        if (!toInsert.isEmpty() && mode == Actionable.MODULATE)
-            setState(RedirectorState.STANDBY);
-
-        return inserted;
-    }
-
-    @Override
-    public void jobStateChange(ICraftingLink link)
-    {
-        if (link.isCanceled() || link.isDone()) craftingLinks.remove(link);
-    }
+    // ── IActionHost ───────────────────────────────────────────────────────────
 
     @Override
     public IGridNode getActionableNode() { return gridNode.getNode(); }
-
-    public void addCraftingLink(ICraftingLink link) { craftingLinks.add(link); }
 
     // ── Ticker — exécution des crafts en queue ────────────────────────────────
 

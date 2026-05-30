@@ -1,0 +1,19 @@
+{
+  "item.colonylink.colony_link_wand": "Presse-papiers ColonyLink",
+  "item.colonylink.colony_link_wand.tooltip": "Clic droit sur une Cabane de Constructeur pour lancer la fabrication automatique dans AE2",
+  "itemGroup.colonylink": "ColonyLink",
+  "block.colonylink.colony_link_redirector": "Redirecteur ColonyLink",
+  "block.colonylink.colony_link_redirector.tooltip": "Relie un réseau ME à un inventaire de colonie",
+  "item.colonylink.warehouse_link_card": "Carte de Liaison Entrepôt",
+  "item.colonylink.warehouse_link_card.tooltip": "Insérer dans le Redirecteur ou le Terminal pour activer le scan de l'Entrepôt",
+  "item.colonylink.colonylink_package": "Colis ColonyLink",
+  "item.colonylink.colonylink_package.tooltip": "Charger dans l'onglet Citoyens du Presse-papiers pour activer Envoyer/Fabriquer",
+  "item.colonylink.warehouse_link_terminal": "Terminal de Liaison Entrepôt",
+  "item.colonylink.warehouse_link_terminal.tooltip": "Pont bidirectionnel entre l'Entrepôt MineColonies et le réseau ME d'AE2",
+  "block.colonylink.warehouse_link_terminal": "Terminal de Liaison Entrepôt",
+  "block.colonylink.warehouse_link_terminal.tooltip": "Pont bidirectionnel entre l'Entrepôt MineColonies et le réseau ME d'AE2",
+  "key.categories.colonylink": "ColonyLink",
+  "key.colonylink.open_clipboard": "Ouvrir le Presse-papiers",
+  "item.colonylink.domum_pattern": "Patron Domum",
+  "config.jade.plugin_colonylink.redirector": "Redirecteur ColonyLink"
+}

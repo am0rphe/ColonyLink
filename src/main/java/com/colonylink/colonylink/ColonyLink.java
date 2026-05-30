@@ -112,8 +112,6 @@ public class ColonyLink
         NeoForge.EVENT_BUS.register(ColonyLinkCommand.class);
 
         if (net.neoforged.fml.loading.FMLEnvironment.dist.isClient())
-            NeoForge.EVENT_BUS.addListener(ColonyLinkHudRenderer::onRenderGuiPostStatic);
-        if (net.neoforged.fml.loading.FMLEnvironment.dist.isClient())
             NeoForge.EVENT_BUS.addListener(ColonyLinkClient::onKeyInput);
         NeoForge.EVENT_BUS.addListener(ColonyLink::onRightClickBlock);
 
@@ -138,7 +136,7 @@ public class ColonyLink
     {
         event.enqueueWork(() -> {
             GridLinkables.register(COLONY_LINK_WAND.get(), LINKABLE_HANDLER);
-            LOGGER.info("ColonyLink v1.4.2 loaded — DomumCutterLink / ICraftingProvider registered.");
+            LOGGER.info("ColonyLink v1.4.7 loaded.");
         });
     }
 
@@ -240,6 +238,8 @@ public class ColonyLink
                 SendToWarehousePacket::handle);
         registrar.playToServer(RestartBuilderPacket.TYPE, RestartBuilderPacket.STREAM_CODEC,
                 RestartBuilderPacket::handle);
+        registrar.playToServer(LocateBuilderPacket.TYPE, LocateBuilderPacket.STREAM_CODEC,
+                LocateBuilderPacket::handle);
         registrar.playToServer(RemoveBuilderPacket.TYPE, RemoveBuilderPacket.STREAM_CODEC,
                 RemoveBuilderPacket::handle);
         registrar.playToServer(WarehouseCheckPacket.TYPE, WarehouseCheckPacket.STREAM_CODEC,
@@ -276,5 +276,13 @@ public class ColonyLink
         registrar.playToServer(DomumEncodePatternPacket.TYPE,
                 DomumEncodePatternPacket.STREAM_CODEC,
                 DomumEncodePatternPacket::handle);
+
+        registrar.playToServer(DomumQueuePacket.TYPE,
+                DomumQueuePacket.STREAM_CODEC,
+                DomumQueuePacket::handle);
+
+        registrar.playToClient(DomumQueueSyncPacket.TYPE,
+                DomumQueueSyncPacket.STREAM_CODEC,
+                (p, c) -> TerminalClientPacketHandler.handleDomumQueueSync(p, c));
     }
 }

@@ -1,0 +1,19 @@
+{
+  "item.colonylink.colony_link_wand": "Буфер обмена ColonyLink",
+  "item.colonylink.colony_link_wand.tooltip": "Нажмите ПКМ на Хижину строителя, чтобы поставить автокрафт в очередь AE2",
+  "itemGroup.colonylink": "ColonyLink",
+  "block.colonylink.colony_link_redirector": "Перенаправитель ColonyLink",
+  "block.colonylink.colony_link_redirector.tooltip": "Связывает сеть ME с инвентарём колонии",
+  "item.colonylink.warehouse_link_card": "Карта связи со складом",
+  "item.colonylink.warehouse_link_card.tooltip": "Вставьте в Перенаправитель или Терминал для включения сканирования Склада",
+  "item.colonylink.colonylink_package": "Посылка ColonyLink",
+  "item.colonylink.colonylink_package.tooltip": "Загрузите во вкладку Жители Буфера обмена для включения Отправки/Крафта",
+  "item.colonylink.warehouse_link_terminal": "Терминал связи со складом",
+  "item.colonylink.warehouse_link_terminal.tooltip": "Двунаправленный мост между Складом MineColonies и сетью ME в AE2",
+  "block.colonylink.warehouse_link_terminal": "Терминал связи со складом",
+  "block.colonylink.warehouse_link_terminal.tooltip": "Двунаправленный мост между Складом MineColonies и сетью ME в AE2",
+  "key.categories.colonylink": "ColonyLink",
+  "key.colonylink.open_clipboard": "Открыть буфер обмена",
+  "item.colonylink.domum_pattern": "Паттерн Domum",
+  "config.jade.plugin_colonylink.redirector": "Перенаправитель ColonyLink"
+}

@@ -1,0 +1,19 @@
+{
+  "item.colonylink.colony_link_wand": "Portapapeles ColonyLink",
+  "item.colonylink.colony_link_wand.tooltip": "Clic derecho en una Cabaña de Constructor para encolar la fabricación automática en AE2",
+  "itemGroup.colonylink": "ColonyLink",
+  "block.colonylink.colony_link_redirector": "Redireccionador ColonyLink",
+  "block.colonylink.colony_link_redirector.tooltip": "Conecta una red ME a un inventario de colonia",
+  "item.colonylink.warehouse_link_card": "Tarjeta de Enlace de Almacén",
+  "item.colonylink.warehouse_link_card.tooltip": "Inserta en el Redireccionador o Terminal para habilitar el escaneo del Almacén",
+  "item.colonylink.colonylink_package": "Paquete ColonyLink",
+  "item.colonylink.colonylink_package.tooltip": "Carga en la pestaña Ciudadanos del Portapapeles para habilitar Enviar/Fabricar",
+  "item.colonylink.warehouse_link_terminal": "Terminal de Enlace de Almacén",
+  "item.colonylink.warehouse_link_terminal.tooltip": "Puente bidireccional entre el Almacén de MineColonies y la red ME de AE2",
+  "block.colonylink.warehouse_link_terminal": "Terminal de Enlace de Almacén",
+  "block.colonylink.warehouse_link_terminal.tooltip": "Puente bidireccional entre el Almacén de MineColonies y la red ME de AE2",
+  "key.categories.colonylink": "ColonyLink",
+  "key.colonylink.open_clipboard": "Abrir Portapapeles",
+  "item.colonylink.domum_pattern": "Patrón Domum",
+  "config.jade.plugin_colonylink.redirector": "Redireccionador ColonyLink"
+}

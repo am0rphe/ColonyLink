@@ -249,11 +249,9 @@ public class SendToBuilderHandler
                 {
                     for (IBuilding b : colony.getServerBuildingManager().getBuildings().values())
                     {
-                        if (b.getPosition().equals(builderPos))
-                        {
-                            b.markDirty();
-                            break;
-                        }
+                        if (!b.getPosition().equals(builderPos)) continue;
+                        b.markDirty();
+                        break;
                     }
                 }
             }

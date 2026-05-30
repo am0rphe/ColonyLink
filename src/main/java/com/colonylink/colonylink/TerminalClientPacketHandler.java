@@ -33,4 +33,16 @@ public class TerminalClientPacketHandler
                 screen.updateMeSnapshot(packet);
         });
     }
+
+    public static void onDomumQueueSync(java.util.List<net.minecraft.world.item.ItemStack> queue)
+    {
+        // Appelé depuis DomumQueueSyncPacket.handle() (déjà sur le thread client via enqueueWork)
+        if (Minecraft.getInstance().screen instanceof WarehouseLinkTerminalScreen screen)
+            screen.updateDomumQueue(queue);
+    }
+
+    public static void handleDomumQueueSync(DomumQueueSyncPacket packet, net.neoforged.neoforge.network.handling.IPayloadContext ctx)
+    {
+        ctx.enqueueWork(() -> onDomumQueueSync(packet.queue()));
+    }
 }

@@ -101,22 +101,16 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
     @Override
     public int getBarWidth(ItemStack stack)
     {
-        long stored   = WandEnergyStorage.getStoredRF(stack);
-        long capacity = ColonyLinkConfig.WAND_RF_CAPACITY.get();
-        if (capacity <= 0) return 0;
-        return (int)(stored * 13L / capacity);
+        // Délègue au cache client (mis à jour par ColonyLinkPacket toutes les N ticks).
+        // Évite de lire le NBT à chaque render frame, ce qui provoquait un
+        // clignotement 100%→valeur réelle à chaque tick de drain passif.
+        return ClientRFCache.getBarWidth(stack);
     }
 
     @Override
     public int getBarColor(ItemStack stack)
     {
-        long stored   = WandEnergyStorage.getStoredRF(stack);
-        long capacity = ColonyLinkConfig.WAND_RF_CAPACITY.get();
-        int pct       = capacity > 0 ? (int)(stored * 100L / capacity) : 0;
-        int threshold = ColonyLinkConfig.LOW_POWER_THRESHOLD_PERCENT.get();
-        if (pct <= threshold) return 0xFF2222;
-        if (pct <= 30)        return 0xFFAA00;
-        return 0x22CC22;
+        return ClientRFCache.getBarColor(stack);
     }
 
     // ── Tooltip ───────────────────────────────────────────────────────────────

@@ -10,6 +10,7 @@ import net.minecraft.world.item.ItemStack;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * S→C : snapshot du ME storage vers le client (items + craftables).
@@ -79,6 +80,14 @@ public record TerminalMeSyncPacket(
             entries.add(new MeEntry(aeKey.toStack(1), entry.getLongValue(), craftable));
         }
 
+        // Déduplication O(1) par HashSet de clés AE2 déjà vues
+        Set<AEItemKey> seen = new java.util.HashSet<>();
+        for (MeEntry e : entries)
+        {
+            AEItemKey k = AEItemKey.of(e.stack());
+            if (k != null) seen.add(k);
+        }
+
         // Items craftables non stockés — getCraftables(AEKeyFilter) en AE2 19.x
         try
         {
@@ -86,10 +95,8 @@ public record TerminalMeSyncPacket(
             for (var key : craftables)
             {
                 if (!(key instanceof AEItemKey aeKey)) continue;
-                if (entries.stream().anyMatch(e ->
-                        ItemStack.isSameItemSameComponents(e.stack(), aeKey.toStack(1))))
-                    continue;
-                entries.add(new MeEntry(aeKey.toStack(1), 0, true));
+                if (seen.add(aeKey))   // add() retourne false si déjà présent
+                    entries.add(new MeEntry(aeKey.toStack(1), 0, true));
             }
         }
         catch (Exception ignored) {} // sécurité si l'API change

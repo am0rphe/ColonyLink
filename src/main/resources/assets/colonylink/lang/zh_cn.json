@@ -1,0 +1,19 @@
+{
+  "item.colonylink.colony_link_wand": "殖民地链接剪贴板",
+  "item.colonylink.colony_link_wand.tooltip": "右键单击建筑师小屋，在AE2中排队自动合成",
+  "itemGroup.colonylink": "殖民地链接",
+  "block.colonylink.colony_link_redirector": "殖民地链接转发器",
+  "block.colonylink.colony_link_redirector.tooltip": "将ME网络链接到殖民地仓库",
+  "item.colonylink.warehouse_link_card": "仓库链接卡",
+  "item.colonylink.warehouse_link_card.tooltip": "插入转发器或终端以启用仓库扫描",
+  "item.colonylink.colonylink_package": "殖民地链接包裹",
+  "item.colonylink.colonylink_package.tooltip": "装入剪贴板市民标签以启用发送/合成",
+  "item.colonylink.warehouse_link_terminal": "仓库链接终端",
+  "item.colonylink.warehouse_link_terminal.tooltip": "MineColonies仓库与AE2 ME网络之间的双向桥梁",
+  "block.colonylink.warehouse_link_terminal": "仓库链接终端",
+  "block.colonylink.warehouse_link_terminal.tooltip": "MineColonies仓库与AE2 ME网络之间的双向桥梁",
+  "key.categories.colonylink": "殖民地链接",
+  "key.colonylink.open_clipboard": "打开剪贴板",
+  "item.colonylink.domum_pattern": "Domum样板",
+  "config.jade.plugin_colonylink.redirector": "殖民地链接转发器"
+}

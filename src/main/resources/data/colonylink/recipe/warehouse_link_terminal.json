@@ -2,13 +2,16 @@
   "type": "minecraft:crafting_shaped",
   "pattern": [
     "MEM",
-    "ECE",
-    "MEM"
+    "ZCX",
+    "NEN"
   ],
   "key": {
-    "M": { "item": "ae2:terminal" },
-    "E": { "item": "ae2:fluix_crystal" },
-    "C": { "item": "colonylink:warehouse_link_card" }
+    "M": { "item": "minecraft:piston" },
+    "E": { "item": "ae2:charged_certus_quartz_crystal" },
+    "C": { "item": "ae2:terminal" },
+    "X": { "item": "ae2:annihilation_core"},
+    "Z": { "item": "ae2:formation_core"},
+    "N": { "item": "minecraft:sticky_piston"}
   },
   "result": {
     "id": "colonylink:warehouse_link_terminal",

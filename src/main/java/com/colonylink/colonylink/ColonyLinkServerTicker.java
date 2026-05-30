@@ -21,6 +21,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -42,12 +43,42 @@ public class ColonyLinkServerTicker
     private static final java.util.Set<WarehouseLinkTerminalPart> activeTerminalParts =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
 
+    // Registre global — toutes les Parts placées dans le monde (avec ou sans viewer).
+    // Utilisé par DomumQueuePacket pour trouver un terminal même si le GUI est fermé.
+    private static final java.util.Set<WarehouseLinkTerminalPart> allTerminalParts =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     public static void registerTerminalPart(WarehouseLinkTerminalPart part)
     { activeTerminalParts.add(part); }
 
     public static void unregisterTerminalPart(WarehouseLinkTerminalPart part)
     { activeTerminalParts.remove(part); }
-    private record ViewerState(BlockPos builderPos, int activeTabIndex, int colonyId) {}
+
+    public static void registerTerminalPartGlobal(WarehouseLinkTerminalPart part)
+    { allTerminalParts.add(part); }
+
+    public static void unregisterTerminalPartGlobal(WarehouseLinkTerminalPart part)
+    { allTerminalParts.remove(part); }
+
+    /**
+     * Retourne le premier WarehouseLinkTerminalPart dans le level donné,
+     * qu'il soit actif (GUI ouvert) ou non.
+     */
+    public static WarehouseLinkTerminalPart findTerminalPartForLevel(net.minecraft.server.level.ServerLevel level)
+    {
+        // Priorité aux Parts actives (GUI ouvert = déjà synced)
+        for (WarehouseLinkTerminalPart part : activeTerminalParts)
+            if (part.getLevel() == level) return part;
+        // Fallback : toutes les Parts placées
+        for (WarehouseLinkTerminalPart part : allTerminalParts)
+            if (part.getLevel() == level) return part;
+        return null;
+    }
+    private record ViewerState(BlockPos builderPos, int activeTabIndex, int colonyId, long lastContentSig) {
+        ViewerState(BlockPos builderPos, int activeTabIndex, int colonyId) {
+            this(builderPos, activeTabIndex, colonyId, Long.MIN_VALUE);
+        }
+    }
 
     private static final Map<UUID, ViewerState> activeViewers = new ConcurrentHashMap<>();
 
@@ -78,6 +109,12 @@ public class ColonyLinkServerTicker
 
     public static void sendImmediateUpdate(ServerPlayer player, BlockPos builderPos, int activeTabIndex)
     {
+        // Invalider la signature pour forcer le renvoi immédiat
+        ViewerState vs = activeViewers.get(player.getUUID());
+        if (vs != null)
+            activeViewers.put(player.getUUID(),
+                    new ViewerState(vs.builderPos(), vs.activeTabIndex(), vs.colonyId(), Long.MIN_VALUE));
+
         ItemStack wand = findWandInInventory(player);
         if (wand != null) sendFullUpdate(player, builderPos, activeTabIndex, wand);
     }
@@ -338,7 +375,7 @@ public class ColonyLinkServerTicker
                     if (!showCrafting && dStat == ResourceStatus.CRAFTING) continue;
                     if (!showNoPattern && dStat == ResourceStatus.NO_PATTERN) continue;
                     entries.add(new ColonyLinkPacket.ResourceEntry(
-                            ms, dStat, miss, false, safeR,
+                            ms, dStat, miss, true, safeR,
                             buildDomumTooltip(st2, dStat, miss)));
                     continue;
                 }
@@ -361,10 +398,48 @@ public class ColonyLinkServerTicker
         ColonyLinkPacket.BuilderRequest req = fetchBuilderRequest(bb, inv, cs, grid, safeR, buildingLevel, toolUpgrade, level);
         List<ColonyLinkPacket.BuilderTabMeta> tabMetas = ColonyLinkWand.buildTabMetas(allEntries);
 
+        // Throttle : ne pas renvoyer si le contenu n'a pas changé
+        // (RF exclu de la signature — change à chaque tick via drain passif)
+        long newSig = computeWandSig(entries, builderName, buildingName, workerStatus,
+                cpus, rState, hasCard, whPrio, activeTabIndex);
+        ViewerState vs = activeViewers.get(player.getUUID());
+        if (vs != null && vs.lastContentSig() == newSig) return; // rien de changé
+        if (vs != null)
+            activeViewers.put(player.getUUID(),
+                    new ViewerState(vs.builderPos(), vs.activeTabIndex(), vs.colonyId(), newSig));
+
         PacketDistributor.sendToPlayer(player, new ColonyLinkPacket(
                 entries, builderPos, builderName, buildingName, workerStatus, workerIdleReason,
                 cpus, rState, req, hasCard, whPrio,
                 tabMetas, activeTabIndex, rfStored, rfMax));
+    }
+
+    // ── Signature de contenu wand (throttle sendFullUpdate) ───────────────────
+    // FNV-1a fold sur le contenu visible. RF (rfStored/rfMax) volontairement exclu :
+    // il change à chaque tick via le drain passif et ferait échouer le throttle.
+    private static long computeWandSig(
+            List<ColonyLinkPacket.ResourceEntry> entries,
+            String builderName, String buildingName, String workerStatus,
+            int cpus, String rState, boolean hasCard, boolean whPrio, int activeTabIndex)
+    {
+        long sig = 0xcbf29ce484222325L;
+        final long P = 0x100000001b3L;
+        for (var e : entries)
+        {
+            int h = Item.getId(e.stack().getItem());
+            h = 31 * h + e.status().ordinal();
+            h = 31 * h + e.realCount();
+            sig = (sig ^ h) * P;
+        }
+        sig = (sig ^ builderName.hashCode()) * P;
+        sig = (sig ^ buildingName.hashCode()) * P;
+        sig = (sig ^ workerStatus.hashCode()) * P;
+        sig = (sig ^ cpus) * P;
+        sig = (sig ^ rState.hashCode()) * P;
+        sig = (sig ^ (hasCard ? 1L : 0L)) * P;
+        sig = (sig ^ (whPrio ? 1L : 0L)) * P;
+        sig = (sig ^ activeTabIndex) * P;
+        return sig;
     }
 
     // ── fetchBuilderRequest (AE2) ─────────────────────────────────────────────
@@ -524,27 +599,15 @@ public class ColonyLinkServerTicker
     {
         if (bb.getWorkOrder() == null) return new String[]{"Idle", ""};
 
+        // ── Priorité 1 : Hungry — vérifier AVANT les open requests ──────────────
+        // Un builder hungry a toujours des open requests → sans ce check prioritaire,
+        // le statut "Working" masque systématiquement le statut "Hungry".
         try
         {
-            var reqs = bb.getOpenRequests(citizen.getId());
-            if (reqs != null)
-            {
-                for (var r : reqs)
-                {
-                    if (r.getState() == RequestState.CANCELLED
-                            || r.getState() == RequestState.OVERRULED) continue;
-                    if (!(r.getRequest() instanceof IDeliverable del)) continue;
-                    ItemStack rs = ItemStack.EMPTY;
-                    var ds = r.getDisplayStacks();
-                    if (ds != null) for (ItemStack s : ds) if (!s.isEmpty()) { rs = s; break; }
-                    if (rs.isEmpty()) continue;
-                    int cnt = del.getCount(); if (cnt <= 0) cnt = 1;
-                    return new String[]{"Working",
-                            "§e⚠ Needs: §f" + cnt + "x " + rs.getDisplayName().getString()};
-                }
-            }
+            if (citizen.getSaturation() < 3.0)
+                return new String[]{"Hungry", "§e🍖 Needs food — saturation low"};
         }
-        catch (Exception e) { ColonyLink.LOGGER.debug("[ColonyLink] computeWorkerStatus requests: {}", e.getMessage()); }
+        catch (Exception ignored) {}
 
         try
         {
@@ -593,12 +656,28 @@ public class ColonyLinkServerTicker
         }
         catch (Exception e) { ColonyLink.LOGGER.debug("[ColonyLink] computeWorkerStatus status: {}", e.getMessage()); }
 
+        // ── Priorité 2 : Open requests ───────────────────────────────────────────
         try
         {
-            if (citizen.getSaturation() < 3.0)
-                return new String[]{"Hungry", "§e🍖 Eating"};
+            var reqs = bb.getOpenRequests(citizen.getId());
+            if (reqs != null)
+            {
+                for (var r : reqs)
+                {
+                    if (r.getState() == RequestState.CANCELLED
+                            || r.getState() == RequestState.OVERRULED) continue;
+                    if (!(r.getRequest() instanceof IDeliverable del)) continue;
+                    ItemStack rs = ItemStack.EMPTY;
+                    var ds = r.getDisplayStacks();
+                    if (ds != null) for (ItemStack s : ds) if (!s.isEmpty()) { rs = s; break; }
+                    if (rs.isEmpty()) continue;
+                    int cnt = del.getCount(); if (cnt <= 0) cnt = 1;
+                    return new String[]{"Working",
+                            "§e⚠ Needs: §f" + cnt + "x " + rs.getDisplayName().getString()};
+                }
+            }
         }
-        catch (Exception ignored) {}
+        catch (Exception e) { ColonyLink.LOGGER.debug("[ColonyLink] computeWorkerStatus requests: {}", e.getMessage()); }
 
         return new String[]{"Working", ""};
     }
@@ -636,7 +715,8 @@ public class ColonyLinkServerTicker
         // Statut
         switch (status)
         {
-            case NO_PATTERN -> lines.add("§c✘ No Domum Pattern found in any Redirector");
+            case NO_PATTERN -> { lines.add("§c✘ No Domum Pattern found in any Redirector");
+                lines.add("§a▶ Click to send recipe to terminal"); }
             case CRAFTABLE  -> lines.add("§a⚒ Craftable via Redirector (AE2)");
             case CRAFTING   -> lines.add("§6⟳ Crafting in progress...");
             default         -> {}

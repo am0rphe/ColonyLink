@@ -26,6 +26,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.Vec3;
@@ -111,6 +112,11 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
      *              dédupliqué par MineColonies).
      *  - ÉCRITURE : on SKIP ce handler. On n'écrit que dans les racks physiques.
      */
+    // META_HANDLER_MIN_SLOTS -- plus utilise pour le filtrage depuis v1.4.7.
+    // Le meta-handler est desormais identifie par position (warehouse.getPosition())
+    // dans findMetaHandler(), ce qui permet d'inclure le Warehouse Hut (63 slots)
+    // dans le scan des racks sans ambiguite.
+    @SuppressWarnings("unused")
     private static final int META_HANDLER_MIN_SLOTS = 55;
 
     // ── État ──────────────────────────────────────────────────────────────────
@@ -176,6 +182,19 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
     /** Joueurs ayant le GUI ouvert — reçoivent les syncs périodiques. */
     private final Set<UUID> viewers = ConcurrentHashMap.newKeySet();
 
+    /**
+     * Queue des items Domum en attente d'encodage — partagée par colonie.
+     * Persistée en NBT, synchronisée vers tous les viewers à chaque changement.
+     * Une entrée est retirée automatiquement quand AE2 la considère craftable.
+     */
+    private final List<ItemStack> domumQueue = new java.util.ArrayList<>();
+
+    // ── Diff/throttle v1.4.6 ───────────────────────────────────────────────────
+    // Signature du dernier snapshot effectivement envoyé. Si la signature
+    // recalculée au tick est identique, on n'envoie rien (zéro alloc au repos).
+    private long lastWarehouseSig = Long.MIN_VALUE;
+    private long lastMeSig        = Long.MIN_VALUE;
+
     // ── Constructeur ──────────────────────────────────────────────────────────
 
     public WarehouseLinkTerminalPart(IPartItem<?> partItem)
@@ -224,6 +243,20 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         data.put("BlankPattern", blankPatternSlot.serializeNBT(registries));
         // domumOutputSlot intentionnellement NON persisté — slot preview temporaire
         data.put("CraftingGrid", craftingGridSlot.serializeNBT(registries));
+
+        // Queue Domum — liste d'ItemStack sérialisés
+        net.minecraft.nbt.ListTag queueTag = new net.minecraft.nbt.ListTag();
+        for (ItemStack stack : domumQueue)
+        {
+            net.minecraft.nbt.CompoundTag stackTag = (net.minecraft.nbt.CompoundTag)
+                    ItemStack.CODEC.encodeStart(
+                                    registries.createSerializationContext(net.minecraft.nbt.NbtOps.INSTANCE),
+                                    stack)
+                            .resultOrPartial(e -> ColonyLink.LOGGER.error("[WarehouseTerminal] queue save error: {}", e))
+                            .orElse(new net.minecraft.nbt.CompoundTag());
+            if (!stackTag.isEmpty()) queueTag.add(stackTag);
+        }
+        data.put("DomumQueue", queueTag);
     }
 
     @Override
@@ -239,6 +272,22 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         // domumOutputSlot toujours vide à l'ouverture — pas de désérialisation
         if (data.contains("CraftingGrid"))
             craftingGridSlot.deserializeNBT(registries, data.getCompound("CraftingGrid"));
+
+        // Queue Domum
+        domumQueue.clear();
+        if (data.contains("DomumQueue", net.minecraft.nbt.Tag.TAG_LIST))
+        {
+            net.minecraft.nbt.ListTag queueTag =
+                    data.getList("DomumQueue", net.minecraft.nbt.Tag.TAG_COMPOUND);
+            for (int i = 0; i < queueTag.size(); i++)
+            {
+                ItemStack.CODEC.parse(
+                                registries.createSerializationContext(net.minecraft.nbt.NbtOps.INSTANCE),
+                                queueTag.getCompound(i))
+                        .resultOrPartial(e -> ColonyLink.LOGGER.error("[WarehouseTerminal] queue load error: {}", e))
+                        .ifPresent(domumQueue::add);
+            }
+        }
     }
 
     // ── Activation (clic droit) ───────────────────────────────────────────────
@@ -285,6 +334,15 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
     public void addToWorld()
     {
         super.addToWorld();
+        ColonyLinkServerTicker.registerTerminalPartGlobal(this);
+    }
+
+    @Override
+    public void removeFromWorld()
+    {
+        super.removeFromWorld();
+        ColonyLinkServerTicker.unregisterTerminalPartGlobal(this);
+        ColonyLinkServerTicker.unregisterTerminalPart(this);
     }
 
     /**
@@ -294,19 +352,36 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
     public void serverTick()
     {
         if (viewers.isEmpty()) return;
-        if (this.getLevel() == null || this.getLevel().isClientSide()) return;
-        ServerLevel level = (ServerLevel) this.getLevel();
+        if (!(this.getLevel() instanceof ServerLevel level)) return;
 
-        WarehouseTerminalSyncPacket whPacket = buildWarehouseSnapshot(level);
-        TerminalMeSyncPacket mePacket = buildMeSnapshot(level);
-
-        for (UUID uid : viewers)
+        long whSig = computeWarehouseSig(level);
+        if (whSig != lastWarehouseSig)
         {
-            ServerPlayer sp = level.getServer().getPlayerList().getPlayer(uid);
-            if (sp == null) continue;
-            net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(sp, whPacket);
-            net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(sp, mePacket);
+            WarehouseTerminalSyncPacket whPacket = buildWarehouseSnapshot(level);
+            for (UUID uid : viewers)
+            {
+                ServerPlayer sp = level.getServer().getPlayerList().getPlayer(uid);
+                if (sp != null)
+                    net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(sp, whPacket);
+            }
+            lastWarehouseSig = whSig;
         }
+
+        long meSig = computeMeSig();
+        if (meSig != lastMeSig)
+        {
+            TerminalMeSyncPacket mePacket = buildMeSnapshot(level);
+            for (UUID uid : viewers)
+            {
+                ServerPlayer sp = level.getServer().getPlayerList().getPlayer(uid);
+                if (sp != null)
+                    net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(sp, mePacket);
+            }
+            lastMeSig = meSig;
+        }
+
+        // ── Auto-retrait queue Domum quand craftable dans AE2 ─────────────────
+        tickDomumQueueCraftableCheck();
     }
 
     // ── GUI open / close ──────────────────────────────────────────────────────
@@ -319,6 +394,13 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         {
             net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player, buildWarehouseSnapshot(level));
             net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player, buildMeSnapshot(level));
+            // Envoie la queue Domum initiale
+            net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player,
+                    new DomumQueueSyncPacket(new java.util.ArrayList<>(domumQueue)));
+            // Le snapshot vient d'être envoyé : aligner la signature pour
+            // éviter un double envoi au prochain tick.
+            lastWarehouseSig = computeWarehouseSig(level);
+            lastMeSig        = computeMeSig();
         }
     }
 
@@ -333,6 +415,9 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
 
     public void requestImmediateSync()
     {
+        // Force le prochain serverTick() à tout renvoyer (le contenu vient de changer).
+        lastWarehouseSig = Long.MIN_VALUE;
+        lastMeSig        = Long.MIN_VALUE;
         if (viewers.isEmpty()) return;
         if (!(this.getLevel() instanceof ServerLevel level)) return;
 
@@ -346,6 +431,102 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
             net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(sp, whPacket);
             net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(sp, mePacket);
         }
+    }
+
+    // ── Signatures de contenu (diff/throttle v1.4.6) ──────────────────────────
+
+    /**
+     * Signature légère d'un ItemStack : combine l'identité de l'Item (singleton)
+     * et ses DataComponents (Domum, NBT…) avec la quantité.
+     * N'alloue pas de String.
+     */
+    private static long stackSig(ItemStack stack, long count)
+    {
+        int h = Item.getId(stack.getItem());          // int stable, pas d'alloc
+        h = 31 * h + stack.getComponents().hashCode();
+        return ((long) h << 20) ^ count;
+    }
+
+    /**
+     * Signature du contenu warehouse. Reproduit le même traversal que
+     * buildWarehouseSnapshot (méta-handler ou fallback racks) mais folde un
+     * long (FNV-1a) sans allouer de map/liste.
+     */
+    private long computeWarehouseSig(ServerLevel level)
+    {
+        if (!hasWarehouseCard()) return 0L;
+
+        IColony colony = findColony(level);
+        if (colony == null) return 1L;
+
+        BuildingWareHouse warehouse = findWarehouse(colony);
+        if (warehouse == null) return 2L;
+
+        long sig = 0xcbf29ce484222325L; // FNV offset basis
+        final long FNV_PRIME = 0x100000001b3L;
+
+        IItemHandler metaHandler = findMetaHandler(level, warehouse);
+        if (metaHandler != null)
+        {
+            for (int s = 0; s < metaHandler.getSlots(); s++)
+            {
+                ItemStack inSlot = metaHandler.getStackInSlot(s);
+                if (inSlot.isEmpty()) continue;
+                sig = (sig ^ stackSig(inSlot, inSlot.getCount())) * FNV_PRIME;
+            }
+        }
+        else
+        {
+            java.util.Set<BlockPos> visitedPos = new java.util.HashSet<>();
+            for (BlockPos rackPos : warehouse.getContainers())
+            {
+                if (!visitedPos.add(rackPos)) continue;
+                IItemHandler rack = level.getCapability(Capabilities.ItemHandler.BLOCK, rackPos, null);
+                if (rack == null) continue;
+                int slots = Math.min(rack.getSlots(), RACK_HALF_SLOTS);
+                for (int s = 0; s < slots; s++)
+                {
+                    ItemStack inSlot = rack.getStackInSlot(s);
+                    if (inSlot.isEmpty()) continue;
+                    sig = (sig ^ stackSig(inSlot, inSlot.getCount())) * FNV_PRIME;
+                }
+            }
+        }
+        return sig;
+    }
+
+    /**
+     * Signature du contenu ME. Même accès réseau que buildMeSnapshot : folde le
+     * stock (clé + count) et le nombre de craftables.
+     */
+    private long computeMeSig()
+    {
+        if (!isActive()) return -1L;
+        var node = this.getMainNode().getNode();
+        if (node == null) return -1L;
+        var grid = node.getGrid();
+
+        long sig = 0xcbf29ce484222325L;
+        final long FNV_PRIME = 0x100000001b3L;
+
+        // Stock
+        appeng.api.stacks.KeyCounter inv = grid.getStorageService().getCachedInventory();
+        for (var entry : inv)
+        {
+            if (!(entry.getKey() instanceof AEItemKey k)) continue;
+            sig = (sig ^ ((long) k.hashCode() << 20 ^ entry.getLongValue())) * FNV_PRIME;
+        }
+
+        // Craftables (taille du set suffit à détecter un changement)
+        try
+        {
+            ICraftingService crafting = grid.getCraftingService();
+            long craftCount = crafting.getCraftables(k -> true).size();
+            sig = (sig ^ craftCount) * FNV_PRIME;
+        }
+        catch (Exception ignored) {}
+
+        return sig;
     }
 
     // ── Snapshots ─────────────────────────────────────────────────────────────
@@ -414,7 +595,6 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
                 // beaucoup trop gros et fausserait le total). En pratique on
                 // n'arrive ici que si findMetaHandler() a retourné null, donc
                 // ce filtre est défensif.
-                if (rack.getSlots() >= META_HANDLER_MIN_SLOTS) continue;
                 int slots = Math.min(rack.getSlots(), RACK_HALF_SLOTS);
                 for (int s = 0; s < slots; s++)
                 {
@@ -459,14 +639,24 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
      *
      * @return le méta-handler trouvé, ou null s'il n'y en a pas (fallback).
      */
+    /**
+     * Identifie le meta-handler MineColonies par la position du bloc Warehouse Hut.
+     * Le meta-handler est expose a warehouse.getPosition() (position du bloc batiment),
+     * pas a la position d'un rack. Cette approche est independante du nombre de slots
+     * et fonctionne quelle que soit la taille du warehouse.
+     *
+     * L'inventaire interne du bloc Warehouse Hut (9x7 = 63 slots) est traite
+     * separement dans buildWarehouseSnapshot/pickupFromWarehouse.
+     */
     private static IItemHandler findMetaHandler(ServerLevel level, BuildingWareHouse warehouse)
     {
-        for (BlockPos rackPos : warehouse.getContainers())
-        {
-            IItemHandler h = level.getCapability(Capabilities.ItemHandler.BLOCK, rackPos, null);
-            if (h == null) continue;
-            if (h.getSlots() >= META_HANDLER_MIN_SLOTS) return h;
-        }
+        // Le meta-handler MineColonies est toujours expose a la position du batiment
+        BlockPos hutPos = warehouse.getPosition();
+        IItemHandler h = level.getCapability(Capabilities.ItemHandler.BLOCK, hutPos, null);
+        // Verifier que ce handler a plus de slots qu'un rack simple (27 ou 54 slots)
+        // pour s'assurer que c'est bien le meta-handler et non un rack place sur le hut
+        if (h != null && h.getSlots() > RACK_HALF_SLOTS)
+            return h;
         return null;
     }
 
@@ -514,7 +704,6 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
             IItemHandler rack = level.getCapability(Capabilities.ItemHandler.BLOCK, rackPos, null);
             if (rack == null || !visited.add(rack)) continue;
             // v1.3.9 — skip méta-handler : on n'écrit jamais via l'agrégat.
-            if (rack.getSlots() >= META_HANDLER_MIN_SLOTS) continue;
             ItemStack before = toInsert.copy();
             toInsert = insertIntoHandler(rack, toInsert);
             inserted += before.getCount() - toInsert.getCount();
@@ -595,15 +784,17 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         java.util.Set<BlockPos> visitedPos = new java.util.HashSet<>();
         java.util.Set<IItemHandler> visited =
                 java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        BlockPos hutPos = wh.getPosition();
         for (BlockPos rackPos : wh.getContainers())
         {
             if (remaining <= 0) break;
             if (!visitedPos.add(rackPos)) continue;
             IItemHandler rack = level.getCapability(Capabilities.ItemHandler.BLOCK, rackPos, null);
             if (rack == null || !visited.add(rack)) continue;
-            // v1.3.9 — skip méta-handler : on extrait des racks physiques uniquement.
-            if (rack.getSlots() >= META_HANDLER_MIN_SLOTS) continue;
-            int slots = Math.min(rack.getSlots(), RACK_HALF_SLOTS);
+            // Pour le bloc Warehouse Hut (position du batiment), scanner tous les slots.
+            // Pour les racks normaux, limiter a RACK_HALF_SLOTS (moitie exposee).
+            int slots = rackPos.equals(hutPos) ? rack.getSlots()
+                    : Math.min(rack.getSlots(), RACK_HALF_SLOTS);
             for (int s = 0; s < slots && remaining > 0; s++)
             {
                 ItemStack inSlot = rack.getStackInSlot(s);
@@ -721,7 +912,6 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
             IItemHandler rack = level.getCapability(Capabilities.ItemHandler.BLOCK, rackPos, null);
             if (rack == null || !visited.add(rack)) continue;
             // v1.3.9 — skip méta-handler.
-            if (rack.getSlots() >= META_HANDLER_MIN_SLOTS) continue;
             for (int s = 0; s < Math.min(rack.getSlots(), RACK_HALF_SLOTS) && remaining > 0; s++)
             {
                 ItemStack inSlot = rack.getStackInSlot(s);
@@ -753,7 +943,6 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
                 IItemHandler rack = level.getCapability(Capabilities.ItemHandler.BLOCK, rackPos, null);
                 if (rack == null || !retVisited.add(rack)) continue;
                 // v1.3.9 — skip méta-handler.
-                if (rack.getSlots() >= META_HANDLER_MIN_SLOTS) continue;
                 ret = insertIntoHandler(rack, ret);
             }
         }
@@ -785,7 +974,6 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
             IItemHandler rack = level.getCapability(Capabilities.ItemHandler.BLOCK, rackPos, null);
             if (rack == null || !visited.add(rack)) continue;
             // v1.3.9 — skip méta-handler.
-            if (rack.getSlots() >= META_HANDLER_MIN_SLOTS) continue;
             for (int s = 0; s < Math.min(rack.getSlots(), RACK_HALF_SLOTS) && remaining > 0; s++)
             {
                 ItemStack inSlot = rack.getStackInSlot(s);
@@ -812,7 +1000,6 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
                 IItemHandler rack = level.getCapability(Capabilities.ItemHandler.BLOCK, rp, null);
                 if (rack == null || !retVis.add(rack)) continue;
                 // v1.3.9 — skip méta-handler.
-                if (rack.getSlots() >= META_HANDLER_MIN_SLOTS) continue;
                 toGive = insertIntoHandler(rack, toGive);
             }
             msg(player, "§e[Terminal] Inventory full.");
@@ -852,7 +1039,6 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
             IItemHandler rack = level.getCapability(Capabilities.ItemHandler.BLOCK, rackPos, null);
             if (rack == null || !visited.add(rack)) continue;
             // v1.3.9 — skip méta-handler.
-            if (rack.getSlots() >= META_HANDLER_MIN_SLOTS) continue;
             remaining = insertIntoHandler(rack, remaining);
         }
 
@@ -943,7 +1129,6 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
             IItemHandler rack = level.getCapability(Capabilities.ItemHandler.BLOCK, rackPos, null);
             if (rack == null || !visited.add(rack)) continue;
             // v1.3.9 — skip méta-handler.
-            if (rack.getSlots() >= META_HANDLER_MIN_SLOTS) continue;
             stack = insertIntoHandler(rack, stack);
         }
         return original - stack.getCount();
@@ -989,6 +1174,97 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
                 },
                 buf -> { buf.writeBlockPos(hostPos); buf.writeByte(sideOrd); }
         );
+    }
+
+    // ── Queue Domum ───────────────────────────────────────────────────────────
+
+    /**
+     * Ajoute un item Domum à la queue d'encodage.
+     * Persiste le Part et broadcast la queue mise à jour à tous les viewers.
+     */
+    public void addToDomumQueue(ItemStack stack)
+    {
+        domumQueue.add(stack.copyWithCount(1));
+        getHost().markForSave();
+        broadcastDomumQueue();
+    }
+
+    /**
+     * Retire un item de la queue par index.
+     * Utilisé par DomumEncodePatternPacket après encodage réussi.
+     */
+    public void removeFromDomumQueue(int index)
+    {
+        if (index < 0 || index >= domumQueue.size()) return;
+        domumQueue.remove(index);
+        getHost().markForSave();
+        broadcastDomumQueue();
+    }
+
+    /**
+     * Vérifie si un ItemStack Domum exact est déjà dans la queue (dédup).
+     * Comparaison stricte : item + DataComponents (bloc + MaterialTextureData + BLOCK_STATE).
+     */
+    public boolean isDomumQueued(ItemStack stack)
+    {
+        for (ItemStack queued : domumQueue)
+            if (ItemStack.isSameItemSameComponents(queued, stack)) return true;
+        return false;
+    }
+
+    /** Retourne une vue non-modifiable de la queue (pour le menu / screen). */
+    public List<ItemStack> getDomumQueue()
+    {
+        return java.util.Collections.unmodifiableList(domumQueue);
+    }
+
+    /**
+     * Vérifie à chaque serverTick si des items de la queue sont devenus craftables
+     * dans AE2 → les retire automatiquement.
+     */
+    private void tickDomumQueueCraftableCheck()
+    {
+        if (domumQueue.isEmpty()) return;
+        if (!isActive()) return;
+        var node = this.getMainNode().getNode();
+        if (node == null) return;
+
+        ICraftingService crafting;
+        try { crafting = node.getGrid().getCraftingService(); }
+        catch (Exception e) { return; }
+
+        boolean changed = false;
+        for (int i = domumQueue.size() - 1; i >= 0; i--)
+        {
+            AEItemKey key = AEItemKey.of(domumQueue.get(i));
+            if (key != null && crafting.isCraftable(key))
+            {
+                domumQueue.remove(i);
+                changed = true;
+            }
+        }
+        if (changed)
+        {
+            getHost().markForSave();
+            broadcastDomumQueue();
+        }
+    }
+
+    /**
+     * Envoie la queue complète à tous les viewers actifs.
+     */
+    private void broadcastDomumQueue()
+    {
+        if (viewers.isEmpty()) return;
+        if (!(this.getLevel() instanceof net.minecraft.server.level.ServerLevel level)) return;
+        DomumQueueSyncPacket packet = new DomumQueueSyncPacket(new java.util.ArrayList<>(domumQueue));
+        for (UUID uid : viewers)
+        {
+            net.minecraft.server.level.ServerPlayer sp =
+                    level.getServer().getPlayerList().getPlayer(uid);
+            if (sp != null)
+                net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(sp, packet);
+        }
     }
 
     // ── Getters publics ───────────────────────────────────────────────────────

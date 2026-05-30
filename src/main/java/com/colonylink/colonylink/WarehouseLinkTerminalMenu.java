@@ -578,6 +578,24 @@ public class WarehouseLinkTerminalMenu extends AbstractContainerMenu
     public ResultContainer            getCraftResult()  { return craftResult; }
     public ItemStack getDomumTarget() { return domumTargetSlot.getStackInSlot(0); }
     public ItemStack getDomumOutput() { return domumOutputSlot.getStackInSlot(0); }
+
+    /** Retourne la position du bloc AE2 qui héberge ce Part (pour les packets). */
+    public net.minecraft.core.BlockPos getHostPos()
+    {
+        if (part == null) return net.minecraft.core.BlockPos.ZERO;
+        net.minecraft.world.level.block.entity.BlockEntity be = part.getHostBlockEntity();
+        return be != null ? be.getBlockPos() : net.minecraft.core.BlockPos.ZERO;
+    }
+
+    /** Retourne le côté du Part (ordinal de Direction) pour les packets. */
+    public int getHostSide()
+    {
+        if (part == null) return 0;
+        net.minecraft.core.Direction side = part.getSide() != null
+                ? part.getSide().getOpposite() : net.minecraft.core.Direction.NORTH;
+        return side.ordinal();
+    }
+
     public boolean canEncode()
     {
         return DomumCraftHandler.isDomumItem(domumTargetSlot.getStackInSlot(0))

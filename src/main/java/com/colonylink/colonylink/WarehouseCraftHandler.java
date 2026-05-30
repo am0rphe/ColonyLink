@@ -370,8 +370,9 @@ public class WarehouseCraftHandler
                 }
             }
         }
-
-        DomumCraftHandler.handleDomumCraft(player, domumStack, realCount, redirectorPos);
+        // v1.4.3 — handleDomumCraft() supprimé : les items Domum passent désormais
+        // par ICraftingProvider (DomumPatternDetails). L'appel ici était un vestige
+        // de l'ancienne méthode de craft virtuel, obsolète depuis v1.4.3.
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

@@ -156,6 +156,31 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
     private final List<ItemStack> cachedMaterials = new ArrayList<>();
     private ItemStack lastTargetForCache = ItemStack.EMPTY;
 
+    // ── Queue Domum (reçue via DomumQueueSyncPacket) ──────────────────────────
+    private final List<ItemStack> domumQueue     = new ArrayList<>();
+    private int                   domumQueueScroll    = 0;
+    private int                   domumQueueSelected  = -1; // index sélectionné
+
+    // ── Cutter tab — nouvelle disposition (coordonnées relatives au panneau PG_X/PG_Y)
+    // Slot item de référence (posé manuellement) : x3 y26
+    private static final int CUT_REF_X     = 3;
+    private static final int CUT_REF_Y     = 26;
+    // Aperçu matériau 1 : x3 y5
+    private static final int CUT_MAT1_X    = 3;
+    private static final int CUT_MAT1_Y    = 5;
+    // Aperçu matériau 2 : x3 y46
+    private static final int CUT_MAT2_X    = 3;
+    private static final int CUT_MAT2_Y    = 46;
+    // Zone liste scrollable : x25 y3, largeur 96 (3px marge droite avant bord panneau)
+    private static final int CUT_LIST_X    = 25;
+    private static final int CUT_LIST_Y    = 3;
+    private static final int CUT_LIST_W    = 96;
+    private static final int CUT_LIST_H    = 63;
+    // Hauteur d'une ligne de liste
+    private static final int CUT_ROW_H     = 18;
+    // Nombre de lignes visibles
+    private static final int CUT_ROWS_VIS  = CUT_LIST_H / CUT_ROW_H; // = 3
+
     // État drag scrollbars
     private boolean draggingWh = false, draggingAe = false;
     private int     dragStartY = 0, dragStartScroll = 0;
@@ -244,6 +269,17 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
         for (var e : p.entries())
             meItems.add(new MeItemEntry(e.stack(), e.count(), e.craftable()));
         rebuildMe();
+    }
+
+    /** Reçu via DomumQueueSyncPacket — met à jour la liste côté client. */
+    public void updateDomumQueue(java.util.List<ItemStack> queue)
+    {
+        domumQueue.clear();
+        domumQueue.addAll(queue);
+        // Si la sélection était sur un index maintenant hors liste, on la réinitialise
+        if (domumQueueSelected >= domumQueue.size()) domumQueueSelected = -1;
+        domumQueueScroll = Math.max(0, Math.min(domumQueueScroll,
+                Math.max(0, domumQueue.size() - CUT_ROWS_VIS)));
     }
 
     private void rebuildWh()
@@ -343,21 +379,24 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
         // 5. Slider horizontal WH/ME
         renderSlider(g, x, y, mx, my);
 
-        // 6. Boutons push centre colonne
-        renderPushButton(g, mx, my, x + BTN1_X, y + BTN1_Y, btn1Pushed,
-                "Transfer selected WH \u2194 ME\n\u00a77Shift+click to select items");
-        renderPushButton(g, mx, my, x + BTN2_X, y + BTN2_Y, btn2Pushed,
-                "Transfer selected \u2192 Inventory\n\u00a77Shift+click to select items");
+        // 6. Boutons push centre colonne (masqués sur l'onglet Cutter)
+        if (activeTab == 0)
+        {
+            renderPushButton(g, mx, my, x + BTN1_X, y + BTN1_Y, btn1Pushed,
+                    "Transfer selected WH \u2194 ME\n\u00a77Shift+click to select items");
+            renderPushButton(g, mx, my, x + BTN2_X, y + BTN2_Y, btn2Pushed,
+                    "Transfer selected \u2192 Inventory\n\u00a77Shift+click to select items");
 
-        // 7. Tooltips des boutons croix craft (hitboxes invisibles sur fond PNG)
-        if (over(mx, my, x + 136, y + 273, 7, 7))
-            hoveredTooltip = "Clear crafting grid \u2192 Inventory\n\u00a77Shift: also clear output";
-        if (over(mx, my, x + 252, y + 279, 7, 7))
-            hoveredTooltip = "Output \u2192 Warehouse\n\u00a77Shift: full stack";
-        if (over(mx, my, x + 268, y + 279, 8, 7))
-            hoveredTooltip = "Output \u2192 ME Network\n\u00a77Shift: full stack";
-        if (over(mx, my, x + 260, y + 313, 7, 7))
-            hoveredTooltip = "Output \u2192 Inventory";
+            // 7. Tooltips des boutons croix craft (hitboxes invisibles sur fond PNG)
+            if (over(mx, my, x + 136, y + 273, 7, 7))
+                hoveredTooltip = "Clear crafting grid \u2192 Inventory\n\u00a77Shift: also clear output";
+            if (over(mx, my, x + 252, y + 279, 7, 7))
+                hoveredTooltip = "Output \u2192 Warehouse\n\u00a77Shift: full stack";
+            if (over(mx, my, x + 268, y + 279, 8, 7))
+                hoveredTooltip = "Output \u2192 ME Network\n\u00a77Shift: full stack";
+            if (over(mx, my, x + 260, y + 313, 7, 7))
+                hoveredTooltip = "Output \u2192 Inventory";
+        } // end activeTab == 0
 
         // 8. Sélection count sur panels
         if (!whSelected.isEmpty())
@@ -373,6 +412,14 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
         // 10. v1.4.2 — Zone Cutter (sur-impression si onglet 1 actif)
         if (activeTab == 1)
             renderCutterOverlay(g, x, y, mx, my);
+
+        // 11. Tooltip slot Warehouse Link Card (quand vide)
+        if (!hasWarehouseCard)
+            if (over(mx, my, x + WarehouseLinkTerminalMenu.CARD_SLOT_X,
+                    y + WarehouseLinkTerminalMenu.CARD_SLOT_Y, 16, 16))
+                hoveredTooltip = "\u00a7fWarehouse Link Card\n"
+                        + "\u00a77Insert into this slot to enable Warehouse scanning.\n"
+                        + "\u00a77Pulls items from Warehouse racks first.";
     }
 
     // ── Onglets (x=295, y=269 craft / y=291 cutter) ───────────────────────────
@@ -400,28 +447,56 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
     {
         g.blit(TEX_PATTERN_GUI, x + PG_X, y + PG_Y, 0, 0, PG_W, PG_H, PG_W, PG_H);
 
-        // Slot 47 — Target Domum (rendu manuel, slot à -2000)
+        // Origine du panneau cutter (coin haut-gauche de l'overlay PG)
+        int ox = x + PG_X;
+        int oy = y + PG_Y;
+
+        // ── Slot item de référence (x3 y26) ─────────────────────────────────
+        renderSlotOutline(g, ox + CUT_REF_X - 1, oy + CUT_REF_Y - 1);
         ItemStack target = menu.getDomumTarget();
-        renderSlotOutline(g, x + DOMUM_TARGET_RENDER_X - 1, y + DOMUM_TARGET_RENDER_Y - 1);
         if (!target.isEmpty())
         {
-            g.renderItem(target, x + DOMUM_TARGET_RENDER_X, y + DOMUM_TARGET_RENDER_Y);
-            g.renderItemDecorations(font, target, x + DOMUM_TARGET_RENDER_X, y + DOMUM_TARGET_RENDER_Y);
-            if (over(mx, my, x + DOMUM_TARGET_RENDER_X, y + DOMUM_TARGET_RENDER_Y, 16, 16))
-                hoveredTooltip = "Model: " + target.getDisplayName().getString()
-                        + "\n\u00a77Will be encoded into a Domum Pattern";
+            g.renderItem(target, ox + CUT_REF_X, oy + CUT_REF_Y);
+            g.renderItemDecorations(font, target, ox + CUT_REF_X, oy + CUT_REF_Y);
+            if (over(mx, my, ox + CUT_REF_X, oy + CUT_REF_Y, 16, 16))
+                hoveredTooltip = "§fModel: §7" + target.getDisplayName().getString()
+                        + "\n§7Place a crafted Domum block here"
+                        + "\n§7then click §aEncode §7to create a pattern";
             updateMaterialCache(target);
-            renderMaterials(g, x, y, mx, my);
         }
         else
         {
-            if (over(mx, my, x + DOMUM_TARGET_RENDER_X, y + DOMUM_TARGET_RENDER_Y, 16, 16))
-                hoveredTooltip = "\u00a77Place a Domum block here";
+            if (over(mx, my, ox + CUT_REF_X, oy + CUT_REF_Y, 16, 16))
+                hoveredTooltip = "\u00a77Place a Domum block here to preview its materials";
             cachedMaterials.clear();
             lastTargetForCache = ItemStack.EMPTY;
         }
 
-        // Slot 48 — Blank Pattern (rendu manuel)
+        // ── Aperçu matériau 1 (x3 y5) ───────────────────────────────────────
+        renderSlotOutline(g, ox + CUT_MAT1_X - 1, oy + CUT_MAT1_Y - 1);
+        if (cachedMaterials.size() >= 1 && !cachedMaterials.get(0).isEmpty())
+        {
+            ItemStack mat1 = cachedMaterials.get(0);
+            g.renderItem(mat1, ox + CUT_MAT1_X, oy + CUT_MAT1_Y);
+            if (over(mx, my, ox + CUT_MAT1_X, oy + CUT_MAT1_Y, 16, 16))
+                hoveredTooltip = "Material 1: " + mat1.getDisplayName().getString();
+        }
+        else if (over(mx, my, ox + CUT_MAT1_X, oy + CUT_MAT1_Y, 16, 16))
+            hoveredTooltip = "\u00a78Material slot 1";
+
+        // ── Aperçu matériau 2 (x3 y46) ──────────────────────────────────────
+        renderSlotOutline(g, ox + CUT_MAT2_X - 1, oy + CUT_MAT2_Y - 1);
+        if (cachedMaterials.size() >= 2 && !cachedMaterials.get(1).isEmpty())
+        {
+            ItemStack mat2 = cachedMaterials.get(1);
+            g.renderItem(mat2, ox + CUT_MAT2_X, oy + CUT_MAT2_Y);
+            if (over(mx, my, ox + CUT_MAT2_X, oy + CUT_MAT2_Y, 16, 16))
+                hoveredTooltip = "Material 2: " + mat2.getDisplayName().getString();
+        }
+        else if (over(mx, my, ox + CUT_MAT2_X, oy + CUT_MAT2_Y, 16, 16))
+            hoveredTooltip = "\u00a78Material slot 2";
+
+        // ── Blank Pattern (réutilise BLANK_RENDER_X/Y existants) ─────────────
         ItemStack blank = menu.getSlot(BLANK_PATTERN_SLOT).getItem();
         renderSlotOutline(g, x + BLANK_RENDER_X - 1, y + BLANK_RENDER_Y - 1);
         if (!blank.isEmpty())
@@ -430,46 +505,151 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
             g.renderItemDecorations(font, blank, x + BLANK_RENDER_X, y + BLANK_RENDER_Y);
         }
         if (over(mx, my, x + BLANK_RENDER_X, y + BLANK_RENDER_Y, 16, 16))
-            hoveredTooltip = blank.isEmpty()
-                    ? "\u00a77Insert a Blank Pattern here"
-                    : blank.getDisplayName().getString();
+            hoveredTooltip = blank.isEmpty() ? "\u00a77Insert a Blank Pattern here" : blank.getDisplayName().getString();
 
-        // Slot 49 — Output : pattern encodé (après clic Encode) OU preview grisé
-        // Si slot 49 vide mais target présent → affiche aperçu grisé (non cliquable)
+        // ── Slot output (réutilise OUTPUT_RENDER_X/Y existants) ──────────────
         ItemStack output = menu.getDomumOutput();
-        ItemStack target49 = menu.getDomumTarget();
         renderSlotOutline(g, x + OUTPUT_RENDER_X - 1, y + OUTPUT_RENDER_Y - 1);
         if (!output.isEmpty())
         {
-            // Pattern encodé réel → cliquable
             g.renderItem(output, x + OUTPUT_RENDER_X, y + OUTPUT_RENDER_Y);
             g.renderItemDecorations(font, output, x + OUTPUT_RENDER_X, y + OUTPUT_RENDER_Y);
             if (over(mx, my, x + OUTPUT_RENDER_X, y + OUTPUT_RENDER_Y, 16, 16))
-                hoveredTooltip = output.getDisplayName().getString()
-                        + "\n\u00a77Click to pick up the encoded pattern";
+                hoveredTooltip = output.getDisplayName().getString() + "\n\u00a77Click to pick up the encoded pattern";
         }
-        else if (!target49.isEmpty())
-        {
-            // Preview grisé — montre l'item cible avec overlay semi-transparent
-            g.renderItem(target49, x + OUTPUT_RENDER_X, y + OUTPUT_RENDER_Y);
-            g.fill(x + OUTPUT_RENDER_X, y + OUTPUT_RENDER_Y,
-                    x + OUTPUT_RENDER_X + 16, y + OUTPUT_RENDER_Y + 16, 0x88000000);
-            if (over(mx, my, x + OUTPUT_RENDER_X, y + OUTPUT_RENDER_Y, 16, 16))
-                hoveredTooltip = "\u00a77Click Encode to create a pattern for "
-                        + target49.getDisplayName().getString();
-        }
+        else if (over(mx, my, x + OUTPUT_RENDER_X, y + OUTPUT_RENDER_Y, 16, 16))
+            hoveredTooltip = "\u00a78Encoded pattern appears here";
 
-        // Bouton Encode — gap vertical entre blank et output
-        boolean canEncode = menu.canEncode();
+        // ── Bouton Encode ─────────────────────────────────────────────────────
+        boolean canEncode = domumQueueSelected >= 0
+                && domumQueueSelected < domumQueue.size()
+                && !blank.isEmpty()
+                && output.isEmpty();
         ResourceLocation encodeTex = encodePushed ? TEX_BTN_PUSHED : TEX_BTN;
         g.blit(encodeTex, x + ENCODE_BTN_X, y + ENCODE_BTN_Y, 0, 0, ENCODE_BTN_W, ENCODE_BTN_H, 12, 12);
         if (!canEncode)
             g.fill(x + ENCODE_BTN_X, y + ENCODE_BTN_Y,
                     x + ENCODE_BTN_X + ENCODE_BTN_W, y + ENCODE_BTN_Y + ENCODE_BTN_H, 0xAA111133);
         if (over(mx, my, x + ENCODE_BTN_X, y + ENCODE_BTN_Y, ENCODE_BTN_W, ENCODE_BTN_H))
-            hoveredTooltip = canEncode
-                    ? "Encode Domum Pattern\n\u00a77Consumes 1x Blank Pattern"
-                    : "Place a Domum block + Blank Pattern first";
+        {
+            boolean queueReady = domumQueueSelected >= 0 && domumQueueSelected < domumQueue.size();
+            boolean slotReady  = !target.isEmpty();
+            boolean blankReady = !blank.isEmpty();
+            boolean outFree    = output.isEmpty();
+            if (queueReady && blankReady && outFree)
+                hoveredTooltip = "§aEncode from queue\n§7Consumes 1x Blank Pattern";
+            else if (slotReady && blankReady && outFree)
+                hoveredTooltip = "§aEncode from reference slot\n§7Consumes 1x Blank Pattern";
+            else if (!blankReady)
+                hoveredTooltip = "§cInsert a Blank Pattern first";
+            else if (!outFree)
+                hoveredTooltip = "§eTake the encoded pattern from the output slot first";
+            else
+                hoveredTooltip = "§7Select an item from the list first,\n§7or place a crafted Domum block\n§7in the left reference slot";
+        }
+
+        // ── Liste scrollable (x33 y3 → x124 y66) ─────────────────────────────
+        renderDomumQueueList(g, ox, oy, mx, my);
+    }
+
+    /**
+     * Rendu de la liste scrollable des items Domum en attente d'encodage.
+     * Coordonnées relatives à l'origine du panneau cutter (ox, oy).
+     */
+    private void renderDomumQueueList(GuiGraphics g, int ox, int oy, int mx, int my)
+    {
+        // Fond de la zone liste
+        g.fill(ox + CUT_LIST_X, oy + CUT_LIST_Y,
+                ox + CUT_LIST_X + CUT_LIST_W, oy + CUT_LIST_Y + CUT_LIST_H, 0x88111111);
+
+        // Clip pour éviter que le texte déborde hors de la zone liste
+        g.enableScissor(ox + CUT_LIST_X, oy + CUT_LIST_Y,
+                ox + CUT_LIST_X + CUT_LIST_W, oy + CUT_LIST_Y + CUT_LIST_H);
+
+        if (domumQueue.isEmpty())
+        {
+            g.drawString(font, "\u00a78No pending recipes",
+                    ox + CUT_LIST_X + 4, oy + CUT_LIST_Y + 4, 0xFFAAAAAA, false);
+            g.drawString(font, "\u00a78Click 'No Pattern'",
+                    ox + CUT_LIST_X + 4, oy + CUT_LIST_Y + 14, 0xFFAAAAAA, false);
+            g.drawString(font, "\u00a78in the Clipboard",
+                    ox + CUT_LIST_X + 4, oy + CUT_LIST_Y + 24, 0xFFAAAAAA, false);
+            g.disableScissor();
+            return;
+        }
+
+        int maxScroll = Math.max(0, domumQueue.size() - CUT_ROWS_VIS);
+        domumQueueScroll = Math.min(domumQueueScroll, maxScroll);
+
+        for (int row = 0; row < CUT_ROWS_VIS; row++)
+        {
+            int idx = domumQueueScroll + row;
+            if (idx >= domumQueue.size()) break;
+
+            ItemStack stack = domumQueue.get(idx);
+            int rx = ox + CUT_LIST_X;
+            int ry = oy + CUT_LIST_Y + row * CUT_ROW_H;
+
+            boolean selected = (idx == domumQueueSelected);
+            boolean hovered  = over(mx, my, rx, ry, CUT_LIST_W, CUT_ROW_H);
+            if (selected)
+                g.fill(rx, ry, rx + CUT_LIST_W, ry + CUT_ROW_H, 0x881A3A6A);
+            else if (hovered)
+                g.fill(rx, ry, rx + CUT_LIST_W, ry + CUT_ROW_H, 0x44FFFFFF);
+
+            g.fill(rx, ry + CUT_ROW_H - 1, rx + CUT_LIST_W, ry + CUT_ROW_H, 0x44AAAAAA);
+
+            int itemY = ry + (CUT_ROW_H - 16) / 2;
+            g.renderItem(stack, rx + 2, itemY);
+
+            String name = stack.getDisplayName().getString();
+            int maxChars = (CUT_LIST_W - 22) / 5;
+            if (name.length() > maxChars) name = name.substring(0, maxChars - 1) + "…";
+            g.drawString(font, name, rx + 20, ry + (CUT_ROW_H - 8) / 2, 0xFFDDDDDD, false);
+
+            if (hovered)
+            {
+                StringBuilder tip = new StringBuilder();
+                tip.append("§f").append(stack.getDisplayName().getString());
+
+                // Variant (BLOCK_STATE)
+                net.minecraft.world.item.component.BlockItemStateProperties bs =
+                        stack.get(net.minecraft.core.component.DataComponents.BLOCK_STATE);
+                if (bs != null && !bs.properties().isEmpty())
+                    for (var e : bs.properties().entrySet())
+                        tip.append("\n§8").append(e.getKey()).append(": §7").append(e.getValue());
+
+                // Matériaux
+                if (stack.getItem() instanceof net.minecraft.world.item.BlockItem bi
+                        && bi.getBlock() instanceof com.ldtteam.domumornamentum.block.IMateriallyTexturedBlock tb)
+                {
+                    com.ldtteam.domumornamentum.client.model.data.MaterialTextureData td =
+                            com.ldtteam.domumornamentum.client.model.data.MaterialTextureData.readFromItemStack(stack);
+                    for (var comp : tb.getComponents())
+                    {
+                        net.minecraft.world.level.block.Block mat = td.getTexturedComponents().get(comp.getId());
+                        if (mat != null)
+                            tip.append("\n§7• §f").append(new ItemStack(mat).getDisplayName().getString());
+                    }
+                }
+
+                tip.append("\n§8Click to select — then click Encode");
+                hoveredTooltip = tip.toString();
+            }
+        }
+
+        g.disableScissor();
+
+        // Indicateur scroll hors clip (pour ne pas être coupé)
+        if (maxScroll > 0)
+        {
+            String scrollInfo = (domumQueueScroll + 1) + "-"
+                    + Math.min(domumQueueScroll + CUT_ROWS_VIS, domumQueue.size())
+                    + "/" + domumQueue.size();
+            g.drawString(font, scrollInfo,
+                    ox + CUT_LIST_X + CUT_LIST_W - font.width(scrollInfo) - 2,
+                    oy + CUT_LIST_Y + CUT_LIST_H - 8, 0xFF777777, false);
+        }
     }
 
     // ── Matériaux lecture seule ───────────────────────────────────────────────
@@ -783,37 +963,78 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
             return true;
         }
 
-        // ── v1.4.2 — Bouton Encode ────────────────────────────────────────────
+        // ── v1.4.8 — Cutter : bouton Encode depuis la queue ───────────────────
         if (activeTab == 1 && over(mx, my, leftPos + ENCODE_BTN_X, topPos + ENCODE_BTN_Y,
                 ENCODE_BTN_W, ENCODE_BTN_H))
         {
-            if (menu.canEncode()) { encodePushed = true; menu.sendEncodeRequest(); }
+            ItemStack blank = menu.getSlot(BLANK_PATTERN_SLOT).getItem();
+            boolean outputFree = menu.getDomumOutput().isEmpty();
+
+            // Chemin 1 : sélection dans la queue
+            if (domumQueueSelected >= 0 && domumQueueSelected < domumQueue.size()
+                    && !blank.isEmpty() && outputFree)
+            {
+                encodePushed = true;
+                ItemStack selectedStack = domumQueue.get(domumQueueSelected);
+                net.neoforged.neoforge.network.PacketDistributor.sendToServer(
+                        new DomumEncodePatternPacket(menu.getHostPos(), menu.getHostSide(), selectedStack));
+            }
+            // Chemin 2 : ancien chemin via domumTargetSlot (item posé manuellement)
+            else if (menu.canEncode())
+            {
+                encodePushed = true;
+                menu.sendEncodeRequest();
+            }
             return true;
         }
 
-        // ── v1.4.2 — Clics slots Domum (slots à -2000, rendu manuel) ─────────
+        // ── v1.4.8 — Cutter : clic sur la liste queue ────────────────────────
         if (activeTab == 1)
         {
-            if (over(mx, my, leftPos + DOMUM_TARGET_RENDER_X, topPos + DOMUM_TARGET_RENDER_Y, 16, 16))
+            int ox = leftPos + PG_X;
+            int oy = topPos  + PG_Y;
+
+            // Clic dans la zone liste
+            if (over(mx, my, ox + CUT_LIST_X, oy + CUT_LIST_Y, CUT_LIST_W, CUT_LIST_H))
             {
-                this.slotClicked(menu.getSlot(DOMUM_TARGET_SLOT), DOMUM_TARGET_SLOT, btn,
-                        net.minecraft.world.inventory.ClickType.PICKUP);
+                int relY = (int) my - (oy + CUT_LIST_Y);
+                int row  = relY / CUT_ROW_H;
+                int idx  = domumQueueScroll + row;
+                if (idx >= 0 && idx < domumQueue.size())
+                {
+                    domumQueueSelected = (domumQueueSelected == idx) ? -1 : idx; // toggle
+                    // Aperçu matériaux depuis l'item sélectionné
+                    if (domumQueueSelected >= 0)
+                        updateMaterialCache(domumQueue.get(domumQueueSelected));
+                }
                 return true;
             }
+
+            // Slot Blank Pattern
             if (over(mx, my, leftPos + BLANK_RENDER_X, topPos + BLANK_RENDER_Y, 16, 16))
             {
                 this.slotClicked(menu.getSlot(BLANK_PATTERN_SLOT), BLANK_PATTERN_SLOT, btn,
                         net.minecraft.world.inventory.ClickType.PICKUP);
                 return true;
             }
-            // Fix 1 : clic sur le slot output (49) pour récupérer le pattern encodé
+
+            // Slot output — récupérer le pattern encodé
             if (over(mx, my, leftPos + OUTPUT_RENDER_X, topPos + OUTPUT_RENDER_Y, 16, 16))
             {
                 if (!menu.getDomumOutput().isEmpty())
                 {
                     this.slotClicked(menu.getSlot(DOMUM_OUTPUT_SLOT), DOMUM_OUTPUT_SLOT, btn,
                             net.minecraft.world.inventory.ClickType.PICKUP);
+                    // La ligne disparaît via tickDomumQueueCraftableCheck au prochain scan AE2
                 }
+                return true;
+            }
+
+            // Slot item de référence (pour les matériaux preview)
+            if (over(mx, my, ox + CUT_REF_X, oy + CUT_REF_Y, 16, 16))
+            {
+                this.slotClicked(menu.getSlot(DOMUM_TARGET_SLOT), DOMUM_TARGET_SLOT, btn,
+                        net.minecraft.world.inventory.ClickType.PICKUP);
                 return true;
             }
         }
@@ -1156,6 +1377,20 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
     {
         float cx = this.width / 2f, cy = this.height / 2f;
         mx = toGui(mx, cx, guiScale); my = toGui(my, cy, guiScale);
+
+        // Scroll liste Domum (onglet Cutter actif)
+        if (activeTab == 1)
+        {
+            int ox = leftPos + PG_X;
+            int oy = topPos  + PG_Y;
+            if (mx >= ox + CUT_LIST_X && mx < ox + CUT_LIST_X + CUT_LIST_W
+                    && my >= oy + CUT_LIST_Y && my < oy + CUT_LIST_Y + CUT_LIST_H)
+            {
+                int maxScroll = Math.max(0, domumQueue.size() - CUT_ROWS_VIS);
+                domumQueueScroll = Math.max(0, Math.min(domumQueueScroll - (int) Math.signum(dy), maxScroll));
+                return true;
+            }
+        }
 
         int rT = topPos + Y_ITEMS;
         int rB = rT + PANEL_ROWS * SLOT_PITCH;

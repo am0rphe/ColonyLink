@@ -42,6 +42,10 @@ public class ColonyLinkConfig
     public static final ModConfigSpec.IntValue     MAX_RESOURCES_DISPLAYED;
     public static final ModConfigSpec.IntValue     WAREHOUSE_SNAPSHOT_VALIDITY_TICKS;
 
+    // ── [general — locate] ────────────────────────────────────────────────────
+    public static final ModConfigSpec.IntValue LOCATE_GLOW_DURATION_SECONDS;
+    public static final ModConfigSpec.LongValue LOCATE_COST_RF;
+
     // ── [network] ─────────────────────────────────────────────────────────────
     public static final ModConfigSpec.IntValue REDIRECTOR_BUFFER_ROWS;
     public static final ModConfigSpec.IntValue REDIRECTOR_BUFFER_COLS;
@@ -71,7 +75,7 @@ public class ColonyLinkConfig
 
         PASSIVE_DRAIN_RF = builder
                 .comment("RF drained from the wand every ticker_interval_ticks while the GUI is open.",
-                        "At default interval (40t), this equals ~30 RF/tick.",
+                        "At default interval (10t = 0.5s), this equals ~120 RF/tick.",
                         "Set to 0 to disable passive drain entirely.")
                 .defineInRange("passive_drain_rf", 1_200L, 0L, Long.MAX_VALUE);
 
@@ -120,6 +124,19 @@ public class ColonyLinkConfig
                         "Wireless Access Point before opening the GUI (like a Wireless Terminal).",
                         "If false, the wand works from anywhere. Default: false")
                 .define("wand_range_check", false);
+
+        LOCATE_GLOW_DURATION_SECONDS = builder
+                .comment("Duration in seconds of the Glowing effect applied to a builder NPC",
+                        "when the 'Locate' button is pressed in the Clipboard GUI.",
+                        "Op-only: requires level 2+ operator to modify in-game.",
+                        "Range: 1-60. Default: 8")
+                .defineInRange("locate_glow_duration_seconds", 8, 1, 60);
+
+        LOCATE_COST_RF = builder
+                .comment("RF cost of pressing the 'Locate' button in the Clipboard GUI.",
+                        "Set to 0 to disable the RF cost entirely.",
+                        "Default: 500 RF")
+                .defineInRange("locate_cost_rf", 500L, 0L, Long.MAX_VALUE);
 
         builder.pop();
 

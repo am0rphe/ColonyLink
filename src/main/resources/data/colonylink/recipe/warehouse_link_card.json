@@ -6,10 +6,10 @@
     "IFI"
   ],
   "key": {
-    "I": { "item": "minecraft:iron_ingot" },
+    "I": { "item": "minecraft:diamond" },
     "F": { "item": "ae2:fluix_crystal" },
-    "S": { "item": "ae2:singularity" },
-    "W": { "item": "minecolonies:blockhutwarehouse" }
+    "S": { "item": "minecraft:ender_pearl" },
+    "W": { "item": "minecraft:chest" }
   },
   "result": {
     "id": "colonylink:warehouse_link_card",
