@@ -3,6 +3,7 @@ package com.colonylink.colonylink;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.suggestion.SuggestionProvider;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
@@ -12,6 +13,7 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import java.util.EnumSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -113,6 +115,127 @@ public class ColonyLinkCommand
             Map.entry("warehouse_snapshot_validity_ticks","Interface — warehouse snapshot TTL in ticks (20–24000)")
     );
 
+    // ── Métadonnées typées par clé (pour la tab-complétion de la valeur) ──────
+    //
+    // Parallèle à RUNTIME_CONFIG_KEYS : mêmes clés, mais avec le type, la plage
+    // et la valeur par défaut, plus un accès à la valeur courante. Sert uniquement
+    // à proposer des candidats pertinents en autocomplétion ; la validation réelle
+    // reste faite par applyConfig().
+
+    private record ConfigSpec(boolean bool, long min, long max, String def,
+                              java.util.function.Supplier<String> current) {}
+
+    private static final Map<String, ConfigSpec> CONFIG_SPECS = Map.ofEntries(
+            Map.entry("ticker_interval_ticks",
+                    new ConfigSpec(false, 5, 100, "10",
+                            () -> String.valueOf(ColonyLinkConfig.TICKER_INTERVAL_TICKS.get()))),
+            Map.entry("passive_drain_rf",
+                    new ConfigSpec(false, 0, Long.MAX_VALUE, "1200",
+                            () -> String.valueOf(ColonyLinkConfig.PASSIVE_DRAIN_RF.get()))),
+            Map.entry("send_cost_rf",
+                    new ConfigSpec(false, 0, Long.MAX_VALUE, "1500",
+                            () -> String.valueOf(ColonyLinkConfig.SEND_COST_RF.get()))),
+            Map.entry("craft_cost_rf",
+                    new ConfigSpec(false, 0, Long.MAX_VALUE, "2500",
+                            () -> String.valueOf(ColonyLinkConfig.CRAFT_COST_RF.get()))),
+            Map.entry("block_actions_if_no_power",
+                    new ConfigSpec(true, 0, 0, "true",
+                            () -> String.valueOf(ColonyLinkConfig.BLOCK_ACTIONS_IF_NO_POWER.get()))),
+            Map.entry("low_power_threshold_percent",
+                    new ConfigSpec(false, 0, 100, "10",
+                            () -> String.valueOf(ColonyLinkConfig.LOW_POWER_THRESHOLD_PERCENT.get()))),
+            Map.entry("max_builders_per_wand",
+                    new ConfigSpec(false, 1, 10, "5",
+                            () -> String.valueOf(ColonyLinkConfig.MAX_BUILDERS_PER_WAND.get()))),
+            Map.entry("wand_range_check",
+                    new ConfigSpec(true, 0, 0, "false",
+                            () -> String.valueOf(ColonyLinkConfig.WAND_RANGE_CHECK.get()))),
+            Map.entry("enable_tool_upgrade",
+                    new ConfigSpec(true, 0, 0, "true",
+                            () -> String.valueOf(ColonyLinkConfig.ENABLE_TOOL_UPGRADE.get()))),
+            Map.entry("tool_upgrade_send_auto",
+                    new ConfigSpec(true, 0, 0, "true",
+                            () -> String.valueOf(ColonyLinkConfig.TOOL_UPGRADE_SEND_AUTO.get()))),
+            Map.entry("respect_enchant_level_cap",
+                    new ConfigSpec(true, 0, 0, "true",
+                            () -> String.valueOf(ColonyLinkConfig.RESPECT_ENCHANT_LEVEL_CAP.get()))),
+            Map.entry("show_crafting_status",
+                    new ConfigSpec(true, 0, 0, "true",
+                            () -> String.valueOf(ColonyLinkConfig.SHOW_CRAFTING_STATUS.get()))),
+            Map.entry("show_no_pattern_items",
+                    new ConfigSpec(true, 0, 0, "true",
+                            () -> String.valueOf(ColonyLinkConfig.SHOW_NO_PATTERN_ITEMS.get()))),
+            Map.entry("max_resources_displayed",
+                    new ConfigSpec(false, 10, 500, "100",
+                            () -> String.valueOf(ColonyLinkConfig.MAX_RESOURCES_DISPLAYED.get()))),
+            Map.entry("warehouse_snapshot_validity_ticks",
+                    new ConfigSpec(false, 20, 24000, "400",
+                            () -> String.valueOf(ColonyLinkConfig.WAREHOUSE_SNAPSHOT_VALIDITY_TICKS.get())))
+    );
+
+    // ── Fournisseurs de suggestions Brigadier (tab-complétion) ────────────────
+
+    /** /colonylink debug <subsystem> — sous-systèmes + 'all', description en tooltip. */
+    private static final SuggestionProvider<CommandSourceStack> SUGGEST_DEBUG = (ctx, b) ->
+    {
+        String rem = b.getRemaining().toLowerCase(Locale.ROOT);
+        if ("all".startsWith(rem))
+            b.suggest("all", Component.literal("Toggle every subsystem at once"));
+        for (DebugSubsystem s : DebugSubsystem.values())
+            if (s.key.startsWith(rem))
+                b.suggest(s.key, Component.literal(s.description));
+        return b.buildFuture();
+    };
+
+    /** /colonylink config <key> — clés modifiables, description en tooltip. */
+    private static final SuggestionProvider<CommandSourceStack> SUGGEST_CONFIG_KEY = (ctx, b) ->
+    {
+        String rem = b.getRemaining().toLowerCase(Locale.ROOT);
+        RUNTIME_CONFIG_KEYS.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .filter(e -> e.getKey().startsWith(rem))
+                .forEach(e -> b.suggest(e.getKey(), Component.literal(e.getValue())));
+        return b.buildFuture();
+    };
+
+    /** /colonylink config <key> <value> — valeurs valides selon la clé déjà saisie. */
+    private static final SuggestionProvider<CommandSourceStack> SUGGEST_CONFIG_VALUE = (ctx, b) ->
+    {
+        String key;
+        try { key = StringArgumentType.getString(ctx, "key"); }
+        catch (IllegalArgumentException e) { return b.buildFuture(); }
+
+        ConfigSpec spec = CONFIG_SPECS.get(key);
+        if (spec == null) return b.buildFuture();
+
+        String rem = b.getRemaining().toLowerCase(Locale.ROOT);
+        String cur = spec.current().get();
+
+        // (valeur → tooltip), ordre conservé, sans doublon
+        java.util.LinkedHashMap<String, String> cands = new java.util.LinkedHashMap<>();
+        if (spec.bool())
+        {
+            cands.put("true",  cur.equalsIgnoreCase("true")  ? "Enable (current)"  : "Enable");
+            cands.put("false", cur.equalsIgnoreCase("false") ? "Disable (current)" : "Disable");
+        }
+        else
+        {
+            cands.putIfAbsent(cur,                        "Current value");
+            cands.putIfAbsent(spec.def(),                 "Default");
+            cands.putIfAbsent(String.valueOf(spec.min()), "Minimum");
+            if (spec.max() != Long.MAX_VALUE)
+                cands.putIfAbsent(String.valueOf(spec.max()), "Maximum");
+        }
+
+        cands.forEach((val, tip) ->
+        {
+            if (val.toLowerCase(Locale.ROOT).startsWith(rem))
+                b.suggest(val, Component.literal(tip));
+        });
+        return b.buildFuture();
+    };
+
+
     // ── Enregistrement de la commande ─────────────────────────────────────────
 
     @SubscribeEvent
@@ -137,6 +260,7 @@ public class ColonyLinkCommand
                                 .then(Commands.literal("list")
                                         .executes(ColonyLinkCommand::cmdDebugList))
                                 .then(Commands.argument("subsystem", StringArgumentType.word())
+                                        .suggests(SUGGEST_DEBUG)
                                         .executes(ColonyLinkCommand::cmdDebugToggle)))
 
                         // /colonylink config list
@@ -145,7 +269,9 @@ public class ColonyLinkCommand
                                 .then(Commands.literal("list")
                                         .executes(ColonyLinkCommand::cmdConfigList))
                                 .then(Commands.argument("key", StringArgumentType.word())
+                                        .suggests(SUGGEST_CONFIG_KEY)
                                         .then(Commands.argument("value", StringArgumentType.greedyString())
+                                                .suggests(SUGGEST_CONFIG_VALUE)
                                                 .executes(ColonyLinkCommand::cmdConfigSet))))
 
                         // /colonylink reload

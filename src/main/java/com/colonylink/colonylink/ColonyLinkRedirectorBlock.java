@@ -19,8 +19,11 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.DirectionProperty;
+import net.minecraft.world.level.storage.loot.LootParams;
 import net.minecraft.world.phys.BlockHitResult;
 import org.jetbrains.annotations.Nullable;
+
+import java.util.List;
 
 public class ColonyLinkRedirectorBlock extends Block implements EntityBlock
 {
@@ -132,6 +135,20 @@ public class ColonyLinkRedirectorBlock extends Block implements EntityBlock
         super.onRemove(state, level, pos, newState, movedByPiston);
     }
 
+    /**
+     * Drop "self" défini en code, indépendant de toute loot table JSON.
+     * C'était la cause du bug : sans loot table (absente/incomplète), le chemin
+     * vanilla playerDestroy() → dropResources() → getDrops() ne renvoyait rien,
+     * donc le block item ne tombait jamais. On force ici le drop du Redirector.
+     * Couvre TOUS les cas de destruction (pioche, explosion, destroyBlock du wrench…).
+     * Le contenu du buffer + la Warehouse Link Card restent gérés par onRemove().
+     */
+    @Override
+    public List<ItemStack> getDrops(BlockState state, LootParams.Builder params)
+    {
+        return List.of(new ItemStack(ColonyLinkRegistry.REDIRECTOR_BLOCK_ITEM.get()));
+    }
+
 
 
     @Override
@@ -150,7 +167,16 @@ public class ColonyLinkRedirectorBlock extends Block implements EntityBlock
                 net.minecraft.core.registries.Registries.ITEM,
                 net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("c", "tools/wrench"));
         if (held.is(wrenchTag))
+        {
+            // Sneak + wrench → retire le Redirector proprement.
+            // destroyBlock(pos, true) : true → dropResources → getDrops() droppe le block
+            // item, puis onRemove() droppe le contenu du buffer + la Warehouse Link Card.
+            // Côté client (isClientSide) on ne fait rien : la suppression du bloc est
+            // répliquée par le packet de mise à jour serveur habituel.
+            if (!level.isClientSide() && player.isShiftKeyDown())
+                level.destroyBlock(pos, true);
             return InteractionResult.SUCCESS;
+        }
 
         if (level.isClientSide()) return InteractionResult.PASS;
 

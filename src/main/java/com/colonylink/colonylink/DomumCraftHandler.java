@@ -1,6 +1,5 @@
 package com.colonylink.colonylink;
 
-import appeng.api.config.Actionable;
 import appeng.api.implementations.blockentities.IWirelessAccessPoint;
 import appeng.api.networking.IGrid;
 import appeng.api.networking.crafting.ICraftingService;
@@ -20,7 +19,6 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.BlockItemStateProperties;
 import net.minecraft.world.level.block.Block;
-import net.neoforged.neoforge.items.IItemHandler;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -194,119 +192,6 @@ public class DomumCraftHandler
         }
 
         CraftHandler.handleCraftRequests(player, tocraft, counts);
-    }
-
-    public static void handleDomumCraft(ServerPlayer player, ItemStack domumStack, int needed, BlockPos redirectorPos)
-    {
-        ItemStack wandStack = findWandInInventory(player);
-        if (wandStack == null || !ColonyLinkWandLinkableHandler.isLinked(wandStack)) return;
-
-        ServerLevel level = player.serverLevel();
-        IWirelessAccessPoint wap = getWap(wandStack, level);
-        if (wap == null) return;
-
-        IGrid grid = wap.getGrid();
-        if (grid == null) return;
-
-        var be = level.getBlockEntity(redirectorPos);
-        if (!(be instanceof ColonyLinkRedirectorBlockEntity redirector))
-        {
-            player.sendSystemMessage(Component.literal("§cRedirector not found!"));
-            return;
-        }
-
-        Item item = domumStack.getItem();
-        if (!(item instanceof BlockItem blockItem)) return;
-        Block block = blockItem.getBlock();
-        if (!(block instanceof IMateriallyTexturedBlock texturedBlock)) return;
-
-        MaterialTextureData textureData = MaterialTextureData.readFromItemStack(domumStack);
-        IStorageService storageService = grid.getStorageService();
-        appeng.api.networking.security.IActionSource actionSource =
-                appeng.api.networking.security.IActionSource.ofPlayer(player,
-                        (appeng.api.networking.security.IActionHost) wap);
-
-        List<AEItemKey> extractedKeys = new ArrayList<>();
-        List<Long> extractedCounts = new ArrayList<>();
-
-        for (IMateriallyTexturedBlockComponent component : texturedBlock.getComponents())
-        {
-            Block materialBlock = textureData.getTexturedComponents().get(component.getId());
-            if (materialBlock == null)
-            {
-                if (!component.isOptional())
-                {
-                    player.sendSystemMessage(Component.literal(
-                            "§cMissing required material for component: " + component.getId()));
-                    refundExtracted(storageService, extractedKeys, extractedCounts, actionSource);
-                    return;
-                }
-                continue;
-            }
-
-            AEItemKey aeKey = AEItemKey.of(new ItemStack(materialBlock));
-            long extracted = storageService.getInventory().extract(aeKey, needed, Actionable.MODULATE, actionSource);
-
-            if (extracted < needed)
-            {
-                player.sendSystemMessage(Component.literal(
-                        "§cCould not extract enough " + new ItemStack(materialBlock).getDisplayName().getString()
-                                + " from ME! Got " + extracted + "/" + needed));
-                if (extracted > 0)
-                {
-                    extractedKeys.add(aeKey);
-                    extractedCounts.add(extracted);
-                }
-                refundExtracted(storageService, extractedKeys, extractedCounts, actionSource);
-                return;
-            }
-
-            extractedKeys.add(aeKey);
-            extractedCounts.add(extracted);
-        }
-
-        // Construit le MaterialTextureData
-        MaterialTextureData.Builder builder = MaterialTextureData.builder();
-        for (IMateriallyTexturedBlockComponent component : texturedBlock.getComponents())
-        {
-            Block materialBlock = textureData.getTexturedComponents().get(component.getId());
-            if (materialBlock != null)
-                builder.setComponent(component.getId(), materialBlock);
-        }
-
-        // Copie l'ItemStack original COMPLET (blockstate variant + tous les components)
-        // puis réécrit seulement le MaterialTextureData
-        ItemStack result = domumStack.copy();
-        result.setCount(needed);
-        builder.writeToItemStack(result);
-
-        // Insère dans le buffer du redirector
-        IItemHandler bufferHandler = redirector.buffer;
-        ItemStack remainder = result.copy();
-
-        for (int slot = 0; slot < bufferHandler.getSlots() && !remainder.isEmpty(); slot++)
-            remainder = bufferHandler.insertItem(slot, remainder, false);
-
-        if (!remainder.isEmpty())
-        {
-            refundExtracted(storageService, extractedKeys, extractedCounts, actionSource);
-            player.sendSystemMessage(Component.literal("§cRedirector buffer is full! Could not insert DO blocks."));
-            return;
-        }
-
-        player.sendSystemMessage(Component.literal(
-                "§a[ColonyLink] Crafted " + needed + "x " + domumStack.getDisplayName().getString()
-                        + " → inserted into redirector buffer!"));
-    }
-
-    private static void refundExtracted(
-            IStorageService storageService,
-            List<AEItemKey> keys,
-            List<Long> counts,
-            appeng.api.networking.security.IActionSource actionSource)
-    {
-        for (int i = 0; i < keys.size(); i++)
-            storageService.getInventory().insert(keys.get(i), counts.get(i), Actionable.MODULATE, actionSource);
     }
 
     private static ItemStack findWandInInventory(ServerPlayer player)

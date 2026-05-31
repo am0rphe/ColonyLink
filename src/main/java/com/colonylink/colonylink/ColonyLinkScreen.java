@@ -116,9 +116,65 @@ public class ColonyLinkScreen extends Screen
         applyPacket(packet);
     }
 
+    // ── Anti-flicker du statut de craft (client only) ─────────────────────────
+    //
+    // AE2 cs.isRequesting() peut renvoyer true/false par intermittence pendant un
+    // craft, ce qui faisait osciller le bouton entre "Craft" (CRAFTABLE) et
+    // "Crafting..." (CRAFTING) d'un cycle de ticker à l'autre. On lisse côté client :
+    // dès qu'un item est vu CRAFTING, on maintient l'affichage CRAFTING pendant une
+    // courte fenêtre, même si une mise à jour suivante le repasse CRAFTABLE.
+    // AVAILABLE / NO_PATTERN / MISSING restent prioritaires (le craft est vraiment fini).
+    private static final long CRAFT_HOLD_MS = 3000L;
+    private final java.util.Map<String, Long> craftHoldUntil = new java.util.HashMap<>();
+
+    private static String craftKey(ItemStack s)
+    {
+        return net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(s.getItem())
+                + "#" + s.getComponents().hashCode();
+    }
+
+    private ResourceStatus smoothCraftStatus(ItemStack stack, ResourceStatus raw)
+    {
+        if (stack == null || stack.isEmpty()) return raw;
+        String key = craftKey(stack);
+        long now = System.currentTimeMillis();
+        switch (raw)
+        {
+            case CRAFTING -> { craftHoldUntil.put(key, now + CRAFT_HOLD_MS); return ResourceStatus.CRAFTING; }
+            case CRAFTABLE -> {
+                Long until = craftHoldUntil.get(key);
+                return (until != null && until > now) ? ResourceStatus.CRAFTING : ResourceStatus.CRAFTABLE;
+            }
+            default -> { craftHoldUntil.remove(key); return raw; }
+        }
+    }
+
+    private List<ColonyLinkPacket.ResourceEntry> applyCraftHysteresis(List<ColonyLinkPacket.ResourceEntry> in)
+    {
+        if (in == null) return new ArrayList<>();
+        long now = System.currentTimeMillis();
+        craftHoldUntil.values().removeIf(until -> until <= now); // purge des holds expirés
+        List<ColonyLinkPacket.ResourceEntry> out = new ArrayList<>(in.size());
+        for (var e : in)
+        {
+            ResourceStatus disp = smoothCraftStatus(e.stack(), e.status());
+            out.add(disp == e.status() ? e : new ColonyLinkPacket.ResourceEntry(
+                    e.stack(), disp, e.realCount(), e.isDomum(), e.redirectorPos(), e.tooltipLines()));
+        }
+        return out;
+    }
+
+    private ColonyLinkPacket.BuilderRequest smoothRequest(ColonyLinkPacket.BuilderRequest r)
+    {
+        if (r == null || r.stack().isEmpty()) return r;
+        ResourceStatus disp = smoothCraftStatus(r.stack(), r.status());
+        return disp == r.status() ? r : new ColonyLinkPacket.BuilderRequest(
+                r.stack(), r.count(), disp, r.redirectorPos(), r.tooltipLines());
+    }
+
     private void applyPacket(ColonyLinkPacket packet)
     {
-        this.entries        = packet.entries();
+        this.entries        = applyCraftHysteresis(packet.entries());
         this.builderPos     = packet.builderPos();
         this.builderName    = packet.builderName();
         this.buildingName   = packet.buildingName();
@@ -126,8 +182,8 @@ public class ColonyLinkScreen extends Screen
         this.workerIdleReason = packet.workerIdleReason() != null ? packet.workerIdleReason() : "";
         this.availableCpus  = packet.availableCpus();
         this.redirectorState = packet.redirectorState();
-        this.builderRequest = packet.builderRequest() != null
-                ? packet.builderRequest() : ColonyLinkPacket.BuilderRequest.NONE;
+        this.builderRequest = smoothRequest(packet.builderRequest() != null
+                ? packet.builderRequest() : ColonyLinkPacket.BuilderRequest.NONE);
         this.hasWarehouseCard  = packet.hasWarehouseCard();
         this.warehousePriority = packet.warehousePriority();
         this.tabMetas       = packet.tabMetas() != null ? packet.tabMetas() : new ArrayList<>();
@@ -234,13 +290,13 @@ public class ColonyLinkScreen extends Screen
                               String redirectorState, ColonyLinkPacket.BuilderRequest builderRequest,
                               boolean hasWarehouseCard, boolean warehousePriority)
     {
-        this.entries        = newEntries;
+        this.entries        = applyCraftHysteresis(newEntries);
         this.builderName    = builderName;
         this.buildingName   = buildingName;
         this.workerStatus   = workerStatus;
         this.availableCpus  = availableCpus;
         this.redirectorState = redirectorState;
-        this.builderRequest = builderRequest != null ? builderRequest : ColonyLinkPacket.BuilderRequest.NONE;
+        this.builderRequest = smoothRequest(builderRequest != null ? builderRequest : ColonyLinkPacket.BuilderRequest.NONE);
         this.hasWarehouseCard  = hasWarehouseCard;
         this.warehousePriority = warehousePriority;
         if (!newEntries.isEmpty() && !newEntries.get(0).redirectorPos().equals(BlockPos.ZERO))
@@ -376,6 +432,28 @@ public class ColonyLinkScreen extends Screen
         if (s == 1.0f) return (int) screenY;
         float cy = this.height / 2f;
         return (int)((screenY - cy) / s + cy);
+    }
+
+    /**
+     * Transformation inverse de toGuiX/toGuiY : convertit une coordonnée logique GUI
+     * vers l'espace écran réel (post-pose). Indispensable pour enableScissor(), qui
+     * applique uniquement le guiScale de la fenêtre et IGNORE la matrice pose() —
+     * donc un scissor calculé en coords logiques tombe à côté dès que scale != 1.0.
+     */
+    private int toScreenX(double guiX)
+    {
+        float s = ColonyLinkGuiConfig.get().scale;
+        if (s == 1.0f) return (int) Math.round(guiX);
+        float cx = this.width / 2f;
+        return (int) Math.round((guiX - cx) * s + cx);
+    }
+
+    private int toScreenY(double guiY)
+    {
+        float s = ColonyLinkGuiConfig.get().scale;
+        if (s == 1.0f) return (int) Math.round(guiY);
+        float cy = this.height / 2f;
+        return (int) Math.round((guiY - cy) * s + cy);
     }
 
     /** Zone handle drag : entre le bouton Unlink (fin) et le bouton Restart (début), dans la barre de titre. */
@@ -1248,8 +1326,12 @@ public class ColonyLinkScreen extends Screen
                     else if (phase < 1000 + scrollRange * 60L + 1000) offset = scrollRange; // pause fin
                     else offset = scrollRange - (int)((phase - 2000 - scrollRange * 60L) / 60);
 
-                    // Clip + translate
-                    g.enableScissor(x + 29, ey, x + 29 + nameAreaW, ey + ENTRY_HEIGHT);
+                    // Clip + translate.
+                    // enableScissor() ignore la matrice pose() : on transforme donc le
+                    // rectangle de clip en espace écran réel (post-scale) pour qu'il
+                    // tombe pile sur la ligne, quel que soit le scale GUI configuré.
+                    g.enableScissor(toScreenX(x + 29), toScreenY(ey),
+                            toScreenX(x + 29 + nameAreaW), toScreenY(ey + ENTRY_HEIGHT));
                     g.drawString(this.font, prefix + fullText, x + 29 - offset, ey + 6, 0xFFFFFF, false);
                     g.disableScissor();
                 }

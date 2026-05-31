@@ -163,7 +163,13 @@ public class ColonyLinkRedirectorScreen extends AbstractContainerScreen<ColonyLi
     protected void renderSlot(GuiGraphics graphics, net.minecraft.world.inventory.Slot slot)
     {
         net.minecraft.world.item.ItemStack inSlot = slot.getItem();
-        if (!inSlot.isEmpty() && inSlot.getItem() instanceof DomumPatternItem)
+        // Vue "bloc cible" UNIQUEMENT pour les slots propres au Redirector
+        // (buffer + card = SlotItemHandler), jamais pour l'inventaire/hotbar du
+        // joueur (Slot vanilla). renderSlot() étant appelé pour TOUS les slots du
+        // menu, sans ce filtre les patterns restés dans l'inventaire passaient
+        // aussi en vue bloc dès l'ouverture du GUI.
+        if (slot instanceof net.neoforged.neoforge.items.SlotItemHandler
+                && !inSlot.isEmpty() && inSlot.getItem() instanceof DomumPatternItem)
         {
             net.minecraft.world.item.ItemStack target =
                     DomumPatternItem.getTargetStackClient(inSlot);
@@ -209,6 +215,10 @@ public class ColonyLinkRedirectorScreen extends AbstractContainerScreen<ColonyLi
             // Cherche l'item réel du slot (avant swap)
             // Les slots buffer sont de type SlotItemHandler
             net.minecraft.world.item.ItemStack realStack = slot.getItem();
+            // Tooltip "Domum Pattern" du Redirector réservé aux slots du buffer/card
+            // (SlotItemHandler) — un pattern resté dans l'inventaire garde son tooltip
+            // d'item normal, cohérent avec son rendu en vue pattern.
+            if (!(slot instanceof net.neoforged.neoforge.items.SlotItemHandler)) continue;
             if (!(realStack.getItem() instanceof DomumPatternItem)) continue;
 
             net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
