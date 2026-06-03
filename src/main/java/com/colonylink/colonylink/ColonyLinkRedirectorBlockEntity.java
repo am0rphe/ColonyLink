@@ -9,6 +9,7 @@ import appeng.api.networking.IManagedGridNode;
 import appeng.api.networking.IInWorldGridNodeHost;
 import appeng.api.networking.crafting.ICraftingProvider;
 import appeng.api.networking.security.IActionHost;
+import appeng.api.networking.security.IActionSource;
 import appeng.api.crafting.IPatternDetails;
 import appeng.api.stacks.AEItemKey;
 import appeng.api.stacks.AEKey;
@@ -20,6 +21,8 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.MenuProvider;
@@ -40,22 +43,36 @@ import net.neoforged.neoforge.items.ItemStackHandler;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
- * ColonyLinkRedirectorBlockEntity — v1.4.2
+ * ColonyLinkRedirectorBlockEntity — v1.4.9
  *
- * Ajouts v1.4.2 :
- *   - Implémente ICraftingProvider → expose les DomumPatterns du buffer au réseau AE2
- *   - pushPattern() → met le craft Domum en queue, exécuté au tick suivant
- *   - isBusy() → true si une craft est en cours (1 craft à la fois par Redirector)
- *   - buffer.isItemValid() → filtre : accepte uniquement DomumPatternItem
- *     (les Encoded Patterns AE2 sont rejetés)
- *   - notifyPatternChange() → appelle ICraftingProvider.requestUpdate() quand
- *     le buffer change, pour que AE2 rescanne les patterns disponibles
+ * Historique :
+ *   v1.4.2 :
+ *     - Implémente ICraftingProvider → expose les DomumPatterns du buffer au réseau AE2
+ *     - pushPattern() → met le craft Domum en queue, exécuté au tick suivant
+ *     - isBusy() → true si une craft est en cours (1 craft à la fois par Redirector)
+ *     - buffer.isItemValid() → filtre : accepte uniquement DomumPatternItem
+ *     - notifyPatternChange() → ICraftingProvider.requestUpdate() quand le buffer change
+ *
+ *   v1.4.9 — Sécurité chunk-load & zéro voiding (Option A) :
+ *     - pushPattern() refuse (return false) si le node AE2 est inactif OU si la file
+ *       est saturée. AE2 conserve alors les matériaux dans le réseau et réessaie plus
+ *       tard. Plus aucune prise de possession sans garantie de restitution.
+ *     - isBusy() reflète la saturation (file pleine OU sorties en attente d'injection).
+ *     - injectIntoME() lit le retour de insert() et renvoie le reliquat non inséré.
+ *     - pendingOutputs : tampon de SORTIES déjà produites mais pas (encore) réinjectées
+ *       dans le ME (ME plein / réseau hors-ligne). Réessayé à chaque tick jusqu'à succès.
+ *     - craftQueue ET pendingOutputs sont PERSISTÉS en NBT : un déchargement de chunk
+ *       entre la réception du pattern et son exécution (ou pendant que le ME est plein)
+ *       ne perd plus rien — l'état est rejoué au rechargement (idempotent : les
+ *       matériaux n'ont été prélevés qu'une seule fois par AE2).
+ *     - Borne configurable : ColonyLinkConfig.REDIRECTOR_CRAFT_QUEUE_MAX.
  */
 public class ColonyLinkRedirectorBlockEntity extends BlockEntity
         implements IInWorldGridNodeHost, ICraftingProvider, IActionHost, MenuProvider
@@ -80,11 +97,20 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
     private boolean warehousePriority = false;
     private boolean warehousePriorityClientCache = false;
 
-    /** true si un craft Domum est en cours d'exécution ce tick. */
-    private boolean craftBusy = false;
-
-    /** File d'attente des crafts Domum à exécuter (un par tick). */
+    /**
+     * File d'attente des crafts Domum à exécuter (un par tick).
+     * Persistée en NBT (v1.4.9) : les matériaux y figurant ont déjà été prélevés
+     * du réseau AE2 par pushPattern(), donc ils ne doivent jamais être perdus.
+     */
     private final Queue<PendingDomumCraft> craftQueue = new ConcurrentLinkedQueue<>();
+
+    /**
+     * Sorties Domum déjà produites mais pas (encore) réinjectées dans le ME
+     * (ME plein, réseau hors-ligne, pas de canal…). Réessayé à chaque tick.
+     * Persisté en NBT (v1.4.9) — zéro voiding même au déchargement de chunk.
+     * Accédé uniquement depuis le thread serveur (ticker + save/load).
+     */
+    private final List<ItemStack> pendingOutputs = new ArrayList<>();
 
     // ── Buffer — accepte UNIQUEMENT les DomumPatternItem ─────────────────────
 
@@ -199,20 +225,30 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
     /**
      * AE2 envoie un craft à exécuter.
      * inputs[0] = les matériaux extraits du ME (déjà prélevés par AE2).
-     * On met en queue pour exécution au prochain tick.
      *
-     * @return true si le craft a été accepté, false si busy ou invalide
+     * v1.4.9 — Contrat AE2 respecté : si on retourne {@code false}, AE2 conserve
+     * (ré-injecte) les matériaux dans le réseau. On refuse donc tant que :
+     *   - le node AE2 n'est pas actif (pas de réseau pour réinjecter la sortie), ou
+     *   - la file est saturée / des sorties sont déjà en attente (back-pressure).
+     * Ainsi, accepter un pattern garantit qu'on pourra produire et rendre la sortie.
+     *
+     * @return true si le craft a été accepté (matériaux pris en charge), false sinon
      */
     @Override
     public boolean pushPattern(IPatternDetails patternDetails, KeyCounter[] inputs)
     {
-        if (craftBusy) return false;
+        if (level == null || level.isClientSide()) return false;
         if (!(patternDetails instanceof DomumPatternDetails domumPattern)) return false;
         if (!domumPattern.isValid()) return false;
-        if (level == null || level.isClientSide()) return false;
 
-        // Construit la liste des matériaux extraits depuis les KeyCounters
-        // KeyCounter implémente Iterable<Object2LongMap.Entry<AEKey>> — pas de forEach(BiConsumer)
+        // Refuse si le réseau est indisponible ou si on est déjà saturé.
+        // AE2 garde alors les matériaux et réessaiera : aucun voiding possible.
+        IGridNode node = gridNode.getNode();
+        if (node == null || !node.isActive()) return false;
+        if (isBusy()) return false;
+
+        // Construit la liste des matériaux extraits depuis les KeyCounters.
+        // KeyCounter implémente Iterable<Object2LongMap.Entry<AEKey>>.
         List<ItemStack> extractedMaterials = new ArrayList<>();
         for (KeyCounter counter : inputs)
         {
@@ -236,18 +272,23 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
                 (int) Math.max(1L, outputCount)
         ));
 
-        craftBusy = true;
+        // Persiste immédiatement la file (matériaux déjà prélevés par AE2).
+        setChanged();
         return true;
     }
 
     /**
-     * AE2 demande si ce medium est disponible pour recevoir un craft.
-     * On refuse si un craft est déjà en queue.
+     * AE2 demande si ce medium peut recevoir un craft.
+     * On se déclare occupé tant que des sorties restent à injecter (ME plein /
+     * réseau down) ou que la file a atteint sa borne — back-pressure propre.
      */
     @Override
     public boolean isBusy()
     {
-        return craftBusy || !craftQueue.isEmpty();
+        if (level == null || level.isClientSide()) return true;
+        // Des sorties non injectées => on draine d'abord, on n'accepte plus de travail.
+        if (!pendingOutputs.isEmpty()) return true;
+        return craftQueue.size() >= ColonyLinkConfig.REDIRECTOR_CRAFT_QUEUE_MAX.get();
     }
 
     // ── IActionHost ───────────────────────────────────────────────────────────
@@ -255,7 +296,7 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
     @Override
     public IGridNode getActionableNode() { return gridNode.getNode(); }
 
-    // ── Ticker — exécution des crafts en queue ────────────────────────────────
+    // ── Ticker — exécution des crafts + drain des sorties en attente ──────────
 
     public static <T extends BlockEntity> BlockEntityTicker<T> createTicker(Level level, BlockEntityType<T> serverType)
     {
@@ -265,60 +306,116 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
             if (be instanceof ColonyLinkRedirectorBlockEntity redirector)
             {
                 redirector.onFirstTick(lvl, pos);
-                redirector.processCraftQueue(lvl);
+                // 1) Toujours tenter de vider les sorties en attente d'abord.
+                redirector.flushPendingOutputs(lvl);
+                // 2) Puis exécuter au plus un craft de la file.
+                redirector.processOneCraft(lvl);
             }
         };
     }
 
     /**
-     * Exécute un craft Domum en attente depuis la queue.
-     * Appelé chaque tick depuis le server thread.
-     * Un seul craft par tick pour éviter les surcharges.
+     * Réessaie d'injecter dans le ME les sorties déjà produites mais bloquées.
+     * Appelé chaque tick. Tant que le ME refuse, les items restent en attente
+     * (persistés en NBT) — jamais perdus.
      */
-    private void processCraftQueue(Level level)
+    private void flushPendingOutputs(Level level)
     {
-        if (craftQueue.isEmpty())
+        if (pendingOutputs.isEmpty()) return;
+
+        IGridNode node = gridNode.getNode();
+        if (node == null || !node.isActive()) return; // réseau down : on garde tout
+
+        var inventory = node.getGrid().getStorageService().getInventory();
+        IActionSource src = IActionSource.ofMachine(this);
+
+        boolean changed = false;
+        Iterator<ItemStack> it = pendingOutputs.iterator();
+        while (it.hasNext())
         {
-            craftBusy = false;
-            return;
+            ItemStack out = it.next();
+            if (out.isEmpty()) { it.remove(); changed = true; continue; }
+
+            AEItemKey key = AEItemKey.of(out);
+            if (key == null)
+            {
+                // Ne devrait jamais arriver pour un bloc Domum réel.
+                ColonyLink.LOGGER.error("[DomumPattern] Pending output has no AE key, dropping 1 entry: {}",
+                        out.getDisplayName().getString());
+                it.remove();
+                changed = true;
+                continue;
+            }
+
+            long inserted = inventory.insert(key, out.getCount(), Actionable.MODULATE, src);
+            if (inserted >= out.getCount())
+            {
+                it.remove();
+                changed = true;
+            }
+            else
+            {
+                if (inserted > 0)
+                {
+                    out.shrink((int) inserted);
+                    changed = true;
+                }
+                // ME saturé pour le reste : on s'arrête, on retentera au prochain tick.
+                break;
+            }
         }
 
+        if (changed) setChanged();
+    }
+
+    /**
+     * Exécute au plus un craft Domum de la file.
+     * Appelé chaque tick depuis le server thread (un seul craft/tick).
+     *
+     * v1.4.9 : on n'exécute pas de nouveau craft tant que des sorties précédentes
+     * attendent d'être injectées (évite l'accumulation), et tout reliquat de sortie
+     * part dans pendingOutputs (persisté + réessayé) au lieu d'être voidé.
+     */
+    private void processOneCraft(Level level)
+    {
+        if (craftQueue.isEmpty()) return;
+        // Laisse d'abord le ME se vider : ne pas empiler les sorties.
+        if (!pendingOutputs.isEmpty()) return;
+
         PendingDomumCraft pending = craftQueue.poll();
-        if (pending == null) { craftBusy = false; return; }
+        if (pending == null) return;
+        setChanged(); // la file vient de changer
 
         ItemStack targetStack = pending.targetStack();
         List<ItemStack> materials = pending.materials();
 
-        if (!DomumCraftHandler.isDomumItem(targetStack))
+        if (targetStack.isEmpty() || !DomumCraftHandler.isDomumItem(targetStack))
         {
-            ColonyLink.LOGGER.warn("[DomumPattern] pushPattern: target is not a Domum item, skipping.");
-            craftBusy = false;
+            ColonyLink.LOGGER.warn("[DomumPattern] processOneCraft: target is not a Domum item, skipping.");
             return;
         }
 
         // Les matériaux ont déjà été extraits du ME par AE2 avant pushPattern().
-        // On produit directement le bloc Domum en mémoire.
         ItemStack result = buildDomumResult(targetStack, materials, level.registryAccess());
 
         if (result.isEmpty())
         {
-            ColonyLink.LOGGER.error("[DomumPattern] Failed to build Domum result for: {}",
+            // Cas pathologique : pattern validé mais reconstruction impossible.
+            // Les matériaux ont été consommés par AE2 ; on ne peut rien produire.
+            ColonyLink.LOGGER.error("[DomumPattern] Failed to build Domum result for: {} (materials already consumed)",
                     targetStack.getDisplayName().getString());
-            craftBusy = false;
             return;
         }
 
         // Applique le count de la recette (ex: shingles=4, panels=4, framed panes=6)
         result.setCount(pending.outputCount());
 
-        // Les crafts Domum vont toujours dans le ME.
-        injectIntoME(result, level);
+        // Les crafts Domum vont toujours dans le ME. Tout reliquat est conservé.
+        ItemStack leftover = injectIntoME(result, level);
+        if (!leftover.isEmpty())
+            pendingOutputs.add(leftover);
 
-        craftBusy = false;
-
-        // S'il y a d'autres crafts en queue, on reste "busy" pour le prochain tick
-        if (!craftQueue.isEmpty())
-            craftBusy = true;
+        setChanged();
     }
 
     /**
@@ -358,22 +455,32 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
     }
 
     /**
-     * Réinjecte un ItemStack dans le réseau ME du Redirector.
+     * Tente de réinjecter un ItemStack dans le réseau ME du Redirector.
+     *
+     * v1.4.9 : renvoie le RELIQUAT non inséré (au lieu de void).
+     *   - réseau indisponible  → renvoie la totalité (à conserver/réessayer)
+     *   - insertion partielle   → renvoie ce qui n'a pas été accepté
+     *   - insertion complète    → renvoie ItemStack.EMPTY
      */
-    private void injectIntoME(ItemStack stack, Level level)
+    private ItemStack injectIntoME(ItemStack stack, Level level)
     {
+        if (stack.isEmpty()) return ItemStack.EMPTY;
+
         IGridNode node = gridNode.getNode();
-        if (node == null || !node.isActive()) return;
+        if (node == null || !node.isActive()) return stack.copy();
 
         AEItemKey key = AEItemKey.of(stack);
-        if (key == null) return;
+        if (key == null) return ItemStack.EMPTY; // non insérable (jamais pour un item réel)
 
-        appeng.api.networking.security.IActionSource src =
-                appeng.api.networking.security.IActionSource.ofMachine(this);
+        IActionSource src = IActionSource.ofMachine(this);
 
-        node.getGrid().getStorageService()
+        long inserted = node.getGrid().getStorageService()
                 .getInventory()
                 .insert(key, stack.getCount(), Actionable.MODULATE, src);
+
+        long remainder = stack.getCount() - inserted;
+        if (remainder <= 0) return ItemStack.EMPTY;
+        return stack.copyWithCount((int) remainder);
     }
 
     /**
@@ -649,6 +756,21 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
         tag.put("buffer", buffer.serializeNBT(provider));
         tag.put("warehouse_card_slot", warehouseCardSlot.serializeNBT(provider));
         tag.putBoolean("warehouse_priority", warehousePriority);
+
+        // v1.4.9 — persistance de la file de craft et des sorties en attente.
+        // Indispensable : ces ItemStacks correspondent à des matériaux déjà prélevés
+        // du réseau AE2 ; les perdre au déchargement de chunk = voiding.
+        ListTag queueTag = new ListTag();
+        for (PendingDomumCraft p : craftQueue)
+            queueTag.add(savePending(p, provider));
+        tag.put("craft_queue", queueTag);
+
+        ListTag pendingTag = new ListTag();
+        // Copie défensive (le ticker tourne aussi sur le thread serveur).
+        for (ItemStack out : new ArrayList<>(pendingOutputs))
+            if (!out.isEmpty()) pendingTag.add(out.saveOptional(provider));
+        tag.put("pending_outputs", pendingTag);
+
         if (targetInventoryPos != null)
         {
             tag.putInt("target_x", targetInventoryPos.getX());
@@ -673,6 +795,31 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
         if (tag.contains("buffer"))          buffer.deserializeNBT(provider, tag.getCompound("buffer"));
         if (tag.contains("warehouse_card_slot")) warehouseCardSlot.deserializeNBT(provider, tag.getCompound("warehouse_card_slot"));
         if (tag.contains("warehouse_priority")) warehousePriority = tag.getBoolean("warehouse_priority");
+
+        // v1.4.9 — restauration de la file de craft et des sorties en attente.
+        craftQueue.clear();
+        if (tag.contains("craft_queue"))
+        {
+            ListTag queueTag = tag.getList("craft_queue", Tag.TAG_COMPOUND);
+            for (int i = 0; i < queueTag.size(); i++)
+            {
+                PendingDomumCraft p = loadPending(queueTag.getCompound(i), provider);
+                if (p != null && !p.targetStack().isEmpty())
+                    craftQueue.add(p);
+            }
+        }
+
+        pendingOutputs.clear();
+        if (tag.contains("pending_outputs"))
+        {
+            ListTag pendingTag = tag.getList("pending_outputs", Tag.TAG_COMPOUND);
+            for (int i = 0; i < pendingTag.size(); i++)
+            {
+                ItemStack out = ItemStack.parseOptional(provider, pendingTag.getCompound(i));
+                if (!out.isEmpty()) pendingOutputs.add(out);
+            }
+        }
+
         if (tag.contains("target_x"))
             targetInventoryPos = new BlockPos(tag.getInt("target_x"), tag.getInt("target_y"), tag.getInt("target_z"));
         if (tag.contains("builder_x"))
@@ -685,14 +832,48 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
         }
     }
 
+    // ── NBT helpers (PendingDomumCraft) ───────────────────────────────────────
+
+    private static CompoundTag savePending(PendingDomumCraft p, HolderLookup.Provider provider)
+    {
+        CompoundTag c = new CompoundTag();
+        c.put("target", p.targetStack().saveOptional(provider));
+        ListTag mats = new ListTag();
+        for (ItemStack m : p.materials())
+            if (!m.isEmpty()) mats.add(m.saveOptional(provider));
+        c.put("materials", mats);
+        c.putInt("count", p.outputCount());
+        return c;
+    }
+
+    @Nullable
+    private static PendingDomumCraft loadPending(CompoundTag c, HolderLookup.Provider provider)
+    {
+        ItemStack target = ItemStack.parseOptional(provider, c.getCompound("target"));
+        if (target.isEmpty()) return null;
+
+        List<ItemStack> mats = new ArrayList<>();
+        ListTag list = c.getList("materials", Tag.TAG_COMPOUND);
+        for (int i = 0; i < list.size(); i++)
+        {
+            ItemStack m = ItemStack.parseOptional(provider, list.getCompound(i));
+            if (!m.isEmpty()) mats.add(m);
+        }
+
+        int count = Math.max(1, c.getInt("count"));
+        return new PendingDomumCraft(target, mats, count);
+    }
+
     // ── PendingDomumCraft record ──────────────────────────────────────────────
 
     /**
      * Représente un craft Domum en attente d'exécution.
-     * Créé dans pushPattern(), consommé dans processCraftQueue().
+     * Créé dans pushPattern(), consommé dans processOneCraft().
+     * Persisté en NBT (v1.4.9).
      *
      * @param targetStack  L'ItemStack Domum cible à produire
      * @param materials    Les matériaux déjà extraits du ME par AE2
+     * @param outputCount  Le nombre d'items produits par le pattern (ex: shingles=4)
      */
     private record PendingDomumCraft(
             ItemStack targetStack,

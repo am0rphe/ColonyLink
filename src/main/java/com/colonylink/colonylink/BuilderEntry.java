@@ -4,6 +4,10 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.level.Level;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -21,11 +25,12 @@ public record BuilderEntry(
         BlockPos builderPos,
         BlockPos redirectorPos,
         String builderName,
-        String buildingLabel
+        String buildingLabel,
+        ResourceKey<Level> dimension
 )
 {
     public static final BuilderEntry EMPTY = new BuilderEntry(
-            BlockPos.ZERO, BlockPos.ZERO, "N/A", "N/A");
+            BlockPos.ZERO, BlockPos.ZERO, "N/A", "N/A", null);
 
     // ── Sérialisation NBT ────────────────────────────────────────────────
 
@@ -40,6 +45,8 @@ public record BuilderEntry(
         tag.putInt("rz", redirectorPos.getZ());
         tag.putString("builder_name", builderName);
         tag.putString("building_label", buildingLabel);
+        // v1.4.9 — dimension du builder (figée à l'appairage). Absent = legacy/inconnu.
+        if (dimension != null) tag.putString("dim", dimension.location().toString());
         return tag;
     }
 
@@ -49,19 +56,25 @@ public record BuilderEntry(
         BlockPos rPos = new BlockPos(tag.getInt("rx"), tag.getInt("ry"), tag.getInt("rz"));
         String bName = tag.contains("builder_name") ? tag.getString("builder_name") : "N/A";
         String label = tag.contains("building_label") ? tag.getString("building_label") : "N/A";
-        return new BuilderEntry(bPos, rPos, bName, label);
+        ResourceKey<Level> dim = null;
+        if (tag.contains("dim"))
+        {
+            ResourceLocation rl = ResourceLocation.tryParse(tag.getString("dim"));
+            if (rl != null) dim = ResourceKey.create(Registries.DIMENSION, rl);
+        }
+        return new BuilderEntry(bPos, rPos, bName, label, dim);
     }
 
     /** Retourne une copie avec le redirectorPos mis à jour. */
     public BuilderEntry withRedirector(BlockPos newRedirectorPos)
     {
-        return new BuilderEntry(builderPos, newRedirectorPos, builderName, buildingLabel);
+        return new BuilderEntry(builderPos, newRedirectorPos, builderName, buildingLabel, dimension);
     }
 
     /** Retourne une copie avec les labels mis à jour (snapshot à l'appairage). */
     public BuilderEntry withLabels(String newBuilderName, String newBuildingLabel)
     {
-        return new BuilderEntry(builderPos, redirectorPos, newBuilderName, newBuildingLabel);
+        return new BuilderEntry(builderPos, redirectorPos, newBuilderName, newBuildingLabel, dimension);
     }
 
     /** true si cet entry a un redirector lié (pas ZERO). */

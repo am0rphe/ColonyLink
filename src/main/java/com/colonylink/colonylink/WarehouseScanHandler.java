@@ -14,6 +14,8 @@ import com.minecolonies.api.colony.buildings.IBuilding;
 import com.minecolonies.core.colony.buildings.AbstractBuildingStructureBuilder;
 import com.minecolonies.core.colony.buildings.utils.BuildingBuilderResource;
 import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.level.Level;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -90,6 +92,20 @@ public class WarehouseScanHandler
 
         ServerLevel level = player.serverLevel();
 
+        // v1.4.9 — cross-dimension : le Clipboard ne peut pas atteindre une colonie
+        // dans une autre dimension. Refus propre (null = entrée legacy → on laisse passer).
+        ResourceKey<Level> builderDim =
+                ColonyLinkWandLinkableHandler.getBuilderDimension(wandStack, builderPos);
+        if (builderDim != null && !level.dimension().equals(builderDim))
+        {
+            player.sendSystemMessage(Component.literal(
+                    "§c[ColonyLink] This builder is in another dimension (§f"
+                            + builderDim.location().getPath()
+                            + "§c). The Clipboard cannot reach colonies across dimensions."));
+            sendFailure(player, currentTick);
+            return;
+        }
+
         // Vérifie que le redirector a bien une WarehouseLinkCard
         BlockPos redirectorPos = getActiveRedirectorPos(wandStack);
         if (redirectorPos == null)
@@ -150,6 +166,17 @@ public class WarehouseScanHandler
         // Stock warehouse agrégé : Item → quantité totale dans les racks
         // On travaille en unités "item brut" pour pouvoir faire la réservation
         // Stock standard (agrégé par Item) + stock DO finaux (par ItemStack avec NBT)
+        // v1.4.9 — fail-off strict : le warehouse doit être ENTIÈREMENT chargé.
+        // Un scan sur des racks en chunks déchargés renverrait un stock incomplet en silence.
+        if (!ColonyLinkChunkUtil.colonyWarehousesFullyLoaded(level, colony))
+        {
+            player.sendSystemMessage(Component.literal(
+                    "§c[ColonyLink] Your colony's Warehouse is in unloaded chunks. " +
+                            "Move closer or use a chunk loader, then run the scan again."));
+            sendFailure(player, currentTick);
+            return;
+        }
+
         Map<Item, Long> warehouseStock = new HashMap<>();
         List<ItemStack> warehouseDomumStock = new ArrayList<>();
         scanWarehouseRacks(colony, level, warehouseStock, warehouseDomumStock);

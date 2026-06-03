@@ -42,14 +42,19 @@ import java.util.concurrent.TimeUnit;
  *   3. Les injecte dans le réseau ME
  *   4. Lance le craft AE2 normalement
  *
- * Cas RS2 :
- *   1. Extrait directement l'item ou ses composants depuis les racks warehouse
- *   4. Pour les items Domum : insère les composants extraits dans le buffer redirector
- *
- * Cas Domum Ornamentum (AE2 + RS2) :
+ * Cas Domum Ornamentum :
  *   1. Identifie les composants texture du bloc DO
  *   2. Extrait ces composants depuis les racks warehouse
- *   3. Insère dans ME ou RS2 puis craft virtuel DO
+ *   3. Insère dans le ME → AE2 autocraft via le DomumPattern (ICraftingProvider)
+ *
+ * v1.4.9 — Sécurité chunk-load & zéro voiding :
+ *   - Toute extraction warehouse → ME passe par moveWarehouseToMe() qui applique
+ *     le pattern simulate-first : on ne prélève des racks QUE ce que le ME acceptera,
+ *     et tout reliquat (course impossible) est réinséré dans les racks, puis rendu
+ *     au joueur en dernier recours. Plus aucun item détruit.
+ *   - Le cas "bloc Domum fini déjà dans le warehouse" ne tente plus de l'insérer
+ *     dans le buffer du Redirector (qui n'accepte que DomumPatternItem) : c'était une
+ *     perte totale. Les blocs finis sont livrés Warehouse → Builder par le bouton Send.
  */
 public class WarehouseCraftHandler
 {
@@ -62,7 +67,7 @@ public class WarehouseCraftHandler
     {
         ServerLevel level = player.serverLevel();
 
-        // ── Détection wand AE2 ou RS2 ─────────────────────────────────────────
+        // ── Détection wand ────────────────────────────────────────────────────
         ItemStack wandStack = findWandInInventory(player);
 
         if (wandStack == null)
@@ -83,6 +88,16 @@ public class WarehouseCraftHandler
         if (warehouse == null)
         {
             player.sendSystemMessage(Component.literal("§c[ColonyLink] No Warehouse found in colony!"));
+            return;
+        }
+
+        // v1.4.9 — fail-off strict : le warehouse doit être ENTIÈREMENT chargé avant
+        // toute extraction (sinon racks null en silence → transferts partiels).
+        if (!ColonyLinkChunkUtil.warehouseFullyLoaded(level, warehouse))
+        {
+            player.sendSystemMessage(Component.literal(
+                    "§c[ColonyLink] Your colony's Warehouse is in unloaded chunks. " +
+                            "Move closer or use a chunk loader, then try again."));
             return;
         }
 
@@ -135,19 +150,13 @@ public class WarehouseCraftHandler
 
         if (!craftingService.isCraftable(aeKey))
         {
-            long extracted = extractFromWarehouseRacks(level, warehouse, stack, realCount);
-            if (extracted > 0)
-            {
-                long inserted = storageService.getInventory().insert(
-                        aeKey, extracted, Actionable.MODULATE, actionSource);
-                if (inserted > 0)
-                    player.sendSystemMessage(Component.literal(
-                            "§a[ColonyLink] Transferred " + inserted + "x "
-                                    + stack.getDisplayName().getString()
-                                    + " from Warehouse → ME (no AE2 pattern)"));
-                else
-                    player.sendSystemMessage(Component.literal("§c[ColonyLink] ME insertion failed!"));
-            }
+            long inserted = moveWarehouseToMe(player, level, warehouse,
+                    storageService, actionSource, stack, realCount);
+            if (inserted > 0)
+                player.sendSystemMessage(Component.literal(
+                        "§a[ColonyLink] Transferred " + inserted + "x "
+                                + stack.getDisplayName().getString()
+                                + " from Warehouse → ME (no AE2 pattern)"));
             else
                 player.sendSystemMessage(Component.literal(
                         "§c[ColonyLink] No AE2 pattern and item not found in Warehouse!"));
@@ -157,19 +166,15 @@ public class WarehouseCraftHandler
         long directInWarehouse = countItemInWarehouse(level, warehouse, stack);
         if (directInWarehouse >= realCount)
         {
-            long extracted = extractFromWarehouseRacks(level, warehouse, stack, realCount);
-            if (extracted > 0)
-            {
-                long inserted = storageService.getInventory().insert(
-                        aeKey, extracted, Actionable.MODULATE, actionSource);
-                if (inserted > 0)
-                    player.sendSystemMessage(Component.literal(
-                            "§a[ColonyLink] Transferred " + inserted + "x "
-                                    + stack.getDisplayName().getString()
-                                    + " from Warehouse → ME (ready to Send)"));
-                else
-                    player.sendSystemMessage(Component.literal("§c[ColonyLink] ME insertion failed!"));
-            }
+            long inserted = moveWarehouseToMe(player, level, warehouse,
+                    storageService, actionSource, stack, realCount);
+            if (inserted > 0)
+                player.sendSystemMessage(Component.literal(
+                        "§a[ColonyLink] Transferred " + inserted + "x "
+                                + stack.getDisplayName().getString()
+                                + " from Warehouse → ME (ready to Send)"));
+            else
+                player.sendSystemMessage(Component.literal("§c[ColonyLink] ME insertion failed!"));
             return;
         }
 
@@ -218,18 +223,15 @@ public class WarehouseCraftHandler
                 long stillNeeded = inputNeeded - inMe;
                 if (stillNeeded <= 0) continue;
 
-                long extracted = extractFromWarehouseRacks(
-                        level, warehouse, inputStack, (int) Math.min(stillNeeded, Integer.MAX_VALUE));
-                if (extracted > 0)
+                // v1.4.9 — simulate-first + réinsertion racks : aucun composant voidé.
+                long inserted = moveWarehouseToMe(player, level, warehouse,
+                        storageService, actionSource, inputStack,
+                        (int) Math.min(stillNeeded, Integer.MAX_VALUE));
+                if (inserted > 0)
                 {
-                    long inserted = storageService.getInventory().insert(
-                            inputAeKey, extracted, Actionable.MODULATE, actionSource);
-                    if (inserted > 0)
-                    {
-                        injected.add(inputStack.copyWithCount((int) inserted));
-                        player.sendSystemMessage(Component.literal(
-                                "§7[WH→ME] " + inserted + "x " + inputStack.getDisplayName().getString()));
-                    }
+                    injected.add(inputStack.copyWithCount((int) inserted));
+                    player.sendSystemMessage(Component.literal(
+                            "§7[WH→ME] " + inserted + "x " + inputStack.getDisplayName().getString()));
                 }
             }
         }
@@ -297,35 +299,24 @@ public class WarehouseCraftHandler
             BuildingWareHouse warehouse,
             ItemStack wandStack)
     {
+        // v1.4.9 — Un bloc Domum FINI déjà présent dans le warehouse ne doit JAMAIS
+        // être routé vers le buffer du Redirector (qui n'accepte que DomumPatternItem)
+        // ni re-crafté via AE2 : l'ancien code l'insérait dans le buffer, où il était
+        // systématiquement rejeté puis perdu (voiding 100 %). Les blocs finis sont
+        // livrés Warehouse → Builder par le bouton Send (SendToBuilderHandler).
+        // On ne prélève rien ici → rien ne peut être détruit.
         long directFound = countDomumInWarehouse(level, warehouse, domumStack);
         if (directFound > 0)
         {
-            int toExtract = (int) Math.min(directFound, realCount);
-            long extracted = extractDomumFromWarehouseRacks(level, warehouse, domumStack, toExtract);
-            if (extracted > 0)
-            {
-                var redirectorBe = level.getBlockEntity(redirectorPos);
-                if (!(redirectorBe instanceof ColonyLinkRedirectorBlockEntity redirector))
-                {
-                    player.sendSystemMessage(Component.literal("§c[ColonyLink] Redirector not found!"));
-                    return;
-                }
-                ItemStack toInsert = domumStack.copyWithCount((int) extracted);
-                net.neoforged.neoforge.items.IItemHandler buffer = redirector.buffer;
-                for (int slot = 0; slot < buffer.getSlots() && !toInsert.isEmpty(); slot++)
-                    toInsert = buffer.insertItem(slot, toInsert, false);
-                if (toInsert.isEmpty())
-                    player.sendSystemMessage(Component.literal(
-                            "§a[ColonyLink] Sent " + extracted + "x "
-                                    + domumStack.getDisplayName().getString()
-                                    + " from Warehouse → Redirector buffer!"));
-                else
-                    player.sendSystemMessage(Component.literal(
-                            "§6[ColonyLink] Buffer partially full — " + toInsert.getCount() + "x not inserted."));
-                return;
-            }
+            player.sendSystemMessage(Component.literal(
+                    "§e[ColonyLink] " + directFound + "x "
+                            + domumStack.getDisplayName().getString()
+                            + " already in the Warehouse — use Send to deliver it to the builder."));
+            return;
         }
 
+        // Pas de bloc fini en warehouse → on tente d'injecter les COMPOSANTS bruts
+        // dans le ME pour qu'AE2 autocrafte via le DomumPattern (ICraftingProvider).
         Item item = domumStack.getItem();
         if (!(item instanceof BlockItem blockItem)) return;
         Block block = blockItem.getBlock();
@@ -352,30 +343,110 @@ public class WarehouseCraftHandler
             ItemStack materialStack = new ItemStack(materialBlock, realCount);
             AEItemKey aeKey = AEItemKey.of(materialStack);
             long inMe = storageService.getInventory().extract(
-                    aeKey, realCount, appeng.api.config.Actionable.SIMULATE, actionSource);
+                    aeKey, realCount, Actionable.SIMULATE, actionSource);
             long stillNeeded = realCount - inMe;
             if (stillNeeded <= 0) continue;
 
-            long extracted = extractFromWarehouseRacks(
-                    level, warehouse, materialStack, (int) Math.min(stillNeeded, Integer.MAX_VALUE));
-            if (extracted > 0)
+            // v1.4.9 — simulate-first + réinsertion racks : aucun composant voidé.
+            long inserted = moveWarehouseToMe(player, level, warehouse,
+                    storageService, actionSource, materialStack,
+                    (int) Math.min(stillNeeded, Integer.MAX_VALUE));
+            if (inserted > 0)
             {
-                long inserted = storageService.getInventory().insert(
-                        aeKey, extracted, Actionable.MODULATE, actionSource);
-                if (inserted > 0)
-                {
-                    injected.add(materialStack.copyWithCount((int) inserted));
-                    player.sendSystemMessage(Component.literal(
-                            "§7[WH→ME] " + inserted + "x " + materialStack.getDisplayName().getString()));
-                }
+                injected.add(materialStack.copyWithCount((int) inserted));
+                player.sendSystemMessage(Component.literal(
+                        "§7[WH→ME] " + inserted + "x " + materialStack.getDisplayName().getString()));
             }
         }
         // v1.4.3 — handleDomumCraft() supprimé : les items Domum passent désormais
-        // par ICraftingProvider (DomumPatternDetails). L'appel ici était un vestige
-        // de l'ancienne méthode de craft virtuel, obsolète depuis v1.4.3.
+        // par ICraftingProvider (DomumPatternDetails). Les composants injectés dans le
+        // ME ci-dessus seront consommés par AE2 lors de l'autocraft.
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /**
+     * v1.4.9 — Déplace en toute sécurité jusqu'à {@code want} items {@code template}
+     * des racks warehouse vers le réseau ME.
+     *
+     * Pattern « simulate-first » : on demande d'abord au ME combien il accepterait,
+     * on ne prélève des racks QUE cette quantité, puis on insère. Un éventuel reliquat
+     * (course impossible en un seul tick) est réinséré dans les racks ; en ultime
+     * recours il est rendu au joueur. Aucun item ne peut donc être détruit.
+     *
+     * @return la quantité réellement placée dans le ME
+     */
+    private static long moveWarehouseToMe(
+            ServerPlayer player,
+            ServerLevel level,
+            BuildingWareHouse warehouse,
+            IStorageService storageService,
+            IActionSource actionSource,
+            ItemStack template,
+            int want)
+    {
+        if (want <= 0) return 0;
+        AEItemKey key = AEItemKey.of(template);
+        if (key == null) return 0;
+
+        // 1) Combien le ME accepterait-il ?
+        long acceptable = storageService.getInventory().insert(
+                key, want, Actionable.SIMULATE, actionSource);
+        if (acceptable <= 0) return 0;
+
+        // 2) On prélève EXACTEMENT cette quantité des racks.
+        int toPull = (int) Math.min((long) want, acceptable);
+        long extracted = extractFromWarehouseRacks(level, warehouse, template, toPull);
+        if (extracted <= 0) return 0;
+
+        // 3) Insertion réelle (garantie par le simulate ; filet de sécurité ci-dessous).
+        long inserted = storageService.getInventory().insert(
+                key, extracted, Actionable.MODULATE, actionSource);
+
+        long leftover = extracted - inserted;
+        if (leftover > 0)
+        {
+            // Cas théoriquement impossible : on remet le reliquat dans les racks,
+            // puis dans l'inventaire du joueur en dernier recours. Jamais de void.
+            int residue = returnToWarehouseRacks(level, warehouse, template, (int) leftover);
+            if (residue > 0)
+            {
+                player.getInventory().placeItemBackInInventory(template.copyWithCount(residue));
+                ColonyLink.LOGGER.warn("[ColonyLink] moveWarehouseToMe: returned {}x {} to player (ME+racks full)",
+                        residue, template.getDisplayName().getString());
+            }
+        }
+        return inserted;
+    }
+
+    /**
+     * v1.4.9 — Réinsère jusqu'à {@code count} items {@code template} dans les racks
+     * warehouse. Retourne la quantité qui n'a PAS pu être réinsérée (0 en pratique,
+     * puisqu'on vient d'en extraire de ces mêmes racks au même tick).
+     */
+    private static int returnToWarehouseRacks(
+            ServerLevel level, BuildingWareHouse warehouse, ItemStack template, int count)
+    {
+        if (count <= 0) return 0;
+        ItemStack remainder = template.copyWithCount(count);
+        try
+        {
+            var containerList = warehouse.getContainers();
+            if (containerList == null) return remainder.getCount();
+            for (BlockPos rackPos : containerList)
+            {
+                if (remainder.isEmpty()) break;
+                IItemHandler rackHandler = level.getCapability(
+                        Capabilities.ItemHandler.BLOCK, rackPos, null);
+                if (rackHandler == null) continue;
+                for (int slot = 0; slot < rackHandler.getSlots() && !remainder.isEmpty(); slot++)
+                    remainder = rackHandler.insertItem(slot, remainder, false);
+            }
+        }
+        catch (Exception e)
+        { ColonyLink.LOGGER.debug("[ColonyLink] returnToWarehouseRacks error: {}", e.getMessage()); }
+        return remainder.getCount();
+    }
 
     private static long countItemInWarehouse(
             ServerLevel level, BuildingWareHouse warehouse, ItemStack stack)
@@ -429,38 +500,6 @@ public class WarehouseCraftHandler
         catch (Exception e)
         { ColonyLink.LOGGER.debug("[ColonyLink] countDomumInWarehouse error: {}", e.getMessage()); }
         return count;
-    }
-
-    private static long extractDomumFromWarehouseRacks(
-            ServerLevel level, BuildingWareHouse warehouse, ItemStack domumStack, int needed)
-    {
-        long totalExtracted = 0;
-        int remaining = needed;
-        try
-        {
-            var containerList = warehouse.getContainers();
-            if (containerList == null) return 0;
-            for (BlockPos rackPos : containerList)
-            {
-                if (remaining <= 0) break;
-                IItemHandler rackHandler = level.getCapability(
-                        Capabilities.ItemHandler.BLOCK, rackPos, null);
-                if (rackHandler == null) continue;
-                for (int slot = 0; slot < rackHandler.getSlots() && remaining > 0; slot++)
-                {
-                    ItemStack inSlot = rackHandler.getStackInSlot(slot);
-                    if (inSlot.isEmpty() || !ItemStack.isSameItemSameComponents(inSlot, domumStack)) continue;
-                    int toExtract = Math.min(inSlot.getCount(), remaining);
-                    ItemStack took = rackHandler.extractItem(slot, toExtract, false);
-                    if (took.isEmpty()) continue;
-                    totalExtracted += took.getCount();
-                    remaining -= took.getCount();
-                }
-            }
-        }
-        catch (Exception e)
-        { ColonyLink.LOGGER.debug("[ColonyLink] extractDomumFromWarehouseRacks error: {}", e.getMessage()); }
-        return totalExtracted;
     }
 
     static long extractFromWarehouseRacks(
@@ -517,8 +556,6 @@ public class WarehouseCraftHandler
         return null;
     }
 
-    /**
-     */
     private static ItemStack findWandInInventory(ServerPlayer player)
     {
         // Delegate to the shared implementation that also checks Curios slots.

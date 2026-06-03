@@ -7,12 +7,15 @@ import appeng.api.networking.security.IActionSource;
 import appeng.api.networking.storage.IStorageService;
 import appeng.api.stacks.AEItemKey;
 import appeng.api.storage.MEStorage;
-import com.ldtteam.domumornamentum.client.model.data.MaterialTextureData;
 import com.minecolonies.api.colony.IColony;
 import com.minecolonies.api.colony.IColonyManager;
 import com.minecolonies.api.colony.buildings.IBuilding;
 import com.minecolonies.core.colony.buildings.workerbuildings.BuildingWareHouse;
+import com.minecolonies.core.colony.buildings.AbstractBuildingStructureBuilder;
+import com.minecolonies.core.colony.buildings.utils.BuildingBuilderResource;
 import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.level.Level;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -22,11 +25,45 @@ import net.neoforged.neoforge.items.IItemHandler;
 
 import java.util.List;
 
+/**
+ * Gère le « Send to Builder » : déplace des items vers le Builder's Hut MineColonies.
+ *
+ * v1.4.9 — Send unifié & zéro voiding :
+ *   - L'extraction respecte la priorité du Redirector pour TOUS les items (Domum inclus) :
+ *       • carte warehouse + priorité ON  → warehouse d'abord, puis ME
+ *       • carte warehouse + priorité OFF → ME d'abord, puis warehouse (fallback)
+ *       • pas de carte warehouse          → ME uniquement
+ *     Un bloc Domum FINI présent dans la warehouse est ainsi livré directement au
+ *     builder, sans passer par AE2 ni par le buffer du Redirector.
+ *   - Les deux sources passent par des primitives void-safe (pullFromMe / pullFromWarehouse) :
+ *     tout surplus non logé dans le builder revient à sa source (ME ou racks), puis à
+ *     l'inventaire du joueur en ultime recours. Aucun item ne peut être détruit.
+ *   - L'ancienne « étape buffer DO » a été retirée : le buffer du Redirector ne contient
+ *     que des DomumPatternItem, jamais de blocs finis — cette étape ne faisait rien.
+ */
 public class SendToBuilderHandler
 {
     public static void handleSendToBuilder(ServerPlayer player, ItemStack stack,
                                            BlockPos builderPos, int realCount)
     {
+        // ── v1.4.9 — cross-dimension : refus propre AVANT de consommer du RF ──
+        {
+            ItemStack wandForDim = findWandInInventory(player);
+            if (wandForDim != null)
+            {
+                ResourceKey<Level> builderDim =
+                        ColonyLinkWandLinkableHandler.getBuilderDimension(wandForDim, builderPos);
+                if (builderDim != null && !player.serverLevel().dimension().equals(builderDim))
+                {
+                    player.sendSystemMessage(Component.literal(
+                            "§c[ColonyLink] This builder is in another dimension (§f"
+                                    + builderDim.location().getPath()
+                                    + "§c). The Clipboard cannot reach colonies across dimensions."));
+                    return;
+                }
+            }
+        }
+
         // ── Coût RF ───────────────────────────────────────────────────────────
         long sendCost = ColonyLinkConfig.SEND_COST_RF.get();
         if (sendCost > 0 && !ColonyLinkServerTicker.tryConsumeRF(player, sendCost))
@@ -124,6 +161,26 @@ public class SendToBuilderHandler
             return;
         }
 
+        // v1.4.9 — fail-off strict côté MineColonies : tout doit être chargé.
+        // Le builder (destination d'insertion) est obligatoire ; le warehouse l'est aussi
+        // dès qu'une carte est présente (le send peut y puiser). Sinon on annule proprement.
+        IColony sendColony = IColonyManager.getInstance().getClosestColony(level, targetPos);
+        if (!ColonyLinkChunkUtil.buildingFullyLoaded(level, sendColony, targetPos))
+        {
+            player.sendSystemMessage(Component.literal(
+                    "§c[ColonyLink] The Builder's Hut is in unloaded chunks. " +
+                            "Move closer or use a chunk loader, then try again."));
+            return;
+        }
+        if (redirector.hasWarehouseCard()
+                && !ColonyLinkChunkUtil.colonyWarehousesFullyLoaded(level, sendColony))
+        {
+            player.sendSystemMessage(Component.literal(
+                    "§c[ColonyLink] Your colony's Warehouse is in unloaded chunks. " +
+                            "Move closer or use a chunk loader, then try again."));
+            return;
+        }
+
         // ── Fix #3 : utilise getBuildingHandlers() au lieu de getCapability direct ──
         // Le Builder's Hut MineColonies n'expose pas d'IItemHandler via capability
         // sur sa position de bloc. On passe par getBuildingHandlers() qui interroge
@@ -162,79 +219,34 @@ public class SendToBuilderHandler
         IActionSource actionSource = IActionSource.ofPlayer(player,
                 (appeng.api.networking.security.IActionHost) wap);
 
-        boolean isDomum = DomumCraftHandler.isDomumItem(stack);
         AEItemKey aeKey = AEItemKey.of(stack);
-
-        long totalInserted = 0;
         int remaining = realCount;
 
-        // ── Étape 1 : buffer DO si applicable ────────────────────────────────
-        if (isDomum)
+        // ── Extraction selon la priorité du Redirector (v1.4.9) ───────────────
+        // S'applique à TOUS les items, Domum inclus : un bloc Domum fini présent
+        // dans la warehouse est livré directement (sans AE2), via pullFromWarehouse.
+        boolean warehouseEnabled  = redirector.hasWarehouseCard();
+        boolean warehousePriority = warehouseEnabled && redirector.isWarehousePriority();
+
+        if (warehouseEnabled && warehousePriority)
         {
-            MaterialTextureData targetData = MaterialTextureData.readFromItemStack(stack);
-            IItemHandler buffer = redirector.buffer;
-
-            for (int slot = 0; slot < buffer.getSlots() && remaining > 0; slot++)
-            {
-                ItemStack inSlot = buffer.getStackInSlot(slot);
-                if (inSlot.isEmpty() || inSlot.getItem() != stack.getItem()) continue;
-
-                MaterialTextureData slotData = MaterialTextureData.readFromItemStack(inSlot);
-                net.minecraft.world.item.component.BlockItemStateProperties slotBsp =
-                        inSlot.get(net.minecraft.core.component.DataComponents.BLOCK_STATE);
-                net.minecraft.world.item.component.BlockItemStateProperties targetBsp =
-                        stack.get(net.minecraft.core.component.DataComponents.BLOCK_STATE);
-                if (!slotData.equals(targetData) || !java.util.Objects.equals(slotBsp, targetBsp)) continue;
-
-                int toExtract = Math.min(inSlot.getCount(), remaining);
-                ItemStack took = buffer.extractItem(slot, toExtract, false);
-                if (took.isEmpty()) continue;
-
-                ItemStack leftOver = insertIntoHandlers(buildingHandlers, took);
-                long sent = took.getCount() - leftOver.getCount();
-                totalInserted += sent;
-                remaining -= (int) sent;
-
-                if (!leftOver.isEmpty())
-                {
-                    for (int s2 = 0; s2 < buffer.getSlots() && !leftOver.isEmpty(); s2++)
-                        leftOver = buffer.insertItem(s2, leftOver, false);
-                    break;
-                }
-            }
+            // Priorité warehouse : racks d'abord, puis ME.
+            remaining = pullFromWarehouse(player, level, stack, remaining, redirector, buildingHandlers);
+            remaining = pullFromMe(aeKey, remaining, inventory, actionSource, redirector, buildingHandlers);
         }
-
-        // ── Étape 2 : extraction selon priorité ───────────────────────────────
-        boolean warehousePriority = redirector.hasWarehouseCard() && redirector.isWarehousePriority();
-
-        if (warehousePriority && !isDomum)
+        else if (warehouseEnabled)
         {
-            remaining = extractFromWarehouseThenMe(level, stack, aeKey, remaining,
-                    inventory, actionSource, redirector, buildingHandlers);
-            totalInserted = realCount - remaining;
+            // Carte présente sans priorité : ME d'abord, puis warehouse en fallback.
+            remaining = pullFromMe(aeKey, remaining, inventory, actionSource, redirector, buildingHandlers);
+            remaining = pullFromWarehouse(player, level, stack, remaining, redirector, buildingHandlers);
         }
         else
         {
-            while (remaining > 0)
-            {
-                int batchSize = Math.min(remaining, 64);
-                long extracted = inventory.extract(aeKey, batchSize, Actionable.MODULATE, actionSource);
-                if (extracted <= 0) break;
-
-                ItemStack toInsert = aeKey.toStack((int) extracted);
-                ItemStack leftOver = insertIntoHandlers(buildingHandlers, toInsert);
-                long sent = extracted - leftOver.getCount();
-                totalInserted += sent;
-                remaining -= (int) sent;
-
-                if (!leftOver.isEmpty())
-                {
-                    inventory.insert(aeKey, leftOver.getCount(), Actionable.MODULATE, actionSource);
-                    redirector.setState(ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY);
-                    break;
-                }
-            }
+            // Pas de carte warehouse : ME uniquement.
+            remaining = pullFromMe(aeKey, remaining, inventory, actionSource, redirector, buildingHandlers);
         }
+
+        long totalInserted = realCount - remaining;
 
         // ── Feedback ──────────────────────────────────────────────────────────
         if (totalInserted > 0)
@@ -251,6 +263,10 @@ public class SendToBuilderHandler
                     {
                         if (!b.getPosition().equals(builderPos)) continue;
                         b.markDirty();
+                        // v1.4.11 — crédite la ressource livrée dans le bilan du chantier
+                        // (getNeededResources) pour que la ligne disparaisse immédiatement,
+                        // même quand le builder est loin et ne recalcule pas. Voir le helper.
+                        creditDeliveredResource(b, stack, (int) totalInserted);
                         break;
                     }
                 }
@@ -276,67 +292,69 @@ public class SendToBuilderHandler
             else
                 player.sendSystemMessage(Component.literal(
                         "§c[ColonyLink] Could not send " + stack.getDisplayName().getString()
-                                + " — not available in ME."));
+                                + " — not available in ME or Warehouse."));
         }
     }
 
-    // ── extractFromWarehouseThenMe — patché pour utiliser buildingHandlers ────
-
-    private static int extractFromWarehouseThenMe(
-            ServerLevel level, ItemStack stack, AEItemKey aeKey, int remaining,
-            MEStorage inventory, IActionSource actionSource,
-            ColonyLinkRedirectorBlockEntity redirector,
-            List<IItemHandler> buildingHandlers)
+    /**
+     * v1.4.11 — Crédite immédiatement la ressource livrée dans le bilan du chantier.
+     *
+     * La liste « Priority Request » du Clipboard vient de getNeededResources()
+     * (miss = amount - available), où `available` = ce que le builder possède dans son hut.
+     * MineColonies ne recalcule `available` que sur le TICK de travail du builder — gelé quand
+     * le joueur est loin. Résultat : on dépose bien l'item dans le rack, mais `available` reste
+     * périmé → la ligne ne disparaît pas (et on peut cascader des envois) tant qu'on n'est pas
+     * revenu près de la colonie.
+     *
+     * Ici, dès le dépôt, on crédite `available` de la quantité réellement insérée (plafonné au
+     * manque). getNeededResources() reflète alors le dépôt → le ticker (qui tourne même à
+     * distance, sans gating) recalcule la liste → la ligne disparaît immédiatement et uniformément.
+     *
+     * Sûr : le recalcul natif du builder (au retour) fait setAvailable(0) puis ré-additionne le
+     * contenu RÉEL des inventaires (rack inclus) → notre crédit anticipé est ÉCRASÉ par la valeur
+     * exacte, jamais double-compté. La map est unmodifiable mais ses valeurs sont mutables.
+     * 100% serveur, coût ponctuel au clic (hors tick).
+     */
+    private static void creditDeliveredResource(IBuilding building, ItemStack delivered, int insertedCount)
     {
-        IColony colony = IColonyManager.getInstance().getClosestColony(level, redirector.getBlockPos());
-        if (colony != null)
+        if (insertedCount <= 0 || delivered.isEmpty()) return;
+        if (!(building instanceof AbstractBuildingStructureBuilder bb)) return;
+
+        try
         {
-            for (IBuilding building : colony.getServerBuildingManager().getBuildings().values())
+            var needed = bb.getNeededResources();   // map vivante : valeurs mutables
+            if (needed == null) return;
+
+            for (BuildingBuilderResource res : needed.values())
             {
-                if (!(building instanceof BuildingWareHouse warehouse)) continue;
-                try
-                {
-                    var containerList = warehouse.getContainers();
-                    if (containerList == null || containerList.isEmpty()) continue;
+                if (!ItemStack.isSameItemSameComponents(res.getItemStack(), delivered)) continue;
 
-                    for (BlockPos rackPos : containerList)
-                    {
-                        if (remaining <= 0) break;
-                        IItemHandler rackHandler = level.getCapability(
-                                Capabilities.ItemHandler.BLOCK, rackPos, null);
-                        if (rackHandler == null) continue;
-
-                        for (int slot = 0; slot < rackHandler.getSlots() && remaining > 0; slot++)
-                        {
-                            ItemStack inSlot = rackHandler.getStackInSlot(slot);
-                            if (inSlot.isEmpty() || !ItemStack.isSameItemSameComponents(inSlot, stack)) continue;
-
-                            int toExtract = Math.min(inSlot.getCount(), remaining);
-                            ItemStack took = rackHandler.extractItem(slot, toExtract, false);
-                            if (took.isEmpty()) continue;
-
-                            ItemStack leftOver = insertIntoHandlers(buildingHandlers, took);
-                            int sent = took.getCount() - leftOver.getCount();
-                            remaining -= sent;
-
-                            if (!leftOver.isEmpty())
-                            {
-                                // Remet le surplus dans le rack warehouse
-                                for (int s2 = 0; s2 < rackHandler.getSlots() && !leftOver.isEmpty(); s2++)
-                                    leftOver = rackHandler.insertItem(s2, leftOver, false);
-                                redirector.setState(ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY);
-                                return remaining;
-                            }
-                        }
-                    }
-                }
-                catch (Exception e)
-                {
-                    ColonyLink.LOGGER.debug("[ColonyLink] Warehouse extraction error: {}", e.getMessage());
-                }
-                break;
+                int missing = res.getAmount() - res.getAvailable();
+                if (missing <= 0) return;            // déjà couvert, rien à créditer
+                res.addAvailable(Math.min(missing, insertedCount));
+                bb.markDirty();
+                return;                              // une seule ressource correspond par item
             }
         }
+        catch (Exception e)
+        {
+            ColonyLink.LOGGER.debug("[ColonyLink] needed-resource credit skipped: {}", e.getMessage());
+        }
+    }
+
+    // ── Primitives d'extraction (void-safe) ───────────────────────────────────
+
+    /**
+     * v1.4.9 — Vide jusqu'à {@code remaining} items depuis le réseau ME vers les
+     * handlers du builder. Tout surplus non logé revient dans le ME (jamais de void).
+     *
+     * @return le nouveau remaining
+     */
+    private static int pullFromMe(
+            AEItemKey aeKey, int remaining, MEStorage inventory, IActionSource actionSource,
+            ColonyLinkRedirectorBlockEntity redirector, List<IItemHandler> buildingHandlers)
+    {
+        if (aeKey == null) return remaining;
 
         while (remaining > 0)
         {
@@ -351,12 +369,80 @@ public class SendToBuilderHandler
 
             if (!leftOver.isEmpty())
             {
+                // Builder plein → on remet le surplus dans le ME (jamais de void).
                 inventory.insert(aeKey, leftOver.getCount(), Actionable.MODULATE, actionSource);
                 redirector.setState(ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY);
                 break;
             }
         }
+        return remaining;
+    }
 
+    /**
+     * v1.4.9 — Vide jusqu'à {@code remaining} items (comparaison exacte des composants)
+     * depuis les racks de la Warehouse vers les handlers du builder. Tout surplus non
+     * logé revient dans les racks, puis dans l'inventaire du joueur en ultime recours.
+     * Jamais de void.
+     *
+     * @return le nouveau remaining
+     */
+    private static int pullFromWarehouse(
+            ServerPlayer player, ServerLevel level, ItemStack stack, int remaining,
+            ColonyLinkRedirectorBlockEntity redirector, List<IItemHandler> buildingHandlers)
+    {
+        if (remaining <= 0) return remaining;
+
+        IColony colony = IColonyManager.getInstance().getClosestColony(level, redirector.getBlockPos());
+        if (colony == null) return remaining;
+
+        for (IBuilding building : colony.getServerBuildingManager().getBuildings().values())
+        {
+            if (!(building instanceof BuildingWareHouse warehouse)) continue;
+            try
+            {
+                var containerList = warehouse.getContainers();
+                if (containerList == null || containerList.isEmpty()) break;
+
+                for (BlockPos rackPos : containerList)
+                {
+                    if (remaining <= 0) break;
+                    IItemHandler rackHandler = level.getCapability(
+                            Capabilities.ItemHandler.BLOCK, rackPos, null);
+                    if (rackHandler == null) continue;
+
+                    for (int slot = 0; slot < rackHandler.getSlots() && remaining > 0; slot++)
+                    {
+                        ItemStack inSlot = rackHandler.getStackInSlot(slot);
+                        if (inSlot.isEmpty() || !ItemStack.isSameItemSameComponents(inSlot, stack)) continue;
+
+                        int toExtract = Math.min(inSlot.getCount(), remaining);
+                        ItemStack took = rackHandler.extractItem(slot, toExtract, false);
+                        if (took.isEmpty()) continue;
+
+                        ItemStack leftOver = insertIntoHandlers(buildingHandlers, took);
+                        int sent = took.getCount() - leftOver.getCount();
+                        remaining -= sent;
+
+                        if (!leftOver.isEmpty())
+                        {
+                            // Builder plein → surplus remis dans le rack, puis au joueur.
+                            ItemStack back = leftOver.copy();
+                            for (int s2 = 0; s2 < rackHandler.getSlots() && !back.isEmpty(); s2++)
+                                back = rackHandler.insertItem(s2, back, false);
+                            if (!back.isEmpty())
+                                player.getInventory().placeItemBackInInventory(back);
+                            redirector.setState(ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY);
+                            return remaining;
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                ColonyLink.LOGGER.debug("[ColonyLink] Warehouse extraction error: {}", e.getMessage());
+            }
+            break;
+        }
         return remaining;
     }
 
@@ -375,14 +461,6 @@ public class SendToBuilderHandler
                 remainder = handler.insertItem(slot, remainder, false);
             if (remainder.isEmpty()) return ItemStack.EMPTY;
         }
-        return remainder;
-    }
-
-    private static ItemStack insertIntoHandler(IItemHandler handler, ItemStack stack)
-    {
-        ItemStack remainder = stack.copy();
-        for (int slot = 0; slot < handler.getSlots() && !remainder.isEmpty(); slot++)
-            remainder = handler.insertItem(slot, remainder, false);
         return remainder;
     }
 

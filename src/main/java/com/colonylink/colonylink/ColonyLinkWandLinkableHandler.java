@@ -145,7 +145,7 @@ public class ColonyLinkWandLinkableHandler implements IGridLinkableHandler
                     tag.getInt(LEGACY_REDIRECTOR_Y),
                     tag.getInt(LEGACY_REDIRECTOR_Z))
                     : BlockPos.ZERO;
-            migrated.add(new BuilderEntry(bPos, rPos, "Builder", "N/A"));
+            migrated.add(new BuilderEntry(bPos, rPos, "Builder", "N/A", null));
             return migrated;
         }
 
@@ -270,6 +270,18 @@ public class ColonyLinkWandLinkableHandler implements IGridLinkableHandler
      * Retourne le redirectorPos de l'entry active, ou null si absent.
      * Compatibilité avec les appels legacy dans ServerTicker / CraftHandler.
      */
+    /**
+     * v1.4.9 — Dimension figée à l'appairage du builder situé à {@code builderPos},
+     * ou null si inconnue (entrée legacy d'avant le suivi des dimensions).
+     */
+    public static ResourceKey<Level> getBuilderDimension(ItemStack stack, BlockPos builderPos)
+    {
+        for (BuilderEntry e : getBuilderEntries(stack))
+            if (e.builderPos().equals(builderPos))
+                return e.dimension();
+        return null;
+    }
+
     public static BlockPos getActiveRedirectorPos(ItemStack stack)
     {
         BuilderEntry entry = getActiveEntry(stack);

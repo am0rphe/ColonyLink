@@ -556,6 +556,8 @@ public class ColonyLinkScreen extends Screen
 
     private String getButtonTextWithWarehouse(ResourceStatus status, ItemStack stack)
     {
+        // v1.4.9 — finished Domum block in the warehouse → delivered directly (Send).
+        if (isDomumFinishedInWarehouse(stack)) return "Send (WH)";
         if (status == ResourceStatus.NO_PATTERN)
         {
             WarehouseResultPacket.WarehouseEntry we = getWarehouseEntry(stack);
@@ -567,6 +569,8 @@ public class ColonyLinkScreen extends Screen
 
     private int getButtonColorWithWarehouse(ResourceStatus status, ItemStack stack, boolean hovered)
     {
+        // v1.4.9 — finished Domum block in the warehouse → Send color (green).
+        if (isDomumFinishedInWarehouse(stack)) return hovered ? 0xFF336655 : 0xFF224433;
         if (status == ResourceStatus.NO_PATTERN)
         {
             WarehouseResultPacket.WarehouseEntry we = getWarehouseEntry(stack);
@@ -608,6 +612,27 @@ public class ColonyLinkScreen extends Screen
         if (isOutOfPower()) return false;
         if (redirectorState.equals("N/A") || redirectorState.equals("NOT_LINKED")) return false;
         return entries.stream().anyMatch(e -> e.status() == ResourceStatus.AVAILABLE);
+    }
+
+    /**
+     * v1.4.9 — true if {@code stack} is a Domum block whose FINISHED form is directly
+     * present in the warehouse snapshot. Such a block is delivered Warehouse → Builder
+     * by the Send action, without going through AE2.
+     */
+    private boolean isDomumFinishedInWarehouse(ItemStack stack)
+    {
+        if (!DomumCraftHandler.isDomumItem(stack)) return false;
+        WarehouseResultPacket.WarehouseEntry we = getWarehouseEntry(stack);
+        return we != null && we.inWarehouse() > 0;
+    }
+
+    /** v1.4.9 — sendable = AVAILABLE in ME, or a finished Domum block sitting in the warehouse. */
+    private boolean hasSendableItems()
+    {
+        if (isOutOfPower()) return false;
+        if (redirectorState.equals("N/A") || redirectorState.equals("NOT_LINKED")) return false;
+        return entries.stream().anyMatch(e ->
+                e.status() == ResourceStatus.AVAILABLE || isDomumFinishedInWarehouse(e.stack()));
     }
 
     private boolean redirectorReady()
@@ -1481,7 +1506,7 @@ public class ColonyLinkScreen extends Screen
 
             int saX = getSendAllBtnX(), saY = getSendAllBtnY(), saW = getSendAllBtnW(), saH = getSendAllBtnH();
             boolean saHov = mx >= saX && mx <= saX + saW && my >= saY && my <= saY + saH;
-            boolean hasAvail = hasAvailableItems();
+            boolean hasAvail = hasSendableItems();
             g.fill(saX, saY, saX + saW, saY + saH, _cBtn.applyOpacity(hasAvail ? (saHov ? 0xFF0066CC : 0xFF004488) : 0xFF333333));
             g.fill(saX, saY, saX + saW, saY + 1, 0xFFFFFFFF); g.fill(saX, saY, saX + 1, saY + saH, 0xFFFFFFFF);
             g.fill(saX, saY + saH - 1, saX + saW, saY + saH, 0xFF373737); g.fill(saX + saW - 1, saY, saX + saW, saY + saH, 0xFF373737);
@@ -1696,6 +1721,14 @@ public class ColonyLinkScreen extends Screen
             if (mx >= rbX2 && mx <= rbX2 + rbW2 && my >= rbY2 && my <= rbY2 + rbH2
                     && isButtonClickable(builderRequest.status(), builderRequest.stack()))
             {
+                // v1.4.9 — finished Domum block in the warehouse → deliver straight to the
+                // builder (Warehouse -> Builder), bypassing AE2 and the terminal queue.
+                if (isDomumFinishedInWarehouse(builderRequest.stack()))
+                {
+                    PacketDistributor.sendToServer(new SendToBuilderPacket(
+                            builderRequest.stack(), builderPos, builderRequest.count()));
+                    return true;
+                }
                 switch (builderRequest.status())
                 {
                     case AVAILABLE ->
@@ -1775,22 +1808,25 @@ public class ColonyLinkScreen extends Screen
         }
 
         int saX = getSendAllBtnX(), saY = getSendAllBtnY(), saW = getSendAllBtnW(), saH = getSendAllBtnH();
-        if (mx >= saX && mx <= saX + saW && my >= saY && my <= saY + saH && hasAvailableItems())
+        if (mx >= saX && mx <= saX + saW && my >= saY && my <= saY + saH && hasSendableItems())
         {
-            // Envoyer la Priority Request en premier si elle est AVAILABLE
-            if (builderRequest != null && !builderRequest.stack().isEmpty()
-                    && builderRequest.status() == ResourceStatus.AVAILABLE)
+            // v1.4.9 — "Send All" inclut aussi les blocs Domum finis détectés en warehouse
+            // (en plus des items AVAILABLE en ME). Tout part via SendToBuilderPacket ; le
+            // serveur choisit la source (ME / warehouse) selon le toggle de priorité.
+            boolean prioritySent = builderRequest != null && !builderRequest.stack().isEmpty()
+                    && (builderRequest.status() == ResourceStatus.AVAILABLE
+                    || isDomumFinishedInWarehouse(builderRequest.stack()));
+            if (prioritySent)
             {
                 PacketDistributor.sendToServer(new SendToBuilderPacket(
                         builderRequest.stack(), builderPos, builderRequest.count()));
             }
-            // Puis envoyer le reste de la liste (sauf la priority request si déjà envoyée)
             for (var entry : entries)
             {
-                if (entry.status() != ResourceStatus.AVAILABLE) continue;
+                if (entry.status() != ResourceStatus.AVAILABLE
+                        && !isDomumFinishedInWarehouse(entry.stack())) continue;
                 // Éviter le double envoi si la priority request est aussi dans la liste
-                if (builderRequest != null && !builderRequest.stack().isEmpty()
-                        && builderRequest.status() == ResourceStatus.AVAILABLE
+                if (prioritySent
                         && ItemStack.isSameItemSameComponents(entry.stack(), builderRequest.stack()))
                     continue;
                 PacketDistributor.sendToServer(new SendToBuilderPacket(
@@ -1888,6 +1924,14 @@ public class ColonyLinkScreen extends Screen
             int[] b = new int[4]; getBtnBounds(i, b);
             if (mx >= b[0] && mx <= b[0] + b[2] && my >= b[1] && my <= b[1] + b[3])
             {
+                // v1.4.9 — finished Domum block in the warehouse → deliver straight to the
+                // builder (Warehouse -> Builder), bypassing AE2 and the terminal queue.
+                if (isDomumFinishedInWarehouse(entry.stack()))
+                {
+                    PacketDistributor.sendToServer(new SendToBuilderPacket(
+                            entry.stack(), builderPos, entry.realCount()));
+                    return true;
+                }
                 if (entry.status() == ResourceStatus.CRAFTABLE && entry.isDomum())
                 {
                     // Domum CRAFTABLE = les composants bruts sont en stock (AE2 ou RS2)

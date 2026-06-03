@@ -52,7 +52,7 @@ public record DomumQueuePacket(
 
     private static void handleServer(ServerPlayer player, DomumQueuePacket packet)
     {
-        ColonyLink.LOGGER.info("[DomumQueue] Received packet from {} — item: {}",
+        ColonyLink.LOGGER.debug("[DomumQueue] Received packet from {} — item: {}",
                 player.getName().getString(),
                 net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(packet.domumStack().getItem()));
 

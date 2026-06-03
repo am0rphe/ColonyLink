@@ -136,7 +136,7 @@ public class ColonyLink
     {
         event.enqueueWork(() -> {
             GridLinkables.register(COLONY_LINK_WAND.get(), LINKABLE_HANDLER);
-            LOGGER.info("ColonyLink v1.4.7 loaded.");
+            LOGGER.info("ColonyLink loaded.");
         });
     }
 

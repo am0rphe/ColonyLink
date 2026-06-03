@@ -49,6 +49,7 @@ public class ColonyLinkConfig
     // ── [network] ─────────────────────────────────────────────────────────────
     public static final ModConfigSpec.IntValue REDIRECTOR_BUFFER_ROWS;
     public static final ModConfigSpec.IntValue REDIRECTOR_BUFFER_COLS;
+    public static final ModConfigSpec.IntValue REDIRECTOR_CRAFT_QUEUE_MAX;
 
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -215,6 +216,15 @@ public class ColonyLinkConfig
                 .comment("Number of columns in the Redirector item buffer.",
                         "Total slots = rows × cols. Default: 12 (= 120 slots with default rows)")
                 .defineInRange("redirector_buffer_cols", 9, 6, 18);
+
+        REDIRECTOR_CRAFT_QUEUE_MAX = builder
+                .comment("Maximum number of Domum autocraft jobs the Redirector accepts from AE2",
+                        "before reporting itself busy (back-pressure). When the limit is reached,",
+                        "or when crafted items cannot be returned to a full/offline ME network,",
+                        "AE2 keeps the materials and retries later — nothing is ever voided.",
+                        "Higher = more Domum crafts buffered, but more state saved per Redirector.",
+                        "Default: 64")
+                .defineInRange("redirector_craft_queue_max", 64, 1, 1024);
 
         builder.pop();
 

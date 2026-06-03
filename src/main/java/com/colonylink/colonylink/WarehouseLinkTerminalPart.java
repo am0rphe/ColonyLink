@@ -690,6 +690,12 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         if (colony == null) { msg(player, "§cNo colony found."); return; }
         BuildingWareHouse wh = findWarehouse(colony);
         if (wh == null) { msg(player, "§cNo warehouse found."); return; }
+        // v1.4.9 — fail-off strict : warehouse entièrement chargé requis.
+        if (!ColonyLinkChunkUtil.warehouseFullyLoaded(level, wh))
+        {
+            msg(player, "§c[Terminal] Warehouse is in unloaded chunks — move closer or use a chunk loader.");
+            return;
+        }
 
         int toDeposit = (count <= 0 || count >= carried.getCount()) ? carried.getCount() : count;
         ItemStack toInsert = carried.copyWithCount(toDeposit);
@@ -761,6 +767,12 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         if (colony == null) { msg(player, "§cNo colony found."); return; }
         BuildingWareHouse wh = findWarehouse(colony);
         if (wh == null) { msg(player, "§cNo warehouse found."); return; }
+        // v1.4.9 — fail-off strict : warehouse entièrement chargé requis.
+        if (!ColonyLinkChunkUtil.warehouseFullyLoaded(level, wh))
+        {
+            msg(player, "§c[Terminal] Warehouse is in unloaded chunks — move closer or use a chunk loader.");
+            return;
+        }
 
         ItemStack carried = player.containerMenu.getCarried();
 
@@ -894,6 +906,12 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         if (colony == null) { msg(player, "§cNo colony found."); return 0; }
         BuildingWareHouse wh = findWarehouse(colony);
         if (wh == null) { msg(player, "§cNo warehouse found."); return 0; }
+        // v1.4.9 — fail-off strict : warehouse entièrement chargé requis.
+        if (!ColonyLinkChunkUtil.warehouseFullyLoaded(level, wh))
+        {
+            msg(player, "§c[Terminal] Warehouse is in unloaded chunks — move closer or use a chunk loader.");
+            return 0;
+        }
 
         var node = this.getMainNode().getNode();
         if (node == null) { msg(player, "§cAE2 network unavailable."); return 0; }
@@ -962,6 +980,12 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         if (colony == null) { msg(player, "§cNo colony found."); return 0; }
         BuildingWareHouse wh = findWarehouse(colony);
         if (wh == null) { msg(player, "§cNo warehouse found."); return 0; }
+        // v1.4.9 — fail-off strict : warehouse entièrement chargé requis.
+        if (!ColonyLinkChunkUtil.warehouseFullyLoaded(level, wh))
+        {
+            msg(player, "§c[Terminal] Warehouse is in unloaded chunks — move closer or use a chunk loader.");
+            return 0;
+        }
 
         List<ItemStack> extracted = new ArrayList<>();
         int remaining = count;
@@ -1019,6 +1043,12 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         if (colony == null) { msg(player, "§cNo colony found."); return 0; }
         BuildingWareHouse wh = findWarehouse(colony);
         if (wh == null) { msg(player, "§cNo warehouse found."); return 0; }
+        // v1.4.9 — fail-off strict : warehouse entièrement chargé requis.
+        if (!ColonyLinkChunkUtil.warehouseFullyLoaded(level, wh))
+        {
+            msg(player, "§c[Terminal] Warehouse is in unloaded chunks — move closer or use a chunk loader.");
+            return 0;
+        }
 
         var node = this.getMainNode().getNode();
         if (node == null) { msg(player, "§cAE2 network unavailable."); return 0; }
@@ -1118,6 +1148,12 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         if (colony == null) return 0;
         BuildingWareHouse wh = findWarehouse(colony);
         if (wh == null) return 0;
+        // v1.4.9 — fail-off strict : warehouse entièrement chargé requis.
+        if (!ColonyLinkChunkUtil.warehouseFullyLoaded(level, wh))
+        {
+            msg(player, "§c[Terminal] Warehouse is in unloaded chunks — move closer or use a chunk loader.");
+            return 0;
+        }
 
         int original = stack.getCount();
         java.util.Set<BlockPos> visitedPos = new java.util.HashSet<>();

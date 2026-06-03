@@ -355,7 +355,7 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
         var wo = bb.getWorkOrder();
         if (wo != null) buildingLabel = wo.getDisplayName().getString();
 
-        BuilderEntry newEntry = new BuilderEntry(pos, BlockPos.ZERO, builderName, buildingLabel);
+        BuilderEntry newEntry = new BuilderEntry(pos, BlockPos.ZERO, builderName, buildingLabel, level.dimension());
         if (!ColonyLinkWandLinkableHandler.addOrUpdateEntry(wandStack, newEntry))
         {
             player.sendSystemMessage(Component.literal(
