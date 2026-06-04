@@ -12,6 +12,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
+import net.neoforged.fml.ModList;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -68,10 +69,22 @@ public class CraftHandler
             if (!cpu.isBusy()) freeCpus++;
         final int freeCpusFinal = freeCpus;
 
-        // #9 : limiter le nb de crafts simultanés au nb de CPUs libres
-        // Si freeCpus == 0, on tente quand même 1 craft (cas CPU unique occupé partiellement)
-        final int maxCrafts = freeCpusFinal > 0 ? freeCpusFinal : 1;
+        boolean advancedAeLoaded = ModList.get().isLoaded("advanced_ae");
+        int configuredAdvancedAeLimit = ColonyLinkConfig.ADVANCED_AE_CRAFT_SUBMISSION_LIMIT.get();
+        boolean useAdvancedAeLimit = advancedAeLoaded
+                && ColonyLinkConfig.ENABLE_ADVANCED_AE_COMPAT.get()
+                && configuredAdvancedAeLimit > 0;
+
+        // Limit ColonyLink submissions only; AE2/AdvancedAE still chooses where jobs run.
+        final int maxCrafts = useAdvancedAeLimit
+                ? configuredAdvancedAeLimit
+                : (freeCpusFinal > 0 ? freeCpusFinal : 1);
+        final boolean advancedAeCompatActive = useAdvancedAeLimit;
         final int totalRequested = stacks.size();
+
+        ColonyLink.LOGGER.info(
+                "Craft request: free CPUs seen={}, craft submission limit={}, AdvancedAE compat active={}",
+                freeCpusFinal, maxCrafts, advancedAeCompatActive);
 
         CRAFT_EXECUTOR.submit(() ->
         {
@@ -138,8 +151,11 @@ public class CraftHandler
                         msg.append("§c, ").append(finalFail).append(" failed");
                     if (finalSkipped > 0)
                         msg.append("§e, ").append(finalSkipped).append(" queued (no free CPU)");
-                    msg.append("§7 (").append(freeCpusFinal).append(" CPU")
-                            .append(freeCpusFinal != 1 ? "s" : "").append(" available)");
+                    msg.append("§7 (free CPUs seen: ").append(freeCpusFinal)
+                            .append(", craft submission limit: ").append(maxCrafts)
+                            .append(", AdvancedAE compat: ")
+                            .append(advancedAeCompatActive ? "active" : "inactive")
+                            .append(")");
                     player.sendSystemMessage(Component.literal(msg.toString()));
                 }
             });
