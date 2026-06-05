@@ -170,7 +170,13 @@ public class ColonyLinkCommand
                             () -> String.valueOf(ColonyLinkConfig.MAX_RESOURCES_DISPLAYED.get()))),
             Map.entry("warehouse_snapshot_validity_ticks",
                     new ConfigSpec(false, 20, 24000, "400",
-                            () -> String.valueOf(ColonyLinkConfig.WAREHOUSE_SNAPSHOT_VALIDITY_TICKS.get())))
+                            () -> String.valueOf(ColonyLinkConfig.WAREHOUSE_SNAPSHOT_VALIDITY_TICKS.get()))),
+            Map.entry("enable_advanced_ae_compat",
+                    new ConfigSpec(true, 0, 0, "true",
+                            () -> String.valueOf(ColonyLinkConfig.ENABLE_ADVANCED_AE_COMPAT.get()))),
+            Map.entry("advanced_ae_craft_submission_limit",
+                    new ConfigSpec(false, 0, 256, "32",
+                            () -> String.valueOf(ColonyLinkConfig.ADVANCED_AE_CRAFT_SUBMISSION_LIMIT.get())))
     );
 
     // ── Fournisseurs de suggestions Brigadier (tab-complétion) ────────────────
@@ -299,6 +305,7 @@ public class ColonyLinkCommand
                 || net.neoforged.fml.ModList.get().isLoaded("refinedstorageaddons");
         boolean hasJade    = net.neoforged.fml.ModList.get().isLoaded("jade");
         boolean hasApothe  = net.neoforged.fml.ModList.get().isLoaded("apotheosis");
+        boolean hasAdvancedAe = net.neoforged.fml.ModList.get().isLoaded("advanced_ae");
 
         // Récupère la version depuis le manifest NeoForge
         String version = net.neoforged.fml.ModList.get()
@@ -315,6 +322,7 @@ public class ColonyLinkCommand
         send(src, "§7    Refined Stor: " + flag(hasRS2));
         send(src, "§7    Jade        : " + flag(hasJade));
         send(src, "§7    Apotheosis  : " + flag(hasApothe));
+        send(src, "§7    AdvancedAE  : " + flag(hasAdvancedAe));
         send(src, "");
         send(src, "§6  Active debug subsystems:");
         if (enabledDebug.isEmpty())
@@ -328,6 +336,8 @@ public class ColonyLinkCommand
         send(src, "§7    max_builders_per_wand  : §f" + ColonyLinkConfig.MAX_BUILDERS_PER_WAND.get());
         send(src, "§7    enable_tool_upgrade    : §f" + ColonyLinkConfig.ENABLE_TOOL_UPGRADE.get());
         send(src, "§7    block_actions_if_no_power : §f" + ColonyLinkConfig.BLOCK_ACTIONS_IF_NO_POWER.get());
+        send(src, "§7    enable_advanced_ae_compat : §f" + ColonyLinkConfig.ENABLE_ADVANCED_AE_COMPAT.get());
+        send(src, "§7    advanced_ae_craft_submission_limit : §f" + ColonyLinkConfig.ADVANCED_AE_CRAFT_SUBMISSION_LIMIT.get());
         send(src, "§6══════════════════════════════════");
 
         return 1;
@@ -568,6 +578,23 @@ public class ColonyLinkCommand
                 int old = ColonyLinkConfig.WAREHOUSE_SNAPSHOT_VALIDITY_TICKS.get();
                 if (v == old) return false;
                 ColonyLinkConfig.WAREHOUSE_SNAPSHOT_VALIDITY_TICKS.set(v);
+                return true;
+            }
+            // -- [advanced_ae] -------------------------------------------------
+            case "enable_advanced_ae_compat" ->
+            {
+                boolean v = parseBool(value, key);
+                boolean old = ColonyLinkConfig.ENABLE_ADVANCED_AE_COMPAT.get();
+                if (v == old) return false;
+                ColonyLinkConfig.ENABLE_ADVANCED_AE_COMPAT.set(v);
+                return true;
+            }
+            case "advanced_ae_craft_submission_limit" ->
+            {
+                int v = parseInt(value, 0, 256, key);
+                int old = ColonyLinkConfig.ADVANCED_AE_CRAFT_SUBMISSION_LIMIT.get();
+                if (v == old) return false;
+                ColonyLinkConfig.ADVANCED_AE_CRAFT_SUBMISSION_LIMIT.set(v);
                 return true;
             }
             default -> throw new IllegalArgumentException("Key not handled: " + key);

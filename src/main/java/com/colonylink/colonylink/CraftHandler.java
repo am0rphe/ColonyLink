@@ -12,6 +12,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
+import net.neoforged.fml.ModList;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -68,10 +69,24 @@ public class CraftHandler
             if (!cpu.isBusy()) freeCpus++;
         final int freeCpusFinal = freeCpus;
 
-        // #9 : limiter le nb de crafts simultanés au nb de CPUs libres
-        // Si freeCpus == 0, on tente quand même 1 craft (cas CPU unique occupé partiellement)
-        final int maxCrafts = freeCpusFinal > 0 ? freeCpusFinal : 1;
+        boolean advancedAeLoaded = ModList.get().isLoaded("advanced_ae");
+        boolean quantumComputerOnNetwork = advancedAeLoaded
+                && hasAdvancedAeQuantumComputerOnCurrentGrid(grid);
+        int configuredAdvancedAeLimit = ColonyLinkConfig.ADVANCED_AE_CRAFT_SUBMISSION_LIMIT.get();
+        boolean useAdvancedAeLimit = quantumComputerOnNetwork
+                && ColonyLinkConfig.ENABLE_ADVANCED_AE_COMPAT.get()
+                && configuredAdvancedAeLimit > 0;
+
+        // Limit ColonyLink submissions only; AE2/AdvancedAE still chooses where jobs run.
+        final int maxCrafts = useAdvancedAeLimit
+                ? configuredAdvancedAeLimit
+                : (freeCpusFinal > 0 ? freeCpusFinal : 1);
+        final boolean advancedAeCompatActive = useAdvancedAeLimit;
         final int totalRequested = stacks.size();
+
+        ColonyLink.LOGGER.info(
+                "Craft request: AdvancedAE installed={}, quantum computer on network={}, free CPUs seen={}, craft submission limit={}",
+                advancedAeLoaded, quantumComputerOnNetwork, freeCpusFinal, maxCrafts);
 
         CRAFT_EXECUTOR.submit(() ->
         {
@@ -138,12 +153,81 @@ public class CraftHandler
                         msg.append("§c, ").append(finalFail).append(" failed");
                     if (finalSkipped > 0)
                         msg.append("§e, ").append(finalSkipped).append(" queued (no free CPU)");
-                    msg.append("§7 (").append(freeCpusFinal).append(" CPU")
-                            .append(freeCpusFinal != 1 ? "s" : "").append(" available)");
+                    msg.append("§7 (free CPUs seen: ").append(freeCpusFinal)
+                            .append(", craft submission limit: ").append(maxCrafts)
+                            .append(", AdvancedAE installed: ").append(advancedAeLoaded)
+                            .append(", quantum computer on network: ").append(quantumComputerOnNetwork)
+                            .append(", AdvancedAE compat: ").append(advancedAeCompatActive ? "active" : "inactive")
+                            .append(")");
                     player.sendSystemMessage(Component.literal(msg.toString()));
                 }
             });
         });
+    }
+
+    private static boolean hasAdvancedAeQuantumComputerOnCurrentGrid(IGrid grid)
+    {
+        if (grid == null) return false;
+
+        try
+        {
+            ICraftingService craftingService = grid.getCraftingService();
+            if (craftingService != null)
+            {
+                for (var cpu : craftingService.getCpus())
+                    if (isAdvancedAeQuantumComputerClass(cpu))
+                        return true;
+            }
+
+            for (var node : grid.getNodes())
+            {
+                if (node == null) continue;
+
+                Object owner = node.getOwner();
+                if (isAdvancedAeQuantumComputerClass(owner))
+                    return true;
+
+                if (hasAdvancedAeQuantumComputerCluster(owner))
+                    return true;
+            }
+        }
+        catch (Throwable t)
+        {
+            ColonyLink.LOGGER.debug(
+                    "AdvancedAE quantum computer network detection failed; using normal AE2 CPU behaviour.", t);
+        }
+
+        return false;
+    }
+
+    private static boolean hasAdvancedAeQuantumComputerCluster(Object owner)
+    {
+        if (owner == null) return false;
+
+        try
+        {
+            var method = owner.getClass().getMethod("getCluster");
+            Object cluster = method.invoke(owner);
+            return isAdvancedAeQuantumComputerClass(cluster);
+        }
+        catch (ReflectiveOperationException | SecurityException ignored)
+        {
+            return false;
+        }
+        catch (Throwable t)
+        {
+            ColonyLink.LOGGER.debug("AdvancedAE quantum computer cluster inspection failed.", t);
+            return false;
+        }
+    }
+
+    private static boolean isAdvancedAeQuantumComputerClass(Object object)
+    {
+        if (object == null) return false;
+        String className = object.getClass().getName();
+        return className.equals("net.pedroksl.advanced_ae.common.cluster.AdvCraftingCPU")
+                || className.equals("net.pedroksl.advanced_ae.common.cluster.AdvCraftingCPUCluster")
+                || className.equals("net.pedroksl.advanced_ae.common.entities.AdvCraftingBlockEntity");
     }
 
     public static int getFreeCpus(ServerPlayer player)

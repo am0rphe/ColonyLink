@@ -11,6 +11,7 @@ import net.neoforged.neoforge.common.ModConfigSpec;
  *   [general]   — builders max, ticker, range
  *   [tools]     — substitution d'outils
  *   [interface] — affichage GUI
+ *   [advanced_ae] - optional AdvancedAE compatibility
  *   [network]   — redirector buffer
  */
 public class ColonyLinkConfig
@@ -41,6 +42,10 @@ public class ColonyLinkConfig
     public static final ModConfigSpec.BooleanValue SHOW_NO_PATTERN_ITEMS;
     public static final ModConfigSpec.IntValue     MAX_RESOURCES_DISPLAYED;
     public static final ModConfigSpec.IntValue     WAREHOUSE_SNAPSHOT_VALIDITY_TICKS;
+
+    // -- [advanced_ae] ---------------------------------------------------------
+    public static final ModConfigSpec.BooleanValue ENABLE_ADVANCED_AE_COMPAT;
+    public static final ModConfigSpec.IntValue     ADVANCED_AE_CRAFT_SUBMISSION_LIMIT;
 
     // ── [general — locate] ────────────────────────────────────────────────────
     public static final ModConfigSpec.IntValue LOCATE_GLOW_DURATION_SECONDS;
@@ -198,6 +203,24 @@ public class ColonyLinkConfig
                         "After this time the 'Check Warehouse' button resets to allow a new scan.",
                         "20t = 1s, 400t = 20s. Default: 400")
                 .defineInRange("warehouse_snapshot_validity_ticks", 400, 20, 24000);
+
+        builder.pop();
+
+        // -- [advanced_ae] -----------------------------------------------------
+        builder.comment(
+                "Optional AdvancedAE compatibility settings.",
+                "These settings only apply when the advanced_ae mod is installed."
+        ).push("advanced_ae");
+
+        ENABLE_ADVANCED_AE_COMPAT = builder
+                .comment("Enables higher craft submission limit when AdvancedAE is installed.",
+                        "Default: true")
+                .define("enable_advanced_ae_compat", true);
+
+        ADVANCED_AE_CRAFT_SUBMISSION_LIMIT = builder
+                .comment("0 = normal AE2 behaviour based on free CPU count. Higher values allow more ColonyLink craft submissions when AdvancedAE is installed, useful for AdvancedAE Quantum Computers. Suggested values: 16, 32, 64.",
+                        "Range: 0-256. Default: 32")
+                .defineInRange("advanced_ae_craft_submission_limit", 32, 0, 256);
 
         builder.pop();
 
