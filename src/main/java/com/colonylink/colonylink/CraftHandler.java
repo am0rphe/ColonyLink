@@ -84,7 +84,7 @@ public class CraftHandler
         final boolean advancedAeCompatActive = useAdvancedAeLimit;
         final int totalRequested = stacks.size();
 
-        ColonyLink.LOGGER.info(
+        ColonyLink.LOGGER.debug(
                 "Craft request: AdvancedAE installed={}, quantum computer on network={}, free CPUs seen={}, craft submission limit={}",
                 advancedAeLoaded, quantumComputerOnNetwork, freeCpusFinal, maxCrafts);
 
