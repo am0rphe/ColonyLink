@@ -29,7 +29,7 @@ public class ColonyLinkConfigScreen extends Screen
     private static final int H = 260;
 
     // Tabs
-    private static final String[] TABS = {"Background", "Title Bar", "Borders", "Layout"};
+    private static final String[] TABS = {"colonylink.cfg.tab_bg", "colonylink.cfg.tab_title", "colonylink.cfg.tab_border", "colonylink.cfg.tab_layout"};
     private int activeTab = 0;
 
     // Working copy (modifiée live, appliquée seulement sur "Apply & Save")
@@ -49,7 +49,7 @@ public class ColonyLinkConfigScreen extends Screen
 
     public ColonyLinkConfigScreen(Screen parent)
     {
-        super(Component.literal("ColonyLink — GUI Config"));
+        super(Component.translatable("colonylink.cfg.title"));
         this.parent = parent;
         // Copie de travail depuis la config actuelle
         ColonyLinkGuiConfig cfg = ColonyLinkGuiConfig.get();
@@ -99,7 +99,7 @@ public class ColonyLinkConfigScreen extends Screen
 
         // Barre de titre
         g.fill(x + 2, y + 2, x + W - 2, y + 20, 0xFF3A3A3A);
-        g.drawCenteredString(this.font, "§eColonyLink — GUI Config", x + W / 2, y + 6, 0xFFFFAA);
+        g.drawCenteredString(this.font, Component.translatable("colonylink.cfg.header").getString(), x + W / 2, y + 6, 0xFFFFAA);
 
         // Tabs
         drawTabs(g, mx, my);
@@ -130,7 +130,7 @@ public class ColonyLinkConfigScreen extends Screen
             int tc = active ? 0xFFFFAA : 0xAAAAAA;
             g.fill(tx, y, tx + tw, y + th, bg);
             g.fill(tx, y, tx + tw, y + 1, active ? 0xFFFFAA44 : 0xFF555555);
-            g.drawCenteredString(this.font, TABS[i], tx + tw / 2, y + 3, tc);
+            g.drawCenteredString(this.font, Component.translatable(TABS[i]).getString(), tx + tw / 2, y + 3, tc);
         }
     }
 
@@ -139,9 +139,9 @@ public class ColonyLinkConfigScreen extends Screen
         int sx = sliderAreaX(), sy = sliderAreaY();
         switch (activeTab)
         {
-            case 0 -> drawColorSliders(g, mx, my, sx, sy, "Background Color", wBgColor, 0);
-            case 1 -> drawColorSliders(g, mx, my, sx, sy, "Title Bar Color",  wTitleColor, 3);
-            case 2 -> drawColorSliders(g, mx, my, sx, sy, "Border Color",     wBorderColor, 6);
+            case 0 -> drawColorSliders(g, mx, my, sx, sy, Component.translatable("colonylink.cfg.bg_color").getString(), wBgColor, 0);
+            case 1 -> drawColorSliders(g, mx, my, sx, sy, Component.translatable("colonylink.cfg.title_color").getString(),  wTitleColor, 3);
+            case 2 -> drawColorSliders(g, mx, my, sx, sy, Component.translatable("colonylink.cfg.border_color").getString(),     wBorderColor, 6);
             case 3 -> drawLayoutSliders(g, mx, my, sx, sy);
         }
     }
@@ -172,23 +172,23 @@ public class ColonyLinkConfigScreen extends Screen
 
     private void drawLayoutSliders(GuiGraphics g, int mx, int my, int sx, int sy)
     {
-        g.drawString(this.font, "§7Layout", sx, sy - 8, 0xCCCCCC, false);
+        g.drawString(this.font, Component.translatable("colonylink.cfg.section_layout").getString(), sx, sy - 8, 0xCCCCCC, false);
 
         // Opacity : slot 9
         int opPct = Math.round(wOpacity * 100);
         drawSlider(g, mx, my, sx, sy, sliderW(), 10, 100, opPct,
-                "§eOpacity §f" + opPct + "%" + (opPct <= 10 ? " §8(min)" : opPct < 30 ? " §8(very low)" : ""),
+                Component.translatable("colonylink.cfg.opacity", opPct, (opPct <= 10 ? Component.translatable("colonylink.cfg.opacity_min").getString() : opPct < 30 ? Component.translatable("colonylink.cfg.opacity_verylow").getString() : "")).getString(),
                 0xFFCC44, 9);
 
         // Scale : slot 10 (50–150 = 0.5–1.5 stocké ×100)
         int scalePct = Math.round(wScale * 100);
         drawSlider(g, mx, my, sx, sy + 36, sliderW(), 50, 150, scalePct,
-                "§eScale §f×" + (scalePct / 100) + "." + String.format("%02d", scalePct % 100),
+                Component.translatable("colonylink.cfg.scale", (scalePct / 100), String.format("%02d", scalePct % 100)).getString(),
                 0xFFCC44, 10);
 
         // Border width : slot 11
         drawSlider(g, mx, my, sx, sy + 72, sliderW(), 1, 4, wBorderWidth,
-                "§eBorder Width §f" + wBorderWidth + "px", 0xFFCC44, 11);
+                Component.translatable("colonylink.cfg.border_width", wBorderWidth).getString(), 0xFFCC44, 11);
     }
 
     /**
@@ -260,7 +260,7 @@ public class ColonyLinkConfigScreen extends Screen
         int px = previewX(), py = previewY(), pw = previewW(), ph = previewH();
 
         // Label
-        g.drawString(this.font, "§8Preview", px, py - 10, 0x888888, false);
+        g.drawString(this.font, Component.translatable("colonylink.cfg.preview").getString(), px, py - 10, 0x888888, false);
 
         // Calcul couleurs avec opacité de travail
         int bgC     = applyOpacity(wBgColor, wOpacity);
@@ -304,11 +304,11 @@ public class ColonyLinkConfigScreen extends Screen
         int x = gx();
 
         // [Reset]
-        drawBtn(g, mx, my, x + 10,      y, 80, 20, "Reset",         0xFF330000, 0xFF550000, 0xFF884444, 12);
+        drawBtn(g, mx, my, x + 10,      y, 80, 20, Component.translatable("colonylink.cfg.btn_reset").getString(),         0xFF330000, 0xFF550000, 0xFF884444, 12);
         // [Cancel]
-        drawBtn(g, mx, my, x + 100,     y, 80, 20, "Cancel",        0xFF333333, 0xFF444444, 0xFFAAAAAA, 13);
+        drawBtn(g, mx, my, x + 100,     y, 80, 20, Component.translatable("colonylink.cfg.btn_cancel").getString(),        0xFF333333, 0xFF444444, 0xFFAAAAAA, 13);
         // [Apply & Save]
-        drawBtn(g, mx, my, x + W - 130, y, 120, 20, "Apply & Save", 0xFF004400, 0xFF006600, 0xFF44FF44, 14);
+        drawBtn(g, mx, my, x + W - 130, y, 120, 20, Component.translatable("colonylink.cfg.btn_apply").getString(), 0xFF004400, 0xFF006600, 0xFF44FF44, 14);
     }
 
     private void drawBtn(GuiGraphics g, int mx, int my,

@@ -134,7 +134,7 @@ public class DomumCraftHandler
         ItemStack wandStack = findWandInInventory(player);
         if (wandStack == null || !ColonyLinkWandLinkableHandler.isLinked(wandStack))
         {
-            player.sendSystemMessage(Component.literal("§cClipboard not linked!"));
+            player.sendSystemMessage(Component.translatable("colonylink.whc.clipboard_not_linked"));
             return;
         }
 
@@ -176,7 +176,7 @@ public class DomumCraftHandler
 
         if (tocraft.isEmpty())
         {
-            player.sendSystemMessage(Component.literal("§eNothing to craft — materials may already be incoming."));
+            player.sendSystemMessage(Component.translatable("colonylink.domum_craft.nothing"));
             return;
         }
 
@@ -186,8 +186,7 @@ public class DomumCraftHandler
 
         if (cpusAvailable < tocraft.size())
         {
-            player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink] Not enough free CPUs! Need " + tocraft.size() + ", available: " + cpusAvailable));
+            player.sendSystemMessage(Component.translatable("colonylink.domum_craft.not_enough_cpu", tocraft.size(), cpusAvailable));
             if (cpusAvailable == 0) return;
         }
 

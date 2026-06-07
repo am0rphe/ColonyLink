@@ -41,24 +41,23 @@ public class CraftHandler
         long craftCost = ColonyLinkConfig.CRAFT_COST_RF.get();
         if (craftCost > 0 && !ColonyLinkServerTicker.tryConsumeRF(player, craftCost))
         {
-            player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink] Not enough power! Need " + craftCost + " RF to craft."));
+            player.sendSystemMessage(Component.translatable("colonylink.ch.not_enough_power", craftCost));
             return;
         }
 
         ItemStack wandStack = findWandInInventory(player);
         if (wandStack == null || !ColonyLinkWandLinkableHandler.isLinked(wandStack))
         {
-            player.sendSystemMessage(Component.literal("§cClipboard not found or not linked!"));
+            player.sendSystemMessage(Component.translatable("colonylink.handler.clipboard_not_linked"));
             return;
         }
 
         ServerLevel level = player.serverLevel();
         IWirelessAccessPoint wap = getWap(wandStack, level);
-        if (wap == null) { player.sendSystemMessage(Component.literal("§cCannot connect to AE2 network!")); return; }
+        if (wap == null) { player.sendSystemMessage(Component.translatable("colonylink.handler.no_wap")); return; }
 
         IGrid grid = wap.getGrid();
-        if (grid == null) { player.sendSystemMessage(Component.literal("§cAE2 network is offline!")); return; }
+        if (grid == null) { player.sendSystemMessage(Component.translatable("colonylink.handler.network_offline")); return; }
 
         ICraftingService craftingService = grid.getCraftingService();
         IActionSource actionSource = IActionSource.ofPlayer(player, wap);
@@ -139,27 +138,24 @@ public class CraftHandler
                 if (totalRequested == 1)
                 {
                     if (finalSuccess > 0)
-                        player.sendSystemMessage(Component.literal(
-                                "§aCraft started: " + finalRealCount + "x "
-                                        + stacks.get(0).getDisplayName().getString()));
+                        player.sendSystemMessage(Component.translatable("colonylink.ch.craft_started", finalRealCount, stacks.get(0).getDisplayName()));
                     else
-                        player.sendSystemMessage(Component.literal(
-                                "§cMissing primary ingredients for: " + stacks.get(0).getDisplayName().getString()));
+                        player.sendSystemMessage(Component.translatable("colonylink.ch.missing_primary", stacks.get(0).getDisplayName()));
                 }
                 else
                 {
-                    StringBuilder msg = new StringBuilder("§aCraft All: §f" + finalSuccess + " §astarted");
+                    net.minecraft.network.chat.MutableComponent msg =
+                            Component.translatable("colonylink.craft_all.base", finalSuccess);
                     if (finalFail > 0)
-                        msg.append("§c, ").append(finalFail).append(" failed");
+                        msg.append(Component.translatable("colonylink.craft_all.failed", finalFail));
                     if (finalSkipped > 0)
-                        msg.append("§e, ").append(finalSkipped).append(" queued (no free CPU)");
-                    msg.append("§7 (free CPUs seen: ").append(freeCpusFinal)
-                            .append(", craft submission limit: ").append(maxCrafts)
-                            .append(", AdvancedAE installed: ").append(advancedAeLoaded)
-                            .append(", quantum computer on network: ").append(quantumComputerOnNetwork)
-                            .append(", AdvancedAE compat: ").append(advancedAeCompatActive ? "active" : "inactive")
-                            .append(")");
-                    player.sendSystemMessage(Component.literal(msg.toString()));
+                        msg.append(Component.translatable("colonylink.craft_all.queued", finalSkipped));
+                    msg.append(Component.translatable("colonylink.craft_all.diag",
+                            freeCpusFinal, maxCrafts, advancedAeLoaded, quantumComputerOnNetwork,
+                            advancedAeCompatActive
+                                    ? Component.translatable("colonylink.craft_all.active")
+                                    : Component.translatable("colonylink.craft_all.inactive")));
+                    player.sendSystemMessage(msg);
                 }
             });
         });
@@ -293,9 +289,7 @@ public class CraftHandler
                 if (plan == null)
                 {
                     player.serverLevel().getServer().execute(() ->
-                            player.sendSystemMessage(Component.literal(
-                                    "§c[Terminal] Craft plan failed for §f"
-                                            + aeKey.toStack(1).getDisplayName().getString())));
+                            player.sendSystemMessage(Component.translatable("colonylink.ch.terminal_plan_failed", aeKey.toStack(1).getDisplayName())));
                     return;
                 }
 
@@ -305,17 +299,13 @@ public class CraftHandler
 
                 boolean ok = done.get(5, TimeUnit.SECONDS);
                 player.serverLevel().getServer().execute(() ->
-                        player.sendSystemMessage(Component.literal(ok
-                                ? "§a[Terminal] Autocraft started: §f" + count + "x "
-                                  + aeKey.toStack(1).getDisplayName().getString()
-                                : "§c[Terminal] Autocraft failed — missing ingredients.")));
+                        player.sendSystemMessage((ok ? Component.translatable("colonylink.ch.terminal_autocraft_started", count, aeKey.toStack(1).getDisplayName()) : Component.translatable("colonylink.ch.terminal_autocraft_failed"))));
             }
             catch (Exception e)
             {
                 ColonyLink.LOGGER.error("[Terminal] Autocraft error", e);
                 player.serverLevel().getServer().execute(() ->
-                        player.sendSystemMessage(Component.literal(
-                                "§c[Terminal] Autocraft error: " + e.getMessage())));
+                        player.sendSystemMessage(Component.translatable("colonylink.ch.terminal_autocraft_error", e.getMessage())));
             }
         });
     }

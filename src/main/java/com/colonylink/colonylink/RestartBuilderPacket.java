@@ -44,7 +44,7 @@ public record RestartBuilderPacket(BlockPos builderPos) implements CustomPacketP
             if (colony == null)
             {
                 serverPlayer.sendSystemMessage(
-                        Component.literal("§c[ColonyLink] No colony found!"));
+                        Component.translatable("colonylink.whs.no_colony"));
                 return;
             }
 
@@ -61,7 +61,7 @@ public record RestartBuilderPacket(BlockPos builderPos) implements CustomPacketP
             if (!(building instanceof AbstractBuildingStructureBuilder builderBuilding))
             {
                 serverPlayer.sendSystemMessage(
-                        Component.literal("§c[ColonyLink] Builder's Hut not found!"));
+                        Component.translatable("colonylink.handler.hut_not_found"));
                 return;
             }
 
@@ -84,13 +84,13 @@ public record RestartBuilderPacket(BlockPos builderPos) implements CustomPacketP
                 building.markDirty();
 
                 serverPlayer.sendSystemMessage(
-                        Component.literal("§a[ColonyLink] Builder restarted!"));
+                        Component.translatable("colonylink.restart.success"));
             }
             catch (Exception e)
             {
                 ColonyLink.LOGGER.error("[ColonyLink] Error restarting builder: {}", e.getMessage());
                 serverPlayer.sendSystemMessage(
-                        Component.literal("§c[ColonyLink] Failed to restart builder: " + e.getMessage()));
+                        Component.translatable("colonylink.restart.failed", e.getMessage()));
             }
         });
     }

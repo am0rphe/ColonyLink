@@ -91,8 +91,7 @@ public record TerminalCraftPacket(
         }
         menu.getCraftResult().setItem(0, ItemStack.EMPTY);
 
-        player.sendSystemMessage(Component.literal(
-                "§a[Terminal] Crafted §f" + result.getDisplayName().getString()));
+        player.sendSystemMessage(Component.translatable("colonylink.term_pkt.crafted", result.getDisplayName()));
     }
 
     /**
@@ -115,7 +114,7 @@ public record TerminalCraftPacket(
     {
         if (!part.isAe2Active())
         {
-            player.sendSystemMessage(Component.literal("§c[Terminal] AE2 offline!"));
+            player.sendSystemMessage(Component.translatable("colonylink.term_pkt.ae2_offline"));
             return;
         }
 
@@ -127,8 +126,7 @@ public record TerminalCraftPacket(
 
         if (aeKey == null || !cs.isCraftable(aeKey))
         {
-            player.sendSystemMessage(Component.literal(
-                    "§c[Terminal] No pattern for §f" + stack.getDisplayName().getString()));
+            player.sendSystemMessage(Component.translatable("colonylink.term_pkt.no_pattern", stack.getDisplayName()));
             return;
         }
 

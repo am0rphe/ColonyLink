@@ -112,15 +112,15 @@ public class ColonyLinkScreen extends Screen
 
     public ColonyLinkScreen(ColonyLinkPacket packet)
     {
-        super(Component.literal("Colony Link"));
+        super(Component.translatable("colonylink.screen.title"));
         applyPacket(packet);
     }
 
     // ── Anti-flicker du statut de craft (client only) ─────────────────────────
     //
     // AE2 cs.isRequesting() peut renvoyer true/false par intermittence pendant un
-    // craft, ce qui faisait osciller le bouton entre "Craft" (CRAFTABLE) et
-    // "Crafting..." (CRAFTING) d'un cycle de ticker à l'autre. On lisse côté client :
+    // craft, ce qui faisait osciller le bouton entre Component.translatable("colonylink.screen.btn.craft").getString() (CRAFTABLE) et
+    // Component.translatable("colonylink.screen.btn.crafting").getString() (CRAFTING) d'un cycle de ticker à l'autre. On lisse côté client :
     // dès qu'un item est vu CRAFTING, on maintient l'affichage CRAFTING pendant une
     // courte fenêtre, même si une mise à jour suivante le repasse CRAFTABLE.
     // AVAILABLE / NO_PATTERN / MISSING restent prioritaires (le craft est vraiment fini).
@@ -512,22 +512,22 @@ public class ColonyLinkScreen extends Screen
     private String getButtonText(ResourceStatus status)
     {
         return switch (status) {
-            case AVAILABLE  -> "Send";
-            case CRAFTABLE  -> "Craft";
-            case NO_PATTERN -> "No Pattern";
-            case CRAFTING   -> "Crafting...";
-            case MISSING    -> "Missing";
+            case AVAILABLE  -> Component.translatable("colonylink.screen.btn.send").getString();
+            case CRAFTABLE  -> Component.translatable("colonylink.screen.btn.craft").getString();
+            case NO_PATTERN -> Component.translatable("colonylink.screen.btn.no_pattern").getString();
+            case CRAFTING   -> Component.translatable("colonylink.screen.btn.crafting").getString();
+            case MISSING    -> Component.translatable("colonylink.screen.btn.missing").getString();
         };
     }
 
     private String getRequestButtonText(ResourceStatus status)
     {
         return switch (status) {
-            case AVAILABLE  -> "Fulfill";
-            case CRAFTABLE  -> "Craft";
-            case NO_PATTERN -> "No Pattern";
-            case CRAFTING   -> "Crafting...";
-            case MISSING    -> "Missing";
+            case AVAILABLE  -> Component.translatable("colonylink.screen.btn.fulfill").getString();
+            case CRAFTABLE  -> Component.translatable("colonylink.screen.btn.craft").getString();
+            case NO_PATTERN -> Component.translatable("colonylink.screen.btn.no_pattern").getString();
+            case CRAFTING   -> Component.translatable("colonylink.screen.btn.crafting").getString();
+            case MISSING    -> Component.translatable("colonylink.screen.btn.missing").getString();
         };
     }
 
@@ -557,12 +557,12 @@ public class ColonyLinkScreen extends Screen
     private String getButtonTextWithWarehouse(ResourceStatus status, ItemStack stack)
     {
         // v1.4.9 — finished Domum block in the warehouse → delivered directly (Send).
-        if (isDomumFinishedInWarehouse(stack)) return "Send (WH)";
+        if (isDomumFinishedInWarehouse(stack)) return Component.translatable("colonylink.screen.btn.send_wh").getString();
         if (status == ResourceStatus.NO_PATTERN)
         {
             WarehouseResultPacket.WarehouseEntry we = getWarehouseEntry(stack);
-            if (we != null && we.inWarehouse() > 0) return "Send (WH)";
-            if (we != null && we.viaCraft() > 0)    return "Craft (WH)";
+            if (we != null && we.inWarehouse() > 0) return Component.translatable("colonylink.screen.btn.send_wh").getString();
+            if (we != null && we.viaCraft() > 0)    return Component.translatable("colonylink.screen.btn.craft_wh").getString();
         }
         return getButtonText(status);
     }
@@ -661,6 +661,25 @@ public class ColonyLinkScreen extends Screen
         return 0xCCCCCC;
     }
 
+    /** Traduit l'identifiant de statut anglais (cote wire) vers la langue du client a l'affichage. */
+    private static String translateStatus(String s)
+    {
+        if (s == null) return "";
+        return switch (s)
+        {
+            case "Working"     -> Component.translatable("colonylink.status.working").getString();
+            case "Idle"        -> Component.translatable("colonylink.status.idle").getString();
+            case "Hungry"      -> Component.translatable("colonylink.status.hungry").getString();
+            case "Sleeping"    -> Component.translatable("colonylink.status.sleeping").getString();
+            case "Bad weather" -> Component.translatable("colonylink.status.bad_weather").getString();
+            case "Sick"        -> Component.translatable("colonylink.status.sick").getString();
+            case "Mourning"    -> Component.translatable("colonylink.status.mourning").getString();
+            case "Raided!"     -> Component.translatable("colonylink.status.raided").getString();
+            case "No home"     -> Component.translatable("colonylink.status.no_home").getString();
+            default            -> s;
+        };
+    }
+
     private void getBtnBounds(int i, int[] out)
     {
         int x = getGuiX();
@@ -722,8 +741,8 @@ public class ColonyLinkScreen extends Screen
                 tip.add(Component.literal("§7" + meta.buildingLabel()));
                 tip.add(Component.literal("§8@ " + meta.builderPos().toShortString()));
                 tip.add(meta.hasRedirector()
-                        ? Component.literal("§aRedirector linked")
-                        : Component.literal("§e⚠ No Redirector linked"));
+                        ? Component.translatable("colonylink.screen.tip.redirector_linked")
+                        : Component.translatable("colonylink.screen.tip.no_redirector"));
             }
         }
 
@@ -742,8 +761,8 @@ public class ColonyLinkScreen extends Screen
             if (hov)
             {
                 tip.clear();
-                tip.add(Component.literal("§aAdd a new builder"));
-                tip.add(Component.literal("§7Click to start pairing mode"));
+                tip.add(Component.translatable("colonylink.screen.tip.add_builder"));
+                tip.add(Component.translatable("colonylink.screen.tip.start_pairing"));
             }
         }
 
@@ -789,10 +808,10 @@ public class ColonyLinkScreen extends Screen
             if (hov)
             {
                 tip.clear();
-                tip.add(Component.literal("§fCitizens"));
-                tip.add(Component.literal("§7All open requests from non-builder citizens"));
+                tip.add(Component.translatable("colonylink.screen.tip.citizens"));
+                tip.add(Component.translatable("colonylink.screen.tip.citizens_desc"));
                 if (!citizenEntries.isEmpty())
-                    tip.add(Component.literal("§7" + citizenEntries.size() + " request" + (citizenEntries.size() != 1 ? "s" : "")));
+                    tip.add(Component.translatable("colonylink.screen.tip.requests_count", citizenEntries.size()));
             }
         }
     }
@@ -858,8 +877,8 @@ public class ColonyLinkScreen extends Screen
         if (hov)
         {
             tip.clear();
-            tip.add(Component.literal("§eGUI Config"));
-            tip.add(Component.literal("§7Customize colors, borders, opacity and scale"));
+            tip.add(Component.translatable("colonylink.screen.tip.gui_config"));
+            tip.add(Component.translatable("colonylink.screen.tip.gui_config_desc"));
         }
     }
 
@@ -889,7 +908,7 @@ public class ColonyLinkScreen extends Screen
 
         if (!isOutOfPower())
         {
-            g.drawString(this.font, "§7Builder: §f" + builderName,   x + 10, y + 26, 0xFFFFFF, false);
+            g.drawString(this.font, Component.translatable("colonylink.screen.info.builder", builderName).getString(),   x + 10, y + 26, 0xFFFFFF, false);
 
             // Bouton Locate — à droite sur la ligne Builder, masqué sur l'onglet Citizens
             if (activeTabIndex != CITIZENS_TAB_INDEX)
@@ -899,13 +918,13 @@ public class ColonyLinkScreen extends Screen
                 boolean lHov = mx >= lbX && mx <= lbX + LOCATE_BTN_W
                         && my >= lbY && my <= lbY + LOCATE_BTN_H;
                 drawButton(g, lbX, lbY, LOCATE_BTN_W, LOCATE_BTN_H,
-                        lHov ? 0xFF1A5C2E : 0xFF0F3A1E, "Locate", 0xFF44DD88);
+                        lHov ? 0xFF1A5C2E : 0xFF0F3A1E, Component.translatable("colonylink.screen.btn.locate").getString(), 0xFF44DD88);
             }
-            g.drawString(this.font, "§7Building: §f" + buildingName, x + 10, y + 36, 0xFFFFFF, false);
+            g.drawString(this.font, Component.translatable("colonylink.screen.info.building", buildingName).getString(), x + 10, y + 36, 0xFFFFFF, false);
 
-            String sl = "§7Status: ";
+            String sl = Component.translatable("colonylink.screen.info.status").getString();
             g.drawString(this.font, sl, x + 10, y + 46, 0xFFFFFF, false);
-            g.drawString(this.font, workerStatus,
+            g.drawString(this.font, translateStatus(workerStatus),
                     x + 10 + this.font.width(sl), y + 46, getWorkerStatusColor(), false);
 
             // v1.1.3 — Raison IDLE sous le statut
@@ -919,7 +938,7 @@ public class ColonyLinkScreen extends Screen
             }
 
             int cpuY = workerIdleReason.isEmpty() ? 58 : 66;
-            g.drawString(this.font, "§7CPUs: §f" + availableCpus, x + 10, y + cpuY, 0xFFFFFF, false);
+            g.drawString(this.font, Component.translatable("colonylink.screen.info.cpus", availableCpus).getString(), x + 10, y + cpuY, 0xFFFFFF, false);
 
             int rColor = switch (redirectorState) {
                 case "LINKED"     -> 0x00FF00;
@@ -928,12 +947,12 @@ public class ColonyLinkScreen extends Screen
                 default           -> 0x888888;
             };
             String rDisplay = switch (redirectorState) {
-                case "LINKED"     -> "Linked";
-                case "STANDBY"    -> "Standby";
-                case "NOT_LINKED" -> "Not Linked";
+                case "LINKED"     -> Component.translatable("colonylink.screen.redir.linked").getString();
+                case "STANDBY"    -> Component.translatable("colonylink.screen.redir.standby").getString();
+                case "NOT_LINKED" -> Component.translatable("colonylink.screen.redir.not_linked").getString();
                 default           -> redirectorState;
             };
-            String rl = "§7Redirector: ";
+            String rl = Component.translatable("colonylink.screen.info.redirector").getString();
             g.drawString(this.font, rl, x + 100, y + cpuY, 0xFFFFFF, false);
             g.drawString(this.font, rDisplay, x + 100 + this.font.width(rl), y + cpuY, rColor, false);
         }
@@ -941,9 +960,9 @@ public class ColonyLinkScreen extends Screen
         {
             // Out of Power
             int cx = x + GUI_WIDTH / 2;
-            g.drawCenteredString(this.font, "§cOUT OF POWER",          cx, y + 30, 0xFF4444);
-            g.drawCenteredString(this.font, "§7Charge via any FE charger", cx, y + 42, 0xAAAAAA);
-            g.drawCenteredString(this.font, "§7(Powah, Mekanism, IE...)",  cx, y + 52, 0xAAAAAA);
+            g.drawCenteredString(this.font, Component.translatable("colonylink.screen.power.title").getString(),          cx, y + 30, 0xFF4444);
+            g.drawCenteredString(this.font, Component.translatable("colonylink.screen.power.charge").getString(), cx, y + 42, 0xAAAAAA);
+            g.drawCenteredString(this.font, Component.translatable("colonylink.screen.power.mods").getString(),  cx, y + 52, 0xAAAAAA);
         }
     }
 
@@ -959,14 +978,14 @@ public class ColonyLinkScreen extends Screen
         g.fill(x + 6, pY + pH - 1, x + GUI_WIDTH - 6, pY + pH, _cr.applyOpacity(0xFF1A1A3A));
         g.fill(x + GUI_WIDTH - 7, pY, x + GUI_WIDTH - 6, pY + pH, _cr.applyOpacity(0xFF1A1A3A));
         g.fill(x + 7, pY + 11, x + GUI_WIDTH - 7, pY + 12, _cr.applyOpacity(0xFF3A3A6A));
-        g.drawString(this.font, "§9Priority Request:", x + 10, pY + 3, 0xAAAAFF, false);
+        g.drawString(this.font, Component.translatable("colonylink.screen.req.title").getString(), x + 10, pY + 3, 0xAAAAFF, false);
 
         boolean hasReq = builderRequest != null && !builderRequest.stack().isEmpty()
                 && builderRequest.count() > 0;
 
         if (!hasReq || isOutOfPower())
         {
-            g.drawString(this.font, isOutOfPower() ? "§8— no power —" : "§8None",
+            g.drawString(this.font, isOutOfPower() ? Component.translatable("colonylink.screen.req.no_power").getString() : Component.translatable("colonylink.screen.req.none").getString(),
                     x + 10, pY + 14, 0x666666, false);
             return;
         }
@@ -991,8 +1010,8 @@ public class ColonyLinkScreen extends Screen
         if ((hov || lineHov) && !builderRequest.tooltipLines().isEmpty())
         {
             pendingTooltipOut.clear();
-            for (String line : builderRequest.tooltipLines())
-                pendingTooltipOut.add(Component.literal(line));
+            for (Component line : builderRequest.tooltipLines())
+                pendingTooltipOut.add(line);
         }
     }
 
@@ -1029,7 +1048,7 @@ public class ColonyLinkScreen extends Screen
         }
         g.fill(sx + half, sy + 2, sx + half + 1, sy + sh - 2, 0xFF444444);
         String networkLabel = "AE2";
-        g.drawCenteredString(this.font, "WH",          sx + half / 2,        sy + 3, warehousePriority ? 0x00FF88 : 0x556655);
+        g.drawCenteredString(this.font, Component.translatable("colonylink.screen.toggle.wh").getString(),          sx + half / 2,        sy + 3, warehousePriority ? 0x00FF88 : 0x556655);
         g.drawCenteredString(this.font, networkLabel,  sx + half + half / 2, sy + 3, warehousePriority ? 0x334466 : 0x4488FF);
     }
 
@@ -1041,16 +1060,16 @@ public class ColonyLinkScreen extends Screen
         String label; int bg, tc;
         switch (wareCheckState)
         {
-            case LOADING -> { label = "Scanning..."; bg = 0xFF554400; tc = 0xFFAA44; }
+            case LOADING -> { label = Component.translatable("colonylink.screen.btn.scanning").getString(); bg = 0xFF554400; tc = 0xFFAA44; }
             case DONE ->
             {
                 boolean exp = System.currentTimeMillis() - warehouseSnapshotReceivedMs > getSnapshotValidityMs();
                 if (exp) { wareCheckState = WareCheckState.IDLE; warehouseSnapshot = null; }
-                label = exp ? "Check Warehouse" : "Warehouse ✔";
+                label = exp ? Component.translatable("colonylink.screen.btn.check_warehouse").getString() : Component.translatable("colonylink.screen.btn.warehouse_ok").getString();
                 bg = exp ? (hov ? 0xFF336633 : 0xFF224422) : (hov ? 0xFF447744 : 0xFF335533);
                 tc = exp ? 0x88FF88 : 0x00FF88;
             }
-            default -> { label = "Check Warehouse"; bg = hov ? 0xFF336633 : 0xFF224422; tc = 0x88FF88; }
+            default -> { label = Component.translatable("colonylink.screen.btn.check_warehouse").getString(); bg = hov ? 0xFF336633 : 0xFF224422; tc = 0x88FF88; }
         }
         g.fill(bx, by, bx + bw, by + bh, bg);
         g.fill(bx, by, bx + bw, by + 1, 0xFFFFFFFF);
@@ -1120,11 +1139,11 @@ public class ColonyLinkScreen extends Screen
         boolean canDel = !tabMetas.isEmpty();
         drawButton(g, dbX, dbY, dbW, dbH,
                 canDel ? (delHov ? 0xFF880000 : 0xFF550000) : 0xFF333333,
-                "Unlink", canDel ? 0xFF4444 : 0x888888);
+                Component.translatable("colonylink.screen.btn.unlink").getString(), canDel ? 0xFF4444 : 0x888888);
 
         int rbX = getRestartBtnX(), rbY = getRestartBtnY(), rbW = getRestartBtnW(), rbH = getRestartBtnH();
         boolean restHov = mx >= rbX && mx <= rbX + rbW && my >= rbY && my <= rbY + rbH;
-        drawButton(g, rbX, rbY, rbW, rbH, restHov ? 0xFF885500 : 0xFF553300, "Restart", 0xFFAA44);
+        drawButton(g, rbX, rbY, rbW, rbH, restHov ? 0xFF885500 : 0xFF553300, Component.translatable("colonylink.screen.btn.restart").getString(), 0xFFAA44);
 
         List<Component> tip = new ArrayList<>();
 
@@ -1137,14 +1156,14 @@ public class ColonyLinkScreen extends Screen
             g.fill(x + 6, y + 22, x + 7, y + 80, _c.applyOpacity(0xFF8B8B8B));
             g.fill(x + 6, y + 79, x + GUI_WIDTH - 6, y + 80, _c.applyOpacity(0xFF373737));
             g.fill(x + GUI_WIDTH - 7, y + 22, x + GUI_WIDTH - 6, y + 80, _c.applyOpacity(0xFF373737));
-            g.drawCenteredString(this.font, "§fCitizen Requests", x + GUI_WIDTH / 2 - 12, y + 30, 0xFFFFFF);
-            String countStr = citizensLoading ? "§7Loading..."
-                    : citizenEntries.isEmpty() ? "§7No open requests"
-                      : "§7" + citizenEntries.size() + " open request" + (citizenEntries.size() != 1 ? "s" : "");
+            g.drawCenteredString(this.font, Component.translatable("colonylink.screen.cit.header").getString(), x + GUI_WIDTH / 2 - 12, y + 30, 0xFFFFFF);
+            String countStr = citizensLoading ? Component.translatable("colonylink.screen.cit.loading").getString()
+                    : citizenEntries.isEmpty() ? Component.translatable("colonylink.screen.cit.no_requests").getString()
+                      : Component.translatable("colonylink.screen.cit.open_requests", citizenEntries.size()).getString();
             g.drawCenteredString(this.font, countStr, x + GUI_WIDTH / 2 - 12, y + 44, 0xAAAAAA);
             String pkgDesc = citizenPackageCount > 0
-                    ? "§7" + citizenPackageCount + " package" + (citizenPackageCount != 1 ? "s" : "") + " loaded"
-                    : "§cNo packages — click slot to load";
+                    ? Component.translatable("colonylink.screen.cit.packages_loaded", citizenPackageCount).getString()
+                    : Component.translatable("colonylink.screen.cit.no_packages").getString();
             g.drawCenteredString(this.font, pkgDesc, x + GUI_WIDTH / 2 - 12, y + 57, 0x888888);
 
             // ── Slot Package (haut droite du header) ─────────────────────────
@@ -1173,16 +1192,16 @@ public class ColonyLinkScreen extends Screen
             if (pkgHov)
             {
                 tip.clear();
-                tip.add(net.minecraft.network.chat.Component.literal("§6ColonyLink Package slot"));
-                tip.add(net.minecraft.network.chat.Component.literal("§7Stored: §f" + citizenPackageCount + " §7/ §f64"));
+                tip.add(net.minecraft.network.chat.Component.translatable("colonylink.screen.pkg.slot"));
+                tip.add(net.minecraft.network.chat.Component.translatable("colonylink.screen.pkg.stored", citizenPackageCount));
                 tip.add(net.minecraft.network.chat.Component.literal("§8──────────────────"));
-                tip.add(net.minecraft.network.chat.Component.literal("§7Each §fSend §7or §fCraft §7consumes §f1 Package§7."));
-                tip.add(net.minecraft.network.chat.Component.literal("§7Re-sending (§fSent ↺§7) consumes §f2 Packages§7."));
+                tip.add(net.minecraft.network.chat.Component.translatable("colonylink.screen.pkg.cost1"));
+                tip.add(net.minecraft.network.chat.Component.translatable("colonylink.screen.pkg.cost2"));
                 tip.add(net.minecraft.network.chat.Component.literal("§8──────────────────"));
                 if (citizenPackageCount < 64)
-                    tip.add(net.minecraft.network.chat.Component.literal("§aClick to load packages from inventory."));
+                    tip.add(net.minecraft.network.chat.Component.translatable("colonylink.screen.pkg.load"));
                 else
-                    tip.add(net.minecraft.network.chat.Component.literal("§8Full — no more packages can be loaded."));
+                    tip.add(net.minecraft.network.chat.Component.translatable("colonylink.screen.pkg.full"));
             }
         }
         else
@@ -1204,12 +1223,12 @@ public class ColonyLinkScreen extends Screen
         {
             if (citizensLoading)
             {
-                g.drawCenteredString(this.font, "§7Loading citizens...",
+                g.drawCenteredString(this.font, Component.translatable("colonylink.screen.cit.loading_citizens").getString(),
                         x + GUI_WIDTH / 2, listY + MAX_VISIBLE * ENTRY_HEIGHT / 2 - 4, 0x888888);
             }
             else if (citizenEntries.isEmpty())
             {
-                g.drawCenteredString(this.font, "§7No open requests from citizens",
+                g.drawCenteredString(this.font, Component.translatable("colonylink.screen.cit.no_requests_citizens").getString(),
                         x + GUI_WIDTH / 2, listY + MAX_VISIBLE * ENTRY_HEIGHT / 2 - 4, 0x888888);
             }
             else
@@ -1257,7 +1276,7 @@ public class ColonyLinkScreen extends Screen
                         g.fill(btnX, btnY, btnX + 1, btnY + btnH, 0xFF555555);
                         g.fill(btnX, btnY + btnH - 1, btnX + btnW, btnY + btnH, 0xFF1A1A1A);
                         g.fill(btnX + btnW - 1, btnY, btnX + btnW, btnY + btnH, 0xFF1A1A1A);
-                        g.drawCenteredString(this.font, "§7Sent ↺", btnX + btnW / 2, btnY + 3, 0x888888);
+                        g.drawCenteredString(this.font, Component.translatable("colonylink.screen.cit.sent").getString(), btnX + btnW / 2, btnY + 3, 0x888888);
                     }
                     else if (ceCanSend)
                     {
@@ -1267,7 +1286,7 @@ public class ColonyLinkScreen extends Screen
                         g.fill(btnX, btnY, btnX + 1, btnY + btnH, 0xFFFFFFFF);
                         g.fill(btnX, btnY + btnH - 1, btnX + btnW, btnY + btnH, 0xFF222222);
                         g.fill(btnX + btnW - 1, btnY, btnX + btnW, btnY + btnH, 0xFF222222);
-                        g.drawCenteredString(this.font, "Send", btnX + btnW / 2, btnY + 3, 0x4488FF);
+                        g.drawCenteredString(this.font, Component.translatable("colonylink.screen.btn.send").getString(), btnX + btnW / 2, btnY + 3, 0x4488FF);
                     }
                     else if (ceCanCraft)
                     {
@@ -1277,24 +1296,24 @@ public class ColonyLinkScreen extends Screen
                         g.fill(btnX, btnY, btnX + 1, btnY + btnH, 0xFFFFFFFF);
                         g.fill(btnX, btnY + btnH - 1, btnX + btnW, btnY + btnH, 0xFF222222);
                         g.fill(btnX + btnW - 1, btnY, btnX + btnW, btnY + btnH, 0xFF222222);
-                        g.drawCenteredString(this.font, "Craft", btnX + btnW / 2, btnY + 3, 0x00FF00);
+                        g.drawCenteredString(this.font, Component.translatable("colonylink.screen.btn.craft").getString(), btnX + btnW / 2, btnY + 3, 0x00FF00);
                     }
 
                     if (mx >= x + 7 && mx <= x + 7 + listW && my >= ey && my <= ey + ENTRY_HEIGHT)
                     {
                         tip.clear();
                         tip.add(Component.literal("§f" + ce.count() + "x " + itemName));
-                        tip.add(Component.literal("§7Citizen: §f" + ce.citizenName()));
-                        tip.add(Component.literal("§7Job: §f" + ce.jobName()));
+                        tip.add(Component.translatable("colonylink.screen.tip.citizen", ce.citizenName()));
+                        tip.add(Component.translatable("colonylink.screen.tip.job", ce.jobName()));
                         if (btnHov && alreadySent)
                         {
-                            tip.add(Component.literal("§7Already sent — click to craft + send again"));
-                            tip.add(Component.literal("§8Costs §f2 Packages §8(craft + send)"));
+                            tip.add(Component.translatable("colonylink.screen.tip.already_sent"));
+                            tip.add(Component.translatable("colonylink.screen.tip.cost_2pkg"));
                         }
                         else if (btnHov && ceCanSend)
-                            tip.add(Component.literal("§7Send to warehouse for pickup"));
+                            tip.add(Component.translatable("colonylink.screen.tip.send_wh"));
                         else if (btnHov && ceCanCraft)
-                            tip.add(Component.literal("§7Craft via AE2 — item will appear in ME, then click Send"));
+                            tip.add(Component.translatable("colonylink.screen.tip.craft_ae2"));
 
                     }
                 }
@@ -1312,7 +1331,7 @@ public class ColonyLinkScreen extends Screen
         }
         else if (isOutOfPower())
         {
-            g.drawCenteredString(this.font, "§cOut of Power — charge Clipboard to use",
+            g.drawCenteredString(this.font, Component.translatable("colonylink.screen.power.list").getString(),
                     x + GUI_WIDTH / 2, listY + MAX_VISIBLE * ENTRY_HEIGHT / 2 - 4, 0xFF4444);
         }
         else
@@ -1374,19 +1393,19 @@ public class ColonyLinkScreen extends Screen
                 {
                     long tot = we.inWarehouse() + we.viaCraft();
                     String wt; int wc;
-                    if (tot >= rc)     { wt = "§aWH: " + tot;             wc = 0x00FF88; }
-                    else if (tot > 0)  { wt = "§eWH: " + tot + "/" + rc; wc = 0xFFCC44; }
-                    else               { wt = "§cWH: 0";                  wc = 0xFF4444; }
+                    if (tot >= rc)     { wt = Component.translatable("colonylink.screen.wh.have", tot).getString();             wc = 0x00FF88; }
+                    else if (tot > 0)  { wt = Component.translatable("colonylink.screen.wh.partial", tot, rc).getString(); wc = 0xFFCC44; }
+                    else               { wt = Component.translatable("colonylink.screen.wh.none").getString();                  wc = 0xFF4444; }
                     g.drawString(this.font, wt, x + 29, ey + 13, wc, false);
 
                     if (lineHov && !we.tooltipLines().isEmpty())
                     {
                         tip.clear();
-                        tip.add(Component.literal("§6Warehouse availability:"));
-                        tip.add(Component.literal("§7  Direct: §a" + we.inWarehouse() + "x"));
-                        tip.add(Component.literal("§7  Via craft: §e" + we.viaCraft() + "x"));
+                        tip.add(Component.translatable("colonylink.screen.wh.avail_title"));
+                        tip.add(Component.translatable("colonylink.screen.wh.direct", we.inWarehouse()));
+                        tip.add(Component.translatable("colonylink.screen.wh.via_craft", we.viaCraft()));
                         tip.add(Component.literal("§8──────────"));
-                        for (String ln : we.tooltipLines()) tip.add(Component.literal(ln));
+                        for (Component ln : we.tooltipLines()) tip.add(ln);
                     }
                 }
 
@@ -1395,7 +1414,7 @@ public class ColonyLinkScreen extends Screen
                 {
                     tip.clear();
                     tip.add(Component.literal("§b" + rawName));
-                    for (String ln : entry.tooltipLines()) tip.add(Component.literal(ln));
+                    for (Component ln : entry.tooltipLines()) tip.add(ln);
                 }
 
                 int[] btn = new int[4];
@@ -1406,7 +1425,7 @@ public class ColonyLinkScreen extends Screen
                 if (hov && !entry.tooltipLines().isEmpty())
                 {
                     tip.clear();
-                    for (String ln : entry.tooltipLines()) tip.add(Component.literal(ln));
+                    for (Component ln : entry.tooltipLines()) tip.add(ln);
                 }
 
                 int bg2 = _cl.applyOpacity(getButtonColorWithWarehouse(status, stack, hov && isButtonClickable(status, stack)));
@@ -1458,19 +1477,19 @@ public class ColonyLinkScreen extends Screen
                 // En cours : fond bleu foncé, texte animé (clignote via gameTicks)
                 long ticks = (System.currentTimeMillis() / 400) % 3;
                 String dots = ticks == 0 ? "." : ticks == 1 ? ".." : "...";
-                caLabel     = "Crafting" + dots;
+                caLabel     = Component.translatable("colonylink.screen.btn.crafting_anim", dots).getString();
                 caBg        = _cBtn.applyOpacity(caHov ? 0xFF003355 : 0xFF002244);
                 caTextColor = 0x55AAFF;
             }
             else if (hasCraft)
             {
-                caLabel     = "Craft All";
+                caLabel     = Component.translatable("colonylink.screen.btn.craft_all").getString();
                 caBg        = _cBtn.applyOpacity(caHov ? 0xFF007700 : 0xFF005500);
                 caTextColor = 0x00FF00;
             }
             else
             {
-                caLabel     = "Craft All";
+                caLabel     = Component.translatable("colonylink.screen.btn.craft_all").getString();
                 caBg        = _cBtn.applyOpacity(0xFF333333);
                 caTextColor = 0x888888;
             }
@@ -1485,22 +1504,22 @@ public class ColonyLinkScreen extends Screen
                 tip.clear();
                 if (craftInProgress)
                 {
-                    tip.add(Component.literal("§bCrafting in progress..."));
-                    tip.add(Component.literal("§7" + craftInProgressCount + " item type" + (craftInProgressCount != 1 ? "s" : "") + " submitted"));
-                    tip.add(Component.literal("§8Waiting for next refresh..."));
+                    tip.add(Component.translatable("colonylink.screen.tip.crafting_progress"));
+                    tip.add(Component.translatable("colonylink.screen.tip.types_submitted", craftInProgressCount));
+                    tip.add(Component.translatable("colonylink.screen.tip.waiting_refresh"));
                 }
                 else if (hasCraft)
                 {
                     long craftCount = entries.stream()
                             .filter(e -> e.status() == ResourceStatus.CRAFTABLE || e.status() == ResourceStatus.MISSING)
                             .count();
-                    tip.add(Component.literal("§aCraft All craftable items"));
-                    tip.add(Component.literal("§7" + craftCount + " item type" + (craftCount != 1 ? "s" : "") + " to craft"));
-                    tip.add(Component.literal("§7" + availableCpus + " CPU" + (availableCpus != 1 ? "s" : "") + " available"));
+                    tip.add(Component.translatable("colonylink.screen.tip.craft_all_desc"));
+                    tip.add(Component.translatable("colonylink.screen.tip.types_to_craft", craftCount));
+                    tip.add(Component.translatable("colonylink.screen.tip.cpus_available", availableCpus));
                 }
                 else
                 {
-                    tip.add(Component.literal("§8No craftable items"));
+                    tip.add(Component.translatable("colonylink.screen.tip.no_craftable"));
                 }
             }
 
@@ -1510,7 +1529,7 @@ public class ColonyLinkScreen extends Screen
             g.fill(saX, saY, saX + saW, saY + saH, _cBtn.applyOpacity(hasAvail ? (saHov ? 0xFF0066CC : 0xFF004488) : 0xFF333333));
             g.fill(saX, saY, saX + saW, saY + 1, 0xFFFFFFFF); g.fill(saX, saY, saX + 1, saY + saH, 0xFFFFFFFF);
             g.fill(saX, saY + saH - 1, saX + saW, saY + saH, 0xFF373737); g.fill(saX + saW - 1, saY, saX + saW, saY + saH, 0xFF373737);
-            g.drawCenteredString(this.font, "Send All", saX + saW / 2, saY + 4, hasAvail ? 0x4488FF : 0x888888);
+            g.drawCenteredString(this.font, Component.translatable("colonylink.screen.btn.send_all").getString(), saX + saW / 2, saY + 4, hasAvail ? 0x4488FF : 0x888888);
 
         } // fin du bloc non-Citizens
 
@@ -1523,27 +1542,26 @@ public class ColonyLinkScreen extends Screen
             if (mx >= sx && mx <= sx + sw2 && my >= sy && my <= sy + sh2)
             {
                 tip.clear();
-                tip.add(Component.literal("§6Send Priority"));
+                tip.add(Component.translatable("colonylink.screen.tip.send_priority"));
                 String netLabel = "AE2";
-                String netDesc  = "ME network";
                 tip.add(warehousePriority
-                        ? Component.literal("§a● Warehouse first\n§7Items pulled from Warehouse racks first.")
-                        : Component.literal("§9● " + netLabel + " first\n§7Items pulled from " + netDesc + " first."));
-                tip.add(Component.literal("§8Click to toggle."));
+                        ? Component.translatable("colonylink.screen.tip.priority_wh")
+                        : Component.translatable("colonylink.screen.tip.priority_net", netLabel));
+                tip.add(Component.translatable("colonylink.screen.tip.click_toggle"));
             }
         }
         if (mx >= rbX && mx <= rbX + rbW && my >= rbY && my <= rbY + rbH)
         {
             tip.clear();
-            tip.add(Component.literal("§6Restart Builder"));
-            tip.add(Component.literal("§7Cancels current task and restarts the builder PNJ"));
+            tip.add(Component.translatable("colonylink.screen.tip.restart_builder"));
+            tip.add(Component.translatable("colonylink.screen.tip.restart_desc"));
         }
         if (mx >= dbX && mx <= dbX + dbW && my >= dbY && my <= dbY + dbH)
         {
             tip.clear();
-            tip.add(Component.literal("§cUnlink active builder"));
-            tip.add(Component.literal("§7Removes the current tab from the Clipboard."));
-            tip.add(Component.literal("§8The Redirector itself is not affected."));
+            tip.add(Component.translatable("colonylink.screen.tip.unlink_builder"));
+            tip.add(Component.translatable("colonylink.screen.tip.unlink_desc"));
+            tip.add(Component.translatable("colonylink.screen.tip.unlink_note"));
         }
 
         // Tooltip bouton Locate (dans le panel info)
@@ -1554,9 +1572,9 @@ public class ColonyLinkScreen extends Screen
             if (mx >= lbXT && mx <= lbXT + LOCATE_BTN_W && my >= lbYT && my <= lbYT + LOCATE_BTN_H)
             {
                 tip.clear();
-                tip.add(Component.literal("§aLocate Builder"));
-                tip.add(Component.literal("§7Applies §fGlowing§7 to the assigned builder NPC"));
-                tip.add(Component.literal("§7for §f" + ColonyLinkConfig.LOCATE_GLOW_DURATION_SECONDS.get() + "s§7. Visible through walls."));
+                tip.add(Component.translatable("colonylink.screen.tip.locate_builder"));
+                tip.add(Component.translatable("colonylink.screen.tip.locate_desc"));
+                tip.add(Component.translatable("colonylink.screen.tip.locate_dur", ColonyLinkConfig.LOCATE_GLOW_DURATION_SECONDS.get()));
             }
         }
 
@@ -1564,7 +1582,23 @@ public class ColonyLinkScreen extends Screen
             g.pose().popPose();
 
         super.render(g, rawMx, rawMy, pt);
-        if (!tip.isEmpty()) g.renderComponentTooltip(this.font, tip, mx, my);
+        if (!tip.isEmpty()) {
+            // renderComponentTooltip renders each Component as a single visual line and does
+            // not break on '\n' (it would show up as a missing-glyph box). Flatten any
+            // newline-containing line into separate literals so multi-line tooltips wrap
+            // correctly. Components without '\n' are left untouched to preserve their styling
+            // (e.g. item-name sub-components in availability tooltips).
+            List<Component> flatTip = new ArrayList<>();
+            for (Component c : tip) {
+                String s = c.getString();
+                if (s.indexOf('\n') >= 0) {
+                    for (String line : s.split("\n", -1)) flatTip.add(Component.literal(line));
+                } else {
+                    flatTip.add(c);
+                }
+            }
+            g.renderComponentTooltip(this.font, flatTip, mx, my);
+        }
     }
 
     // ── mouseClicked() ────────────────────────────────────────────────────────
@@ -1611,7 +1645,7 @@ public class ColonyLinkScreen extends Screen
                     // du nouveau packet serveur — évite le GUI vide pendant le round-trip
                     builderName   = tabMetas.get(i).builderName();
                     buildingName  = tabMetas.get(i).buildingLabel();
-                    workerStatus  = "Loading...";
+                    workerStatus  = Component.translatable("colonylink.screen.status.loading").getString();
                     warehouseSnapshot = null;
                     wareCheckState    = WareCheckState.IDLE;
                     scrollOffset      = 0;
@@ -1767,9 +1801,7 @@ public class ColonyLinkScreen extends Screen
             {
                 // #8 : déjà en cours → message informatif, pas de double envoi
                 net.minecraft.client.Minecraft.getInstance().player.sendSystemMessage(
-                        net.minecraft.network.chat.Component.literal(
-                                "§e[ColonyLink] Craft already in progress (" + craftInProgressCount
-                                        + " item type" + (craftInProgressCount != 1 ? "s" : "") + ")..."));
+                        net.minecraft.network.chat.Component.translatable("colonylink.screen.msg.craft_in_progress", craftInProgressCount));
                 return true;
             }
 
@@ -1810,7 +1842,7 @@ public class ColonyLinkScreen extends Screen
         int saX = getSendAllBtnX(), saY = getSendAllBtnY(), saW = getSendAllBtnW(), saH = getSendAllBtnH();
         if (mx >= saX && mx <= saX + saW && my >= saY && my <= saY + saH && hasSendableItems())
         {
-            // v1.4.9 — "Send All" inclut aussi les blocs Domum finis détectés en warehouse
+            // v1.4.9 — Component.translatable("colonylink.screen.btn.send_all").getString() inclut aussi les blocs Domum finis détectés en warehouse
             // (en plus des items AVAILABLE en ME). Tout part via SendToBuilderPacket ; le
             // serveur choisit la source (ME / warehouse) selon le toggle de priorité.
             boolean prioritySent = builderRequest != null && !builderRequest.stack().isEmpty()
@@ -1867,8 +1899,7 @@ public class ColonyLinkScreen extends Screen
                         if (citizenPackageCount <= 0)
                         {
                             if (this.minecraft != null && this.minecraft.player != null)
-                                this.minecraft.player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                                        "§c[ColonyLink] No Packages! Load ColonyLink Packages into the slot first."));
+                                this.minecraft.player.sendSystemMessage(net.minecraft.network.chat.Component.translatable("colonylink.screen.msg.no_packages"));
                             return true;
                         }
                         boolean wasAlreadySent = sentCitizenRequests.contains(sentKey(ce));
@@ -1892,9 +1923,7 @@ public class ColonyLinkScreen extends Screen
                             if (citizenPackageCount < 2)
                             {
                                 if (this.minecraft != null && this.minecraft.player != null)
-                                    this.minecraft.player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                                            "§c[ColonyLink] Need 2 Packages to re-send (craft + send). Only "
-                                                    + citizenPackageCount + " remaining."));
+                                    this.minecraft.player.sendSystemMessage(net.minecraft.network.chat.Component.translatable("colonylink.screen.msg.need_2pkg", citizenPackageCount));
                                 return true;
                             }
                             // Craft d'abord
@@ -1905,8 +1934,7 @@ public class ColonyLinkScreen extends Screen
                                     ce.stack(), ce.count(), redirectorPos, false));
                             citizenPackageCount = Math.max(0, citizenPackageCount - 2);
                             if (this.minecraft != null && this.minecraft.player != null)
-                                this.minecraft.player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                                        "§e[ColonyLink] Re-sending " + itemLabel + "§e: craft + send queued."));
+                                this.minecraft.player.sendSystemMessage(net.minecraft.network.chat.Component.translatable("colonylink.screen.msg.resending", itemLabel));
                         }
                         return true;
                     }

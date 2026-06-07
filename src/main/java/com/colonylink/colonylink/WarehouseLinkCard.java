@@ -20,16 +20,16 @@ public class WarehouseLinkCard extends Item
     @OnlyIn(Dist.CLIENT)
     public void appendHoverText(ItemStack stack, TooltipContext context, List<Component> tooltip, TooltipFlag flag)
     {
-        tooltip.add(Component.literal("§7Links a Redirector to the colony Warehouse."));
+        tooltip.add(Component.translatable("colonylink.card.line1"));
         if (net.minecraft.client.gui.screens.Screen.hasShiftDown())
         {
-            tooltip.add(Component.literal("§8  • Insert into the Redirector GUI slot."));
-            tooltip.add(Component.literal("§8  • Enables §fCheck Warehouse §8in the Clipboard."));
-            tooltip.add(Component.literal("§8  • Send pulls from Warehouse racks first."));
+            tooltip.add(Component.translatable("colonylink.card.insert"));
+            tooltip.add(Component.translatable("colonylink.card.enables"));
+            tooltip.add(Component.translatable("colonylink.card.send"));
         }
         else
         {
-            tooltip.add(Component.literal("§8Hold §eShift §8for details."));
+            tooltip.add(Component.translatable("colonylink.tip.hold_shift_details"));
         }
     }
 }

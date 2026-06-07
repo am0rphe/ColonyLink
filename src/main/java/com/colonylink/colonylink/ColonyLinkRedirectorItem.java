@@ -21,26 +21,26 @@ public class ColonyLinkRedirectorItem extends BlockItem
     public void appendHoverText(ItemStack stack, TooltipContext context,
                                 List<Component> tooltip, TooltipFlag flag)
     {
-        tooltip.add(Component.literal("§7Bridges §fME network §7↔ §fMineColonies §7builder."));
+        tooltip.add(Component.translatable("colonylink.redir_item.line1"));
 
         if (net.minecraft.client.gui.screens.Screen.hasShiftDown())
         {
-            tooltip.add(Component.literal("§eSetup:").withStyle(
+            tooltip.add(Component.translatable("colonylink.tip.setup").withStyle(
                     net.minecraft.ChatFormatting.YELLOW));
-            tooltip.add(Component.literal("§8 1. Link §fClipboard §8to a §fWireless Access Point"));
-            tooltip.add(Component.literal("§8 2. Sneak+click a §fBuilder's Hut §8with the Clipboard"));
-            tooltip.add(Component.literal("§8 3. Place Redirector adjacent to an §fAE2 cable"));
-            tooltip.add(Component.literal("§8 4. Sneak+click §fthe Redirector §8with the Clipboard"));
-            tooltip.add(Component.literal("§8 5. Right-click (air) with Clipboard → resource GUI"));
-            tooltip.add(Component.literal("§7Interactions:").withStyle(
+            tooltip.add(Component.translatable("colonylink.redir_item.setup1"));
+            tooltip.add(Component.translatable("colonylink.redir_item.setup2"));
+            tooltip.add(Component.translatable("colonylink.redir_item.setup3"));
+            tooltip.add(Component.translatable("colonylink.redir_item.setup4"));
+            tooltip.add(Component.translatable("colonylink.redir_item.setup5"));
+            tooltip.add(Component.translatable("colonylink.redir_item.interactions").withStyle(
                     net.minecraft.ChatFormatting.GRAY));
-            tooltip.add(Component.literal("§8  §fRight-click §8(empty hand) → open buffer GUI"));
-            tooltip.add(Component.literal("§8  §fAE2 Wrench §8→ show status / §fSneak §8→ remove"));
-            tooltip.add(Component.literal("§8  Insert §fDomum Patterns §8in buffer for AE2 crafting"));
+            tooltip.add(Component.translatable("colonylink.redir_item.int1"));
+            tooltip.add(Component.translatable("colonylink.redir_item.int2"));
+            tooltip.add(Component.translatable("colonylink.redir_item.int3"));
         }
         else
         {
-            tooltip.add(Component.literal("§8Hold §eShift §8for setup guide.")
+            tooltip.add(Component.translatable("colonylink.tip.hold_shift_setup")
                     .withStyle(net.minecraft.ChatFormatting.DARK_GRAY));
         }
     }

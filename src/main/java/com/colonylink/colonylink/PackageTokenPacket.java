@@ -85,7 +85,7 @@ public record PackageTokenPacket(
         ItemStack wand = findWandInInventory(player);
         if (wand == null)
         {
-            player.sendSystemMessage(Component.literal("§c[ColonyLink] Clipboard not found!"));
+            player.sendSystemMessage(Component.translatable("colonylink.pkg_token.clip_not_found"));
             return;
         }
 
@@ -93,8 +93,7 @@ public record PackageTokenPacket(
         int stored = ColonyLinkWandLinkableHandler.getCitizenPackages(wand);
         if (stored <= 0)
         {
-            player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink] No Packages left! Craft more ColonyLink Packages and load them."));
+            player.sendSystemMessage(Component.translatable("colonylink.pkg_token.no_packages"));
             return;
         }
 
@@ -103,13 +102,12 @@ public record PackageTokenPacket(
         var be = level.getBlockEntity(redirectorPos);
         if (!(be instanceof ColonyLinkRedirectorBlockEntity redirector))
         {
-            player.sendSystemMessage(Component.literal("§c[ColonyLink] Redirector not found!"));
+            player.sendSystemMessage(Component.translatable("colonylink.pkg_token.redir_not_found"));
             return;
         }
         if (!redirector.hasWarehouseCard())
         {
-            player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink] No Warehouse Link Card in Redirector!"));
+            player.sendSystemMessage(Component.translatable("colonylink.pkg_token.no_card"));
             return;
         }
 
@@ -117,7 +115,7 @@ public record PackageTokenPacket(
         GlobalPos linkedPos = ColonyLinkWandLinkableHandler.getLinkedPos(wand);
         if (linkedPos == null)
         {
-            player.sendSystemMessage(Component.literal("§c[ColonyLink] Clipboard not linked to AE2!"));
+            player.sendSystemMessage(Component.translatable("colonylink.pkg_token.not_linked"));
             return;
         }
         ServerLevel targetLevel = level.getServer().getLevel(linkedPos.dimension());
@@ -125,13 +123,13 @@ public record PackageTokenPacket(
         var wapBe = targetLevel.getBlockEntity(linkedPos.pos());
         if (!(wapBe instanceof IWirelessAccessPoint wap))
         {
-            player.sendSystemMessage(Component.literal("§c[ColonyLink] AE2 WAP not found!"));
+            player.sendSystemMessage(Component.translatable("colonylink.pkg_token.no_wap"));
             return;
         }
         IGrid grid = wap.getGrid();
         if (grid == null)
         {
-            player.sendSystemMessage(Component.literal("§c[ColonyLink] AE2 network offline!"));
+            player.sendSystemMessage(Component.translatable("colonylink.pkg_token.network_offline"));
             return;
         }
 
@@ -149,17 +147,14 @@ public record PackageTokenPacket(
         String itemName = stripBrackets(stack.getDisplayName().getString());
         if (success)
         {
-            String action = isCraft ? "Craft queued" : "Sent";
-            player.sendSystemMessage(Component.literal(
-                    "§a[ColonyLink] " + action + ": §f" + count + "x " + itemName
-                            + " §8(§7" + (stored - 1) + " package" + (stored - 1 != 1 ? "s" : "") + " remaining§8)"));
+            String action = (isCraft ? Component.translatable("colonylink.pkg_token.action_craft").getString() : Component.translatable("colonylink.pkg_token.action_sent").getString());
+            player.sendSystemMessage(Component.translatable("colonylink.pkg_token.success", action, count, itemName, (stored - 1)));
         }
         else
         {
             // Rembourser le package si l'action a échoué
             ColonyLinkWandLinkableHandler.addCitizenPackages(wand, 1);
-            player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink] Action failed — package refunded."));
+            player.sendSystemMessage(Component.translatable("colonylink.pkg_token.refunded"));
         }
 
         // 8. Sync du nouveau count au client
@@ -182,9 +177,7 @@ public record PackageTokenPacket(
         long inStock = grid.getStorageService().getCachedInventory().get(aeKey);
         if (inStock <= 0)
         {
-            player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink] " + stripBrackets(stack.getDisplayName().getString())
-                            + " not available in ME."));
+            player.sendSystemMessage(Component.translatable("colonylink.wh_pkt.not_available", stripBrackets(stack.getDisplayName().getString())));
             return false;
         }
 

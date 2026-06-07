@@ -72,7 +72,7 @@ public class WarehouseCraftHandler
 
         if (wandStack == null)
         {
-            player.sendSystemMessage(Component.literal("§cClipboard not found!"));
+            player.sendSystemMessage(Component.translatable("colonylink.whc.clipboard_not_found"));
             return;
         }
 
@@ -80,14 +80,14 @@ public class WarehouseCraftHandler
         IColony colony = IColonyManager.getInstance().getClosestColony(level, redirectorPos);
         if (colony == null)
         {
-            player.sendSystemMessage(Component.literal("§c[ColonyLink] No colony found near redirector!"));
+            player.sendSystemMessage(Component.translatable("colonylink.whc.no_colony"));
             return;
         }
 
         BuildingWareHouse warehouse = findWarehouse(colony);
         if (warehouse == null)
         {
-            player.sendSystemMessage(Component.literal("§c[ColonyLink] No Warehouse found in colony!"));
+            player.sendSystemMessage(Component.translatable("colonylink.whc.no_warehouse"));
             return;
         }
 
@@ -95,9 +95,7 @@ public class WarehouseCraftHandler
         // toute extraction (sinon racks null en silence → transferts partiels).
         if (!ColonyLinkChunkUtil.warehouseFullyLoaded(level, warehouse))
         {
-            player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink] Your colony's Warehouse is in unloaded chunks. " +
-                            "Move closer or use a chunk loader, then try again."));
+            player.sendSystemMessage(Component.translatable("colonylink.handler.warehouse_unloaded"));
             return;
         }
 
@@ -105,19 +103,19 @@ public class WarehouseCraftHandler
         {
             if (!ColonyLinkWandLinkableHandler.isLinked(wandStack))
             {
-                player.sendSystemMessage(Component.literal("§cClipboard not linked!"));
+                player.sendSystemMessage(Component.translatable("colonylink.whc.clipboard_not_linked"));
                 return;
             }
             IWirelessAccessPoint wap = getWap(wandStack, level);
             if (wap == null)
             {
-                player.sendSystemMessage(Component.literal("§cCannot connect to AE2 network!"));
+                player.sendSystemMessage(Component.translatable("colonylink.handler.no_wap"));
                 return;
             }
             IGrid grid = wap.getGrid();
             if (grid == null)
             {
-                player.sendSystemMessage(Component.literal("§cAE2 network is offline!"));
+                player.sendSystemMessage(Component.translatable("colonylink.handler.network_offline"));
                 return;
             }
             IStorageService storageService = grid.getStorageService();
@@ -153,13 +151,9 @@ public class WarehouseCraftHandler
             long inserted = moveWarehouseToMe(player, level, warehouse,
                     storageService, actionSource, stack, realCount);
             if (inserted > 0)
-                player.sendSystemMessage(Component.literal(
-                        "§a[ColonyLink] Transferred " + inserted + "x "
-                                + stack.getDisplayName().getString()
-                                + " from Warehouse → ME (no AE2 pattern)"));
+                player.sendSystemMessage(Component.translatable("colonylink.whc.transferred_no_pattern", inserted, stack.getDisplayName()));
             else
-                player.sendSystemMessage(Component.literal(
-                        "§c[ColonyLink] No AE2 pattern and item not found in Warehouse!"));
+                player.sendSystemMessage(Component.translatable("colonylink.whc.no_pattern_not_found"));
             return;
         }
 
@@ -169,12 +163,9 @@ public class WarehouseCraftHandler
             long inserted = moveWarehouseToMe(player, level, warehouse,
                     storageService, actionSource, stack, realCount);
             if (inserted > 0)
-                player.sendSystemMessage(Component.literal(
-                        "§a[ColonyLink] Transferred " + inserted + "x "
-                                + stack.getDisplayName().getString()
-                                + " from Warehouse → ME (ready to Send)"));
+                player.sendSystemMessage(Component.translatable("colonylink.whc.transferred_ready", inserted, stack.getDisplayName()));
             else
-                player.sendSystemMessage(Component.literal("§c[ColonyLink] ME insertion failed!"));
+                player.sendSystemMessage(Component.translatable("colonylink.whc.me_insertion_failed"));
             return;
         }
 
@@ -230,8 +221,8 @@ public class WarehouseCraftHandler
                 if (inserted > 0)
                 {
                     injected.add(inputStack.copyWithCount((int) inserted));
-                    player.sendSystemMessage(Component.literal(
-                            "§7[WH→ME] " + inserted + "x " + inputStack.getDisplayName().getString()));
+                    player.sendSystemMessage(Component.translatable("colonylink.wh2me.transfer",
+                            inserted, inputStack.getDisplayName()));
                 }
             }
         }
@@ -254,7 +245,7 @@ public class WarehouseCraftHandler
                 if (plan == null)
                 {
                     level.getServer().execute(() -> {
-                        player.sendSystemMessage(Component.literal("§c[ColonyLink] Craft plan failed!"));
+                        player.sendSystemMessage(Component.translatable("colonylink.whc.craft_plan_failed"));
                         refundInjected(storageService, actionSource, injectedFinal);
                     });
                     return;
@@ -262,13 +253,10 @@ public class WarehouseCraftHandler
                 level.getServer().execute(() -> {
                     var result = craftingService.submitJob(plan, null, null, false, actionSource);
                     if (result.successful())
-                        player.sendSystemMessage(Component.literal(
-                                "§a[ColonyLink] Craft started: " + realCount + "x "
-                                        + stack.getDisplayName().getString()
-                                        + " (components injected from Warehouse)"));
+                        player.sendSystemMessage(Component.translatable("colonylink.whc.craft_started", realCount, stack.getDisplayName()));
                     else
                     {
-                        player.sendSystemMessage(Component.literal("§c[ColonyLink] Craft submission failed!"));
+                        player.sendSystemMessage(Component.translatable("colonylink.whc.craft_submission_failed"));
                         refundInjected(storageService, actionSource, injectedFinal);
                     }
                 });
@@ -277,7 +265,7 @@ public class WarehouseCraftHandler
             {
                 ColonyLink.LOGGER.error("[ColonyLink] Warehouse craft error", e);
                 level.getServer().execute(() -> {
-                    player.sendSystemMessage(Component.literal("§c[ColonyLink] Craft error: " + e.getMessage()));
+                    player.sendSystemMessage(Component.translatable("colonylink.whc.craft_error", e.getMessage()));
                     refundInjected(storageService, actionSource, injectedFinal);
                 });
             }
@@ -308,10 +296,7 @@ public class WarehouseCraftHandler
         long directFound = countDomumInWarehouse(level, warehouse, domumStack);
         if (directFound > 0)
         {
-            player.sendSystemMessage(Component.literal(
-                    "§e[ColonyLink] " + directFound + "x "
-                            + domumStack.getDisplayName().getString()
-                            + " already in the Warehouse — use Send to deliver it to the builder."));
+            player.sendSystemMessage(Component.translatable("colonylink.whc.domum_already", directFound, domumStack.getDisplayName()));
             return;
         }
 
@@ -332,8 +317,7 @@ public class WarehouseCraftHandler
             {
                 if (!component.isOptional())
                 {
-                    player.sendSystemMessage(Component.literal(
-                            "§c[ColonyLink] Missing material for component: " + component.getId()));
+                    player.sendSystemMessage(Component.translatable("colonylink.whc.missing_material", component.getId()));
                     refundInjected(storageService, actionSource, injected);
                     return;
                 }
@@ -354,8 +338,8 @@ public class WarehouseCraftHandler
             if (inserted > 0)
             {
                 injected.add(materialStack.copyWithCount((int) inserted));
-                player.sendSystemMessage(Component.literal(
-                        "§7[WH→ME] " + inserted + "x " + materialStack.getDisplayName().getString()));
+                player.sendSystemMessage(Component.translatable("colonylink.wh2me.transfer",
+                        inserted, materialStack.getDisplayName()));
             }
         }
         // v1.4.3 — handleDomumCraft() supprimé : les items Domum passent désormais

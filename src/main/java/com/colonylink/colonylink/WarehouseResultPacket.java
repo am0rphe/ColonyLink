@@ -1,6 +1,8 @@
 package com.colonylink.colonylink;
 
 import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.ComponentSerialization;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
@@ -37,7 +39,7 @@ public record WarehouseResultPacket(
             ItemStack stack,
             long inWarehouse,
             long viaCraft,
-            List<String> tooltipLines
+            List<Component> tooltipLines
     ) {}
 
     public static final ResourceLocation ID = ResourceLocation.fromNamespaceAndPath(
@@ -54,8 +56,8 @@ public record WarehouseResultPacket(
                     buf.writeLong(e.inWarehouse());
                     buf.writeLong(e.viaCraft());
                     buf.writeInt(e.tooltipLines().size());
-                    for (String line : e.tooltipLines())
-                        buf.writeUtf(line);
+                    for (Component line : e.tooltipLines())
+                        ComponentSerialization.STREAM_CODEC.encode(buf, line);
                 }
                 buf.writeLong(packet.scanTimestamp());
                 buf.writeBoolean(packet.scanSuccess());
@@ -69,9 +71,9 @@ public record WarehouseResultPacket(
                     long inWarehouse = buf.readLong();
                     long viaCraft = buf.readLong();
                     int tooltipCount = buf.readInt();
-                    List<String> tooltipLines = new ArrayList<>();
+                    List<Component> tooltipLines = new ArrayList<>();
                     for (int t = 0; t < tooltipCount; t++)
-                        tooltipLines.add(buf.readUtf());
+                        tooltipLines.add(ComponentSerialization.STREAM_CODEC.decode(buf));
                     entries.add(new WarehouseEntry(stack, inWarehouse, viaCraft, tooltipLines));
                 }
                 long timestamp = buf.readLong();

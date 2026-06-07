@@ -58,11 +58,8 @@ public record DomumQueuePacket(
 
         if (!DomumCraftHandler.isDomumItem(packet.domumStack()))
         {
-            player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink] Invalid Domum item: "
-                            + net.minecraft.core.registries.BuiltInRegistries.ITEM
-                            .getKey(packet.domumStack().getItem())
-                            + " (not a textured block or missing MaterialTextureData)"));
+            player.sendSystemMessage(Component.translatable("colonylink.domum_queue.invalid",
+                    net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(packet.domumStack().getItem()).toString()));
             return;
         }
 
@@ -73,23 +70,19 @@ public record DomumQueuePacket(
 
         if (terminal == null)
         {
-            player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink] No Warehouse Link Terminal found in this dimension. " +
-                            "Place one and connect it to your AE2 network first." +
-                            "\n§7(Recipe: §f" + packet.domumStack().getDisplayName().getString() + "§7)"));
+            player.sendSystemMessage(Component.translatable("colonylink.domum_queue.no_terminal",
+                    packet.domumStack().getDisplayName()));
             return;
         }
 
         if (terminal.isDomumQueued(packet.domumStack()))
         {
-            player.sendSystemMessage(Component.literal(
-                    "§e[ColonyLink] Recipe already queued in terminal."));
+            player.sendSystemMessage(Component.translatable("colonylink.domum_queue.already_queued"));
             return;
         }
 
         terminal.addToDomumQueue(packet.domumStack());
 
-        player.sendSystemMessage(Component.literal(
-                "§a[ColonyLink] Recipe sent to terminal — open the Cutter tab to encode."));
+        player.sendSystemMessage(Component.translatable("colonylink.domum_queue.sent"));
     }
 }

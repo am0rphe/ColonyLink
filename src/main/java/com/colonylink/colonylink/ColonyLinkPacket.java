@@ -2,6 +2,8 @@ package com.colonylink.colonylink;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.ComponentSerialization;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
@@ -42,7 +44,7 @@ public record ColonyLinkPacket(
             int realCount,
             boolean isDomum,
             BlockPos redirectorPos,
-            List<String> tooltipLines
+            List<Component> tooltipLines
     ) {}
 
     public record BuilderRequest(
@@ -50,7 +52,7 @@ public record ColonyLinkPacket(
             int count,
             ResourceStatus status,
             BlockPos redirectorPos,
-            List<String> tooltipLines
+            List<Component> tooltipLines
     )
     {
         public static BuilderRequest NONE = new BuilderRequest(
@@ -73,7 +75,7 @@ public record ColonyLinkPacket(
                     buf.writeBoolean(entry.isDomum());
                     buf.writeBlockPos(entry.redirectorPos());
                     buf.writeInt(entry.tooltipLines().size());
-                    for (String line : entry.tooltipLines()) buf.writeUtf(line);
+                    for (Component line : entry.tooltipLines()) ComponentSerialization.STREAM_CODEC.encode(buf, line);
                 }
                 buf.writeBlockPos(packet.builderPos());
                 buf.writeUtf(packet.builderName());
@@ -93,7 +95,7 @@ public record ColonyLinkPacket(
                     buf.writeInt(req.status().ordinal());
                     buf.writeBlockPos(req.redirectorPos());
                     buf.writeInt(req.tooltipLines().size());
-                    for (String line : req.tooltipLines()) buf.writeUtf(line);
+                    for (Component line : req.tooltipLines()) ComponentSerialization.STREAM_CODEC.encode(buf, line);
                 }
                 buf.writeBoolean(packet.hasWarehouseCard());
                 buf.writeBoolean(packet.warehousePriority());
@@ -121,8 +123,8 @@ public record ColonyLinkPacket(
                     boolean isDomum = buf.readBoolean();
                     BlockPos redirectorPos = buf.readBlockPos();
                     int tooltipCount = buf.readInt();
-                    List<String> tooltipLines = new ArrayList<>();
-                    for (int t = 0; t < tooltipCount; t++) tooltipLines.add(buf.readUtf());
+                    List<Component> tooltipLines = new ArrayList<>();
+                    for (int t = 0; t < tooltipCount; t++) tooltipLines.add(ComponentSerialization.STREAM_CODEC.decode(buf));
                     list.add(new ResourceEntry(stack, status, realCount, isDomum, redirectorPos, tooltipLines));
                 }
                 BlockPos pos        = buf.readBlockPos();
@@ -141,8 +143,8 @@ public record ColonyLinkPacket(
                     ResourceStatus reqSt = ResourceStatus.values()[buf.readInt()];
                     BlockPos reqRPos     = buf.readBlockPos();
                     int reqTtCount       = buf.readInt();
-                    List<String> reqTt   = new ArrayList<>();
-                    for (int t = 0; t < reqTtCount; t++) reqTt.add(buf.readUtf());
+                    List<Component> reqTt = new ArrayList<>();
+                    for (int t = 0; t < reqTtCount; t++) reqTt.add(ComponentSerialization.STREAM_CODEC.decode(buf));
                     req = new BuilderRequest(reqStack, reqCount, reqSt, reqRPos, reqTt);
                 }
                 else req = BuilderRequest.NONE;

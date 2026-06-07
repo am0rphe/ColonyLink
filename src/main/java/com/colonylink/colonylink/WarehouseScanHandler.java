@@ -74,8 +74,7 @@ public class WarehouseScanHandler
         if (lastTick != null && currentTick - lastTick < SCAN_COOLDOWN_TICKS)
         {
             long remaining = SCAN_COOLDOWN_TICKS - (currentTick - lastTick);
-            player.sendSystemMessage(Component.literal(
-                    "§6[ColonyLink] Warehouse scan on cooldown — " + (remaining / 20) + "s remaining."));
+            player.sendSystemMessage(Component.translatable("colonylink.whs.cooldown", (remaining / 20)));
             return;
         }
 
@@ -85,7 +84,7 @@ public class WarehouseScanHandler
         ItemStack wandStack = findWandInInventory(player);
         if (wandStack == null || !isWandLinked(wandStack))
         {
-            player.sendSystemMessage(Component.literal("§c[ColonyLink] Clipboard not linked to a network!"));
+            player.sendSystemMessage(Component.translatable("colonylink.whs.clipboard_not_linked"));
             sendFailure(player, currentTick);
             return;
         }
@@ -98,10 +97,7 @@ public class WarehouseScanHandler
                 ColonyLinkWandLinkableHandler.getBuilderDimension(wandStack, builderPos);
         if (builderDim != null && !level.dimension().equals(builderDim))
         {
-            player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink] This builder is in another dimension (§f"
-                            + builderDim.location().getPath()
-                            + "§c). The Clipboard cannot reach colonies across dimensions."));
+            player.sendSystemMessage(Component.translatable("colonylink.handler.cross_dimension", builderDim.location().getPath()));
             sendFailure(player, currentTick);
             return;
         }
@@ -110,7 +106,7 @@ public class WarehouseScanHandler
         BlockPos redirectorPos = getActiveRedirectorPos(wandStack);
         if (redirectorPos == null)
         {
-            player.sendSystemMessage(Component.literal("§cNo Redirector linked to this Clipboard!"));
+            player.sendSystemMessage(Component.translatable("colonylink.handler.no_redirector"));
             sendFailure(player, currentTick);
             return;
         }
@@ -120,8 +116,7 @@ public class WarehouseScanHandler
         if (be instanceof ColonyLinkRedirectorBlockEntity redirector) hasCard = redirector.hasWarehouseCard();
         if (!hasCard)
         {
-            player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink] No Warehouse Link Card in the Redirector!"));
+            player.sendSystemMessage(Component.translatable("colonylink.whs.no_card"));
             sendFailure(player, currentTick);
             return;
         }
@@ -130,7 +125,7 @@ public class WarehouseScanHandler
         IColony colony = IColonyManager.getInstance().getClosestColony(level, builderPos);
         if (colony == null)
         {
-            player.sendSystemMessage(Component.literal("§c[ColonyLink] No colony found!"));
+            player.sendSystemMessage(Component.translatable("colonylink.whs.no_colony"));
             sendFailure(player, currentTick);
             return;
         }
@@ -138,7 +133,7 @@ public class WarehouseScanHandler
         AbstractBuildingStructureBuilder builderBuilding = findBuilderBuilding(colony, builderPos);
         if (builderBuilding == null)
         {
-            player.sendSystemMessage(Component.literal("§c[ColonyLink] Builder's Hut not found!"));
+            player.sendSystemMessage(Component.translatable("colonylink.handler.hut_not_found"));
             sendFailure(player, currentTick);
             return;
         }
@@ -149,7 +144,7 @@ public class WarehouseScanHandler
             IWirelessAccessPoint wap = getWap(wandStack, level);
             if (wap == null)
             {
-                player.sendSystemMessage(Component.literal("§cCannot connect to AE2 network!"));
+                player.sendSystemMessage(Component.translatable("colonylink.handler.no_wap"));
                 sendFailure(player, currentTick);
                 return;
             }
@@ -170,9 +165,7 @@ public class WarehouseScanHandler
         // Un scan sur des racks en chunks déchargés renverrait un stock incomplet en silence.
         if (!ColonyLinkChunkUtil.colonyWarehousesFullyLoaded(level, colony))
         {
-            player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink] Your colony's Warehouse is in unloaded chunks. " +
-                            "Move closer or use a chunk loader, then run the scan again."));
+            player.sendSystemMessage(Component.translatable("colonylink.whs.warehouse_unloaded"));
             sendFailure(player, currentTick);
             return;
         }
@@ -183,8 +176,7 @@ public class WarehouseScanHandler
 
         if (warehouseStock.isEmpty() && warehouseDomumStock.isEmpty())
         {
-            player.sendSystemMessage(Component.literal(
-                    "§e[ColonyLink] Warehouse found but no items detected in racks."));
+            player.sendSystemMessage(Component.translatable("colonylink.whs.no_items"));
         }
 
         // Stock de réservation : copie mutable sur laquelle on déduit au fur et à mesure
@@ -204,7 +196,7 @@ public class WarehouseScanHandler
                 int missing = needed - available;
                 if (missing <= 0) continue;
 
-                List<String> tooltipLines = new ArrayList<>();
+                List<Component> tooltipLines = new ArrayList<>();
 
                 if (DomumCraftHandler.isDomumItem(stack))
                 {
@@ -229,9 +221,7 @@ public class WarehouseScanHandler
         PacketDistributor.sendToPlayer(player,
                 new WarehouseResultPacket(resultEntries, currentTick, true));
 
-        player.sendSystemMessage(Component.literal(
-                "§a[ColonyLink] Warehouse scan complete — "
-                        + warehouseStock.size() + " item type(s) found in racks."));
+        player.sendSystemMessage(Component.translatable("colonylink.whs.scan_complete", warehouseStock.size()));
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -324,7 +314,7 @@ public class WarehouseScanHandler
             int needed,
             Map<Item, Long> reservedStock,
             ICraftingService craftingService,
-            List<String> tooltipLines,
+            List<Component> tooltipLines,
             int depth,
             Set<Item> visitedItems)
     {
@@ -337,7 +327,7 @@ public class WarehouseScanHandler
         if (directUsed > 0)
         {
             reservedStock.put(item, directStock - directUsed);
-            tooltipLines.add("§a  §fWarehouse (direct): §a+" + directUsed + "x " + itemName);
+            tooltipLines.add(Component.translatable("colonylink.wh_avail.direct", directUsed, itemName));
         }
 
         long remainingNeeded = needed - directUsed;
@@ -382,13 +372,13 @@ public class WarehouseScanHandler
         // On utilise une copie du stock de réservation pour pouvoir rollback
         // si un batch n'est pas entièrement satisfait
         Map<Item, Long> stockSnapshot = new HashMap<>(reservedStock);
-        List<String> craftTooltip = new ArrayList<>();
+        List<Component> craftTooltip = new ArrayList<>();
 
         for (long batch = 0; batch < batchesNeeded; batch++)
         {
             boolean batchOk = true;
             Map<Item, Long> batchReservations = new HashMap<>();
-            List<String> batchTooltip = new ArrayList<>();
+            List<Component> batchTooltip = new ArrayList<>();
 
             for (var input : pattern.getInputs())
             {
@@ -418,8 +408,7 @@ public class WarehouseScanHandler
                 {
                     // Disponible directement en warehouse
                     batchReservations.merge(inputItem, inputNeeded, Long::sum);
-                    batchTooltip.add("§7    §f" + inputStack.getDisplayName().getString()
-                            + ": §a+" + inputNeeded + "x (warehouse)");
+                    batchTooltip.add(Component.translatable("colonylink.wh_avail.batch", inputStack.getDisplayName(), inputNeeded));
                 }
                 else
                 {
@@ -429,7 +418,7 @@ public class WarehouseScanHandler
                         batchReservations.merge(inputItem, effectiveStock, Long::sum);
 
                     // Récursion : est-ce que les composants de ce composant sont en warehouse ?
-                    List<String> subTooltip = new ArrayList<>();
+                    List<Component> subTooltip = new ArrayList<>();
                     WarehouseEntry subEntry = computeStandardWarehouseEntry(
                             inputStack.copyWithCount((int) Math.min(stillNeeded, Integer.MAX_VALUE)),
                             (int) Math.min(stillNeeded, Integer.MAX_VALUE),
@@ -467,7 +456,7 @@ public class WarehouseScanHandler
 
         if (craftableFromWarehouse > 0)
         {
-            tooltipLines.add("§e  §fVia craft (warehouse components): §e+" + craftableFromWarehouse + "x " + itemName);
+            tooltipLines.add(Component.translatable("colonylink.wh_avail.via_craft", craftableFromWarehouse, itemName));
             tooltipLines.addAll(craftTooltip);
         }
 
@@ -488,7 +477,7 @@ public class WarehouseScanHandler
             Map<Item, Long> reservedStock,
             List<ItemStack> domumStock,
             ICraftingService craftingService,
-            List<String> tooltipLines)
+            List<Component> tooltipLines)
     {
         Item item = stack.getItem();
         if (!(item instanceof BlockItem blockItem)) return new WarehouseEntry(0L, 0L);
@@ -510,12 +499,12 @@ public class WarehouseScanHandler
 
         if (directDomum >= needed)
         {
-            tooltipLines.add("§a[DO] §fDirect in Warehouse: §a" + directDomum + "/" + needed + " ✔");
+            tooltipLines.add(Component.translatable("colonylink.wh_avail.do_direct", directDomum, needed));
             return new WarehouseEntry(Math.min(directDomum, needed), 0L);
         }
 
         // Item DO pas (assez) en warehouse → résout les composants
-        tooltipLines.add("§b[DO] §7Components needed for §f" + needed + "x §7" + stack.getDisplayName().getString() + ":");
+        tooltipLines.add(Component.translatable("colonylink.wh_avail.do_components", needed, stack.getDisplayName()));
 
         boolean allComponentsSatisfied = true;
         long satisfiedSets = needed; // combien de sets complets on peut faire
@@ -527,7 +516,7 @@ public class WarehouseScanHandler
             {
                 if (!component.isOptional())
                 {
-                    tooltipLines.add("§c  - " + component.getId().getPath() + ": §4NOT DEFINED");
+                    tooltipLines.add(Component.translatable("colonylink.wh_avail.do_not_defined", component.getId().getPath()));
                     allComponentsSatisfied = false;
                 }
                 continue;
@@ -536,7 +525,7 @@ public class WarehouseScanHandler
             ItemStack materialStack = new ItemStack(materialBlock, needed);
             String matName = materialStack.getDisplayName().getString();
 
-            List<String> componentTooltip = new ArrayList<>();
+            List<Component> componentTooltip = new ArrayList<>();
             WarehouseEntry componentEntry = computeStandardWarehouseEntry(
                     materialStack, needed, reservedStock, craftingService,
                     componentTooltip, 0, new HashSet<>());
@@ -548,11 +537,11 @@ public class WarehouseScanHandler
             {
                 allComponentsSatisfied = false;
                 satisfiedSets = Math.min(satisfiedSets, setsFromComponent);
-                tooltipLines.add("§c  - " + matName + ": §c" + totalForComponent + "/" + needed + " available");
+                tooltipLines.add(Component.translatable("colonylink.wh_avail.do_avail", matName, totalForComponent, needed));
             }
             else
             {
-                tooltipLines.add("§a  - " + matName + ": §a" + totalForComponent + "/" + needed + " ✔");
+                tooltipLines.add(Component.translatable("colonylink.wh_avail.do_ok", matName, totalForComponent, needed));
             }
 
             tooltipLines.addAll(componentTooltip);

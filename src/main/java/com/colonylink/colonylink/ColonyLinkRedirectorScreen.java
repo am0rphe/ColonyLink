@@ -72,9 +72,9 @@ public class ColonyLinkRedirectorScreen extends AbstractContainerScreen<ColonyLi
             String bName = (be.getLinkedBuilderPos() != null)
                     ? be.getLinkedBuilderName() : "";
             if (!bName.isEmpty() && !bName.equals("N/A"))
-                graphics.drawString(this.font, "§7Builder: §f" + bName, x + 8, y + 18, 0xFFFFFF, false);
+                graphics.drawString(this.font, Component.translatable("colonylink.screen.info.builder", bName).getString(), x + 8, y + 18, 0xFFFFFF, false);
 
-            String wandText = "Wand: " + (wandLinked ? "Linked" : "Unlinked");
+            String wandText = (wandLinked ? Component.translatable("colonylink.redir.clipboard_linked").getString() : Component.translatable("colonylink.redir.clipboard_unlinked").getString());
             int wandColor = wandLinked ? 0x00FF00 : 0xFF4444;
             graphics.drawString(this.font, wandText, x + 8, y + 34, wandColor, false);
         }
@@ -229,8 +229,8 @@ public class ColonyLinkRedirectorScreen extends AbstractContainerScreen<ColonyLi
 
             int outCount = DomumPatternItem.getOutputCount(realStack);
             java.util.List<net.minecraft.network.chat.Component> tt = new java.util.ArrayList<>();
-            tt.add(net.minecraft.network.chat.Component.literal("§6Domum Pattern"));
-            tt.add(net.minecraft.network.chat.Component.literal("§eCrafts: §f")
+            tt.add(net.minecraft.network.chat.Component.translatable("colonylink.redir.domum_pattern"));
+            tt.add(net.minecraft.network.chat.Component.translatable("colonylink.redir.crafts")
                     .append(target.getDisplayName())
                     .append(net.minecraft.network.chat.Component.literal(
                             outCount > 1 ? " §7(×" + outCount + ")" : "")));
@@ -246,7 +246,7 @@ public class ColonyLinkRedirectorScreen extends AbstractContainerScreen<ColonyLi
             }
             else
             {
-                tt.add(net.minecraft.network.chat.Component.literal("§8[no variant data]"));
+                tt.add(net.minecraft.network.chat.Component.translatable("colonylink.redir.no_variant"));
             }
 
             if (hasShiftDown())
@@ -256,7 +256,7 @@ public class ColonyLinkRedirectorScreen extends AbstractContainerScreen<ColonyLi
                         DomumPatternItem.getMaterials(realStack, mc.level.registryAccess());
                 if (!mats.isEmpty())
                 {
-                    tt.add(net.minecraft.network.chat.Component.literal("§7Materials:"));
+                    tt.add(net.minecraft.network.chat.Component.translatable("colonylink.redir.materials"));
                     for (var mat : mats)
                         if (mat.resolved())
                             tt.add(net.minecraft.network.chat.Component.literal("§7  • §f")
@@ -267,7 +267,7 @@ public class ColonyLinkRedirectorScreen extends AbstractContainerScreen<ColonyLi
             }
             else
             {
-                tt.add(net.minecraft.network.chat.Component.literal("§8Hold §eShift §8for materials.")
+                tt.add(net.minecraft.network.chat.Component.translatable("colonylink.redir.hold_shift_materials")
                         .withStyle(net.minecraft.ChatFormatting.DARK_GRAY));
             }
 
@@ -284,14 +284,14 @@ public class ColonyLinkRedirectorScreen extends AbstractContainerScreen<ColonyLi
                 && mouseY >= cardSlotY && mouseY <= cardSlotY + 16)
         {
             List<Component> tooltip = new ArrayList<>();
-            tooltip.add(Component.literal("§6Warehouse Link Card slot"));
-            tooltip.add(Component.literal("§7Insert a §fWarehouse Link Card §7to enable"));
-            tooltip.add(Component.literal("§7the §fCheck Warehouse §7button in the Clipboard GUI."));
+            tooltip.add(Component.translatable("colonylink.redir.card_slot"));
+            tooltip.add(Component.translatable("colonylink.redir.card_insert1"));
+            tooltip.add(Component.translatable("colonylink.redir.card_insert2"));
             boolean hasCard = menu.getBlockEntity() != null && menu.getBlockEntity().hasWarehouseCard();
             if (hasCard)
-                tooltip.add(Component.literal("§a✔ Card inserted — Warehouse scanning enabled"));
+                tooltip.add(Component.translatable("colonylink.redir.card_inserted"));
             else
-                tooltip.add(Component.literal("§8✘ Empty — insert a Warehouse Link Card"));
+                tooltip.add(Component.translatable("colonylink.redir.card_empty"));
             graphics.renderComponentTooltip(this.font, tooltip, mouseX, mouseY);
             cardTooltipShown = true;
         }

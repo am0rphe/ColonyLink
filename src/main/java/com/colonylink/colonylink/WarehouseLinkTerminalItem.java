@@ -61,24 +61,24 @@ public class WarehouseLinkTerminalItem extends Item
     public void appendHoverText(ItemStack stack, TooltipContext ctx,
                                 List<Component> tooltip, TooltipFlag flag)
     {
-        tooltip.add(Component.literal("§7Warehouse §f↔ §7AE2 ME bridge + Crafting Table + Domum encoder."));
+        tooltip.add(Component.translatable("colonylink.term_item.line1"));
 
         if (net.minecraft.client.gui.screens.Screen.hasShiftDown())
         {
-            tooltip.add(Component.literal("§eSetup:").withStyle(ChatFormatting.YELLOW));
-            tooltip.add(Component.literal("§8 1. Place on a §fcable bus §8(like ME Crafting Terminal)"));
-            tooltip.add(Component.literal("§8 2. Insert a §fWarehouse Link Card §8in the dedicated slot"));
-            tooltip.add(Component.literal("§8 3. Right-click to open the terminal"));
-            tooltip.add(Component.literal("§7Features:").withStyle(ChatFormatting.GRAY));
-            tooltip.add(Component.literal("§8  • §fCrafting Table §8tab — vanilla 3×3 crafting"));
-            tooltip.add(Component.literal("§8  • §fDomum Encoder §8tab — encode Domum Patterns for AE2"));
-            tooltip.add(Component.literal("§8  • §fWarehouse §8↔ §fME §8content visible side by side"));
-            tooltip.add(Component.literal("§7Consumes §f1 AE2 channel §7· §f8 AE/t §7idle.")
+            tooltip.add(Component.translatable("colonylink.tip.setup").withStyle(ChatFormatting.YELLOW));
+            tooltip.add(Component.translatable("colonylink.term_item.setup1"));
+            tooltip.add(Component.translatable("colonylink.term_item.setup2"));
+            tooltip.add(Component.translatable("colonylink.term_item.setup3"));
+            tooltip.add(Component.translatable("colonylink.term_item.features").withStyle(ChatFormatting.GRAY));
+            tooltip.add(Component.translatable("colonylink.term_item.feat1"));
+            tooltip.add(Component.translatable("colonylink.term_item.feat2"));
+            tooltip.add(Component.translatable("colonylink.term_item.feat3"));
+            tooltip.add(Component.translatable("colonylink.term_item.consumes")
                     .withStyle(ChatFormatting.GRAY));
         }
         else
         {
-            tooltip.add(Component.literal("§8Hold §eShift §8for setup guide.")
+            tooltip.add(Component.translatable("colonylink.tip.hold_shift_setup")
                     .withStyle(ChatFormatting.DARK_GRAY));
         }
     }

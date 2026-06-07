@@ -119,12 +119,12 @@ public class RedirectorJadeProvider implements
 
         // ── État AE2 ─────────────────────────────────────────────────────────
         boolean ae2Active = data.getBoolean(KEY_AE2_ACTIVE);
-        String ae2Text = ae2Active ? "§aAE2: Connected" : "§cAE2: Disconnected";
+        String ae2Text = (ae2Active ? Component.translatable("colonylink.jade.ae2_connected").getString() : Component.translatable("colonylink.jade.ae2_disconnected").getString());
         tooltip.add(Component.literal(ae2Text));
 
         if (!ae2Active)
         {
-            tooltip.add(Component.literal("§7Place adjacent to an §fAE2 cable§7."));
+            tooltip.add(Component.translatable("colonylink.jade.place_adjacent"));
             return;
         }
 
@@ -138,27 +138,27 @@ public class RedirectorJadeProvider implements
         {
             case NOT_LINKED ->
             {
-                tooltip.add(Component.literal("§eStatus: §6Not linked"));
+                tooltip.add(Component.translatable("colonylink.jade.status_not_linked"));
                 tooltip.add(Component.literal("§8──────────────────"));
-                tooltip.add(Component.literal("§eSetup required:"));
-                tooltip.add(Component.literal("§7 1. Link Clipboard to a §fWireless Access Point"));
-                tooltip.add(Component.literal("§7 2. Sneak+click a §fBuilder's Hut §7with the Clipboard"));
-                tooltip.add(Component.literal("§7 3. Sneak+click §fthis Redirector §7with the Clipboard"));
+                tooltip.add(Component.translatable("colonylink.jade.setup_required"));
+                tooltip.add(Component.translatable("colonylink.jade.setup1"));
+                tooltip.add(Component.translatable("colonylink.jade.setup2"));
+                tooltip.add(Component.translatable("colonylink.jade.setup3"));
             }
             case STANDBY ->
             {
-                tooltip.add(Component.literal("§eStatus: §6Standby"));
-                tooltip.add(Component.literal("§7Builder's Hut inventory is §cfull§7."));
-                tooltip.add(Component.literal("§7Items will resume once space is available."));
+                tooltip.add(Component.translatable("colonylink.jade.status_standby"));
+                tooltip.add(Component.translatable("colonylink.jade.standby_full"));
+                tooltip.add(Component.translatable("colonylink.jade.standby_resume"));
                 appendLinkedInfo(tooltip, data);
             }
             case LINKED ->
             {
-                tooltip.add(Component.literal("§eStatus: §aLinked & Operational"));
+                tooltip.add(Component.translatable("colonylink.jade.status_linked"));
                 appendLinkedInfo(tooltip, data);
             }
             case NO_CONTROLLER ->
-                    tooltip.add(Component.literal("§eStatus: §cNot connected to AE2"));
+                    tooltip.add(Component.translatable("colonylink.jade.status_no_ae2"));
         }
 
         // ── Warehouse Link Card ───────────────────────────────────────────────
@@ -166,16 +166,15 @@ public class RedirectorJadeProvider implements
         boolean hasCard = data.getBoolean(KEY_HAS_CARD);
         if (hasCard)
         {
-            tooltip.add(Component.literal("§aWarehouse Card: §fInserted"));
+            tooltip.add(Component.translatable("colonylink.jade.card_inserted"));
             boolean whPriority = data.getBoolean(KEY_WH_PRIORITY);
-            tooltip.add(Component.literal("§7Priority: "
-                    + (whPriority ? "§aWarehouse first" : "§9AE2 first")));
+            tooltip.add(Component.translatable(whPriority ? "colonylink.jade.priority_wh" : "colonylink.jade.priority_ae2"));
         }
         else
         {
-            tooltip.add(Component.literal("§8Warehouse Card: §7Empty"));
-            tooltip.add(Component.literal("§8Insert a §fWarehouse Link Card §8to"));
-            tooltip.add(Component.literal("§8enable warehouse scanning."));
+            tooltip.add(Component.translatable("colonylink.jade.card_empty"));
+            tooltip.add(Component.translatable("colonylink.jade.card_insert1"));
+            tooltip.add(Component.translatable("colonylink.jade.card_insert2"));
         }
 
         // ── Buffer ────────────────────────────────────────────────────────────
@@ -186,8 +185,7 @@ public class RedirectorJadeProvider implements
         tooltip.add(Component.literal("§8──────────────────"));
         if (bufUsed > 0)
         {
-            tooltip.add(Component.literal("§7Buffer: §f" + bufUsed + "§7/§f" + bufMax
-                    + " §7slots" + (domumCount > 0 ? " §8(§f" + domumCount + " §8Domum)" : "")));
+            tooltip.add(Component.translatable("colonylink.jade.buffer", bufUsed, bufMax, (domumCount > 0 ? Component.translatable("colonylink.jade.buffer_domum", domumCount).getString() : "")));
 
             // Détail des DomumPatterns (nom + variant) — shift only
             if (domumCount > 0 && !domumInfo.isEmpty()
@@ -203,12 +201,12 @@ public class RedirectorJadeProvider implements
             }
             else if (domumCount > 0)
             {
-                tooltip.add(Component.literal("§8Hold §eShift §8to see Domum patterns."));
+                tooltip.add(Component.translatable("colonylink.jade.hold_shift_domum"));
             }
         }
         else
         {
-            tooltip.add(Component.literal("§8Buffer: §7empty — add §fDomum Patterns §7to enable crafting."));
+            tooltip.add(Component.translatable("colonylink.jade.buffer_empty"));
         }
     }
 
@@ -219,7 +217,7 @@ public class RedirectorJadeProvider implements
             int bx = data.getInt(KEY_BUILDER_X);
             int by = data.getInt(KEY_BUILDER_Y);
             int bz = data.getInt(KEY_BUILDER_Z);
-            tooltip.add(Component.literal("§7Builder: §f" + bx + ", " + by + ", " + bz));
+            tooltip.add(Component.translatable("colonylink.jade.builder_pos", bx, by, bz));
         }
     }
 

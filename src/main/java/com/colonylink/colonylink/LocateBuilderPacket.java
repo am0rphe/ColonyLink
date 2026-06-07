@@ -67,8 +67,7 @@ public record LocateBuilderPacket(BlockPos builderPos) implements CustomPacketPa
             {
                 long remaining = (COOLDOWN_MS - (now - last)) / 1000 + 1;
                 serverPlayer.sendSystemMessage(
-                        Component.literal("§e[ColonyLink] Locate on cooldown — wait §f"
-                                + remaining + "s§e."));
+                        Component.translatable("colonylink.locate.cooldown", remaining));
                 return;
             }
             COOLDOWNS.put(serverPlayer.getUUID(), now);
@@ -81,7 +80,7 @@ public record LocateBuilderPacket(BlockPos builderPos) implements CustomPacketPa
             if (colony == null)
             {
                 serverPlayer.sendSystemMessage(
-                        Component.literal("§c[ColonyLink] No colony found!"));
+                        Component.translatable("colonylink.whs.no_colony"));
                 return;
             }
 
@@ -99,7 +98,7 @@ public record LocateBuilderPacket(BlockPos builderPos) implements CustomPacketPa
             if (!(building instanceof AbstractBuildingStructureBuilder bb))
             {
                 serverPlayer.sendSystemMessage(
-                        Component.literal("§c[ColonyLink] Builder's Hut not found!"));
+                        Component.translatable("colonylink.handler.hut_not_found"));
                 return;
             }
 
@@ -107,7 +106,7 @@ public record LocateBuilderPacket(BlockPos builderPos) implements CustomPacketPa
             if (bb.getAllAssignedCitizen().isEmpty())
             {
                 serverPlayer.sendSystemMessage(
-                        Component.literal("§e[ColonyLink] No builder assigned to this hut."));
+                        Component.translatable("colonylink.locate.no_builder"));
                 return;
             }
 
@@ -131,8 +130,7 @@ public record LocateBuilderPacket(BlockPos builderPos) implements CustomPacketPa
             if (targetEntity == null)
             {
                 serverPlayer.sendSystemMessage(
-                        Component.literal("§e[ColonyLink] Builder §f" + citizenData.getName()
-                                + "§e is not in a loaded chunk."));
+                        Component.translatable("colonylink.locate.not_loaded", citizenData.getName()));
                 return;
             }
 
@@ -141,8 +139,7 @@ public record LocateBuilderPacket(BlockPos builderPos) implements CustomPacketPa
             if (cost > 0 && !ColonyLinkServerTicker.tryConsumeRF(serverPlayer, cost))
             {
                 serverPlayer.sendSystemMessage(
-                        Component.literal("§c[ColonyLink] Not enough RF to locate! (need "
-                                + cost + " RF)"));
+                        Component.translatable("colonylink.locate.not_enough_rf", cost));
                 return;
             }
 
@@ -161,15 +158,12 @@ public record LocateBuilderPacket(BlockPos builderPos) implements CustomPacketPa
                 ));
 
                 serverPlayer.sendSystemMessage(
-                        Component.literal("§a[ColonyLink] §f" + citizenData.getName()
-                                + "§a is glowing for "
-                                + ColonyLinkConfig.LOCATE_GLOW_DURATION_SECONDS.get()
-                                + "s!"));
+                        Component.translatable("colonylink.locate.glowing", citizenData.getName(), ColonyLinkConfig.LOCATE_GLOW_DURATION_SECONDS.get()));
             }
             else
             {
                 serverPlayer.sendSystemMessage(
-                        Component.literal("§c[ColonyLink] Builder entity is not a LivingEntity (unexpected)."));
+                        Component.translatable("colonylink.locate.not_living"));
             }
         });
     }

@@ -229,7 +229,7 @@ public class ColonyLinkServerTicker
         if (!colony.getPermissions().hasPermission(player, Action.ACCESS_HUTS))
         {
             activeViewers.remove(player.getUUID());
-            player.sendSystemMessage(Component.literal("§c[ColonyLink] Access revoked."));
+            player.sendSystemMessage(Component.translatable("colonylink.ticker.access_revoked"));
             return;
         }
 
@@ -349,7 +349,7 @@ public class ColonyLinkServerTicker
                         else stat = ResourceStatus.AVAILABLE;
                         if (!showCrafting && stat == ResourceStatus.CRAFTING) continue;
                         if (!showNoPattern && stat == ResourceStatus.NO_PATTERN) continue;
-                        List<String> tooltip = buildToolSubstituteTooltip(
+                        List<Component> tooltip = buildToolSubstituteTooltip(
                                 st2, sub.displayStack(), stat, miss, inSt, buildingLevel);
                         entries.add(new ColonyLinkPacket.ResourceEntry(
                                 displayStack, stat, miss, false, safeR, tooltip));
@@ -605,7 +605,7 @@ public class ColonyLinkServerTicker
         try
         {
             if (citizen.getSaturation() < 3.0)
-                return new String[]{"Hungry", "§e🍖 Needs food — saturation low"};
+                return new String[]{"Hungry", Component.translatable("colonylink.reason.needs_food").getString()};
         }
         catch (Exception ignored) {}
 
@@ -613,17 +613,17 @@ public class ColonyLinkServerTicker
         {
             String jobState = citizen.getJobStatus().name().toLowerCase();
             if (jobState.contains("eat") || jobState.contains("food") || jobState.contains("hungry"))
-                return new String[]{"Hungry", "§e🍖 Eating"};
+                return new String[]{"Hungry", Component.translatable("colonylink.reason.eating").getString()};
             if (jobState.contains("sleep") || jobState.contains("rest"))
-                return new String[]{"Sleeping", "§9💤 Sleeping"};
+                return new String[]{"Sleeping", Component.translatable("colonylink.reason.sleeping").getString()};
             if (jobState.contains("weather") || jobState.contains("rain"))
-                return new String[]{"Bad weather", "§9🌧 Waiting for better weather"};
+                return new String[]{"Bad weather", Component.translatable("colonylink.reason.bad_weather").getString()};
             if (jobState.contains("sick") || jobState.contains("disease"))
-                return new String[]{"Sick", "§c🤒 Sick — needs treatment"};
+                return new String[]{"Sick", Component.translatable("colonylink.reason.sick").getString()};
             if (jobState.contains("mourn"))
-                return new String[]{"Mourning", "§7😢 Mourning"};
+                return new String[]{"Mourning", Component.translatable("colonylink.reason.mourning").getString()};
             if (jobState.contains("raid"))
-                return new String[]{"Raided!", "§c⚔ Colony under attack"};
+                return new String[]{"Raided!", Component.translatable("colonylink.reason.raided").getString()};
         }
         catch (Exception e) { ColonyLink.LOGGER.debug("[ColonyLink] computeWorkerStatus jobState: {}", e.getMessage()); }
 
@@ -634,19 +634,19 @@ public class ColonyLinkServerTicker
             {
                 String key = vs.getTranslationKey().toLowerCase();
                 if (key.contains("eat") || key.contains("food") || key.contains("hungry"))
-                    return new String[]{"Hungry", "§e🍖 Eating"};
+                    return new String[]{"Hungry", Component.translatable("colonylink.reason.eating").getString()};
                 if (key.contains("sleep") || key.contains("rest"))
-                    return new String[]{"Sleeping", "§9💤 Sleeping"};
+                    return new String[]{"Sleeping", Component.translatable("colonylink.reason.sleeping").getString()};
                 if (key.contains("weather") || key.contains("rain"))
-                    return new String[]{"Bad weather", "§9🌧 Waiting for better weather"};
+                    return new String[]{"Bad weather", Component.translatable("colonylink.reason.bad_weather").getString()};
                 if (key.contains("sick") || key.contains("disease"))
-                    return new String[]{"Sick", "§c🤒 Sick — needs treatment"};
+                    return new String[]{"Sick", Component.translatable("colonylink.reason.sick").getString()};
                 if (key.contains("mourn"))
-                    return new String[]{"Mourning", "§7😢 Mourning"};
+                    return new String[]{"Mourning", Component.translatable("colonylink.reason.mourning").getString()};
                 if (key.contains("raid"))
-                    return new String[]{"Raided!", "§c⚔ Colony under attack"};
+                    return new String[]{"Raided!", Component.translatable("colonylink.reason.raided").getString()};
                 if (key.contains("house") || key.contains("home"))
-                    return new String[]{"No home", "§e🏠 No home assigned"};
+                    return new String[]{"No home", Component.translatable("colonylink.reason.no_home").getString()};
                 if (key.contains("work") || key.contains("build") || key.contains("place"))
                     return new String[]{"Working", ""};
                 String translated = Component.translatable(vs.getTranslationKey()).getString();
@@ -673,7 +673,7 @@ public class ColonyLinkServerTicker
                     if (rs.isEmpty()) continue;
                     int cnt = del.getCount(); if (cnt <= 0) cnt = 1;
                     return new String[]{"Working",
-                            "§e⚠ Needs: §f" + cnt + "x " + rs.getDisplayName().getString()};
+                            Component.translatable("colonylink.reason.needs", cnt, rs.getDisplayName().getString()).getString()};
                 }
             }
         }
@@ -684,21 +684,21 @@ public class ColonyLinkServerTicker
 
     // ── Tooltips ──────────────────────────────────────────────────────────────
 
-    private static List<String> buildToolSubstituteTooltip(ItemStack original, ItemStack substitute,
-                                                           ResourceStatus stat, int missing, long inStorage, int buildingLevel)
+    private static List<Component> buildToolSubstituteTooltip(ItemStack original, ItemStack substitute,
+                                                              ResourceStatus stat, int missing, long inStorage, int buildingLevel)
     {
-        List<String> lines = new ArrayList<>();
-        lines.add("§6⚙ Tool Upgrade — Work Hut Level " + buildingLevel);
-        lines.add("§7  Requested: §f" + original.getDisplayName().getString());
-        lines.add("§7  Best available: §f" + substitute.getDisplayName().getString());
+        List<Component> lines = new ArrayList<>();
+        lines.add(Component.translatable("colonylink.avail.tool_upgrade", buildingLevel));
+        lines.add(Component.translatable("colonylink.avail.tool_requested", original.getDisplayName()));
+        lines.add(Component.translatable("colonylink.avail.tool_best", substitute.getDisplayName()));
         switch (stat)
         {
-            case AVAILABLE -> lines.add("§a  ✔ " + inStorage + "x in ME — ready to send");
-            case CRAFTABLE -> lines.add("§a  ⚒ Craftable via AE2 pattern");
-            case CRAFTING  -> lines.add("§6  ⟳ Craft in progress...");
-            default        -> lines.add("§c  ✘ No pattern available");
+            case AVAILABLE -> lines.add(Component.translatable("colonylink.avail.tool_ready", inStorage));
+            case CRAFTABLE -> lines.add(Component.translatable("colonylink.avail.craftable_ae2"));
+            case CRAFTING  -> lines.add(Component.translatable("colonylink.avail.crafting"));
+            default        -> lines.add(Component.translatable("colonylink.avail.no_pattern_short"));
         }
-        lines.add("§8  Needed: §f" + missing + "x");
+        lines.add(Component.translatable("colonylink.avail.needed", missing));
         return lines;
     }
 
@@ -708,31 +708,28 @@ public class ColonyLinkServerTicker
      * Tooltip pour les lignes Domum dans le Clipboard.
      * Affiche le statut + les matériaux bruts nécessaires.
      */
-    private static List<String> buildDomumTooltip(ItemStack stack, ResourceStatus status, int missing)
+    private static List<Component> buildDomumTooltip(ItemStack stack, ResourceStatus status, int missing)
     {
-        List<String> lines = new ArrayList<>();
+        List<Component> lines = new ArrayList<>();
 
-        // Statut
         switch (status)
         {
-            case NO_PATTERN -> { lines.add("§c✘ No Domum Pattern found in any Redirector");
-                lines.add("§a▶ Click to send recipe to terminal"); }
-            case CRAFTABLE  -> lines.add("§a⚒ Craftable via Redirector (AE2)");
-            case CRAFTING   -> lines.add("§6⟳ Crafting in progress...");
+            case NO_PATTERN -> { lines.add(Component.translatable("colonylink.avail.domum_no_pattern"));
+                lines.add(Component.translatable("colonylink.avail.domum_click_send")); }
+            case CRAFTABLE  -> lines.add(Component.translatable("colonylink.avail.domum_craftable"));
+            case CRAFTING   -> lines.add(Component.translatable("colonylink.avail.domum_crafting"));
             default         -> {}
         }
-        lines.add("§8  Needed: §f" + missing + "x");
+        lines.add(Component.translatable("colonylink.avail.needed", missing));
 
-        // Variant du bloc (ex: Full, Panel, Half, etc.)
         net.minecraft.world.item.component.BlockItemStateProperties blockState =
                 stack.get(net.minecraft.core.component.DataComponents.BLOCK_STATE);
         if (blockState != null && !blockState.properties().isEmpty())
         {
             for (var entry : blockState.properties().entrySet())
-                lines.add("§7  " + entry.getKey() + ": §f" + entry.getValue());
+                lines.add(Component.literal("§7  " + entry.getKey() + ": §f" + entry.getValue()));
         }
 
-        // Matériaux bruts depuis MaterialTextureData
         if (stack.getItem() instanceof net.minecraft.world.item.BlockItem bi)
         {
             net.minecraft.world.level.block.Block block = bi.getBlock();
@@ -741,40 +738,40 @@ public class ColonyLinkServerTicker
                 com.ldtteam.domumornamentum.client.model.data.MaterialTextureData td =
                         com.ldtteam.domumornamentum.client.model.data.MaterialTextureData
                                 .readFromItemStack(stack);
-                lines.add("§7Materials:");
+                lines.add(Component.translatable("colonylink.redir.materials"));
                 for (var comp : tb.getComponents())
                 {
                     net.minecraft.world.level.block.Block mat =
                             td.getTexturedComponents().get(comp.getId());
                     if (mat != null)
-                        lines.add("§7  • §f" + new net.minecraft.world.item.ItemStack(mat)
-                                .getDisplayName().getString() + " ×1");
+                        lines.add(Component.translatable("colonylink.avail.domum_mat",
+                                new net.minecraft.world.item.ItemStack(mat).getDisplayName()));
                     else if (!comp.isOptional())
-                        lines.add("§c  • MISSING: " + comp.getId().getPath());
+                        lines.add(Component.translatable("colonylink.domum_item.missing", comp.getId().getPath()));
                 }
             }
         }
         return lines;
     }
 
-    private static List<String> buildStandardTooltip(ItemStack stack, ResourceStatus status,
-                                                     int missing, long inStorage)
+    private static List<Component> buildStandardTooltip(ItemStack stack, ResourceStatus status,
+                                                        int missing, long inStorage)
     {
-        List<String> lines = new ArrayList<>();
-        String n = stack.getDisplayName().getString();
+        List<Component> lines = new ArrayList<>();
+        Component n = stack.getDisplayName();
         switch (status)
         {
-            case NO_PATTERN -> { lines.add("§c✘ No AE2 pattern for:"); lines.add("§7  " + n);
-                lines.add("§8  Needed: §f" + missing + "x"); lines.add("§8  In ME: §f" + inStorage + "x"); }
-            case CRAFTABLE  -> { lines.add("§a⚒ Craftable via AE2:"); lines.add("§7  " + n);
-                lines.add("§8  Needed: §f" + missing + "x"); lines.add("§8  In ME: §f" + inStorage + "x");
-                lines.add("§e  ⚠ Missing primary ingredient"); }
-            case AVAILABLE  -> { lines.add("§a✔ Available in ME:"); lines.add("§7  " + n);
-                lines.add("§8  Needed: §f" + missing + "x"); lines.add("§8  In ME: §f" + inStorage + "x"); }
-            case CRAFTING   -> { lines.add("§6⟳ Crafting in progress:"); lines.add("§7  " + n);
-                lines.add("§8  Needed: §f" + missing + "x"); }
-            case MISSING    -> { lines.add("§e⚒ Missing raw materials:"); lines.add("§7  " + n);
-                lines.add("§8  Needed: §f" + missing + "x"); }
+            case NO_PATTERN -> { lines.add(Component.translatable("colonylink.avail.std_no_pattern")); lines.add(Component.translatable("colonylink.avail.std_name", n));
+                lines.add(Component.translatable("colonylink.avail.needed", missing)); lines.add(Component.translatable("colonylink.avail.in_me", inStorage)); }
+            case CRAFTABLE  -> { lines.add(Component.translatable("colonylink.avail.std_craftable")); lines.add(Component.translatable("colonylink.avail.std_name", n));
+                lines.add(Component.translatable("colonylink.avail.needed", missing)); lines.add(Component.translatable("colonylink.avail.in_me", inStorage));
+                lines.add(Component.translatable("colonylink.avail.std_missing_primary")); }
+            case AVAILABLE  -> { lines.add(Component.translatable("colonylink.avail.std_available")); lines.add(Component.translatable("colonylink.avail.std_name", n));
+                lines.add(Component.translatable("colonylink.avail.needed", missing)); lines.add(Component.translatable("colonylink.avail.in_me", inStorage)); }
+            case CRAFTING   -> { lines.add(Component.translatable("colonylink.avail.std_crafting")); lines.add(Component.translatable("colonylink.avail.std_name", n));
+                lines.add(Component.translatable("colonylink.avail.needed", missing)); }
+            case MISSING    -> { lines.add(Component.translatable("colonylink.avail.std_missing_raw")); lines.add(Component.translatable("colonylink.avail.std_name", n));
+                lines.add(Component.translatable("colonylink.avail.needed", missing)); }
         }
         return lines;
     }

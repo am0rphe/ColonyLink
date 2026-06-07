@@ -30,13 +30,13 @@ public class ColonyLinkPackage extends Item
     {
         super.appendHoverText(stack, context, tooltip, flag);
         tooltip.add(Component.literal("§8──────────────────"));
-        tooltip.add(Component.literal("§7A delivery token for the §fColonyLink Clipboard§7."));
+        tooltip.add(Component.translatable("colonylink.pkg.line1"));
         tooltip.add(Component.literal("§8──────────────────"));
-        tooltip.add(Component.literal("§eUsage:"));
-        tooltip.add(Component.literal("§8  Load into the §fClipboard§8's Citizens tab slot."));
-        tooltip.add(Component.literal("§8  Each §fSend §8or §fCraft §8action in the Citizens"));
-        tooltip.add(Component.literal("§8  tab consumes §f1 Package§8."));
+        tooltip.add(Component.translatable("colonylink.pkg.usage"));
+        tooltip.add(Component.translatable("colonylink.pkg.load"));
+        tooltip.add(Component.translatable("colonylink.pkg.each"));
+        tooltip.add(Component.translatable("colonylink.pkg.tab"));
         tooltip.add(Component.literal("§8──────────────────"));
-        tooltip.add(Component.literal("§7Crafted from wood slabs and paper."));
+        tooltip.add(Component.translatable("colonylink.pkg.crafted"));
     }
 }

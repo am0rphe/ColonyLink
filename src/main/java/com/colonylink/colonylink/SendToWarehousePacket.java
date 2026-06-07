@@ -62,46 +62,45 @@ public record SendToWarehousePacket(ItemStack stack, BlockPos redirectorPos, int
                                               BlockPos redirectorPos, int count)
     {
         ItemStack wandStack = findWandInInventory(player);
-        if (wandStack == null) { player.sendSystemMessage(Component.literal("§cClipboard not found!")); return; }
+        if (wandStack == null) { player.sendSystemMessage(Component.translatable("colonylink.whc.clipboard_not_found")); return; }
 
         ServerLevel level = player.serverLevel();
 
         var be = level.getBlockEntity(redirectorPos);
         if (!(be instanceof ColonyLinkRedirectorBlockEntity redirector))
         {
-            player.sendSystemMessage(Component.literal("§cRedirector not found!"));
+            player.sendSystemMessage(Component.translatable("colonylink.wh_pkt.redir_not_found"));
             return;
         }
         if (!redirector.hasWarehouseCard())
         {
-            player.sendSystemMessage(Component.literal("§cNo warehouse card in redirector!"));
+            player.sendSystemMessage(Component.translatable("colonylink.wh_pkt.no_card"));
             return;
         }
 
         GlobalPos linkedPos = ColonyLinkWandLinkableHandler.getLinkedPos(wandStack);
-        if (linkedPos == null) { player.sendSystemMessage(Component.literal("§cClipboard not linked!")); return; }
+        if (linkedPos == null) { player.sendSystemMessage(Component.translatable("colonylink.whc.clipboard_not_linked")); return; }
         ServerLevel targetLevel = level.getServer().getLevel(linkedPos.dimension());
         if (targetLevel == null) return;
         var wapBe = targetLevel.getBlockEntity(linkedPos.pos());
-        if (!(wapBe instanceof IWirelessAccessPoint wap)) { player.sendSystemMessage(Component.literal("§cAE2 WAP not found!")); return; }
+        if (!(wapBe instanceof IWirelessAccessPoint wap)) { player.sendSystemMessage(Component.translatable("colonylink.wh_pkt.no_wap")); return; }
         IGrid grid = wap.getGrid();
-        if (grid == null) { player.sendSystemMessage(Component.literal("§cAE2 network offline!")); return; }
+        if (grid == null) { player.sendSystemMessage(Component.translatable("colonylink.wh_pkt.network_offline")); return; }
 
         IActionSource actionSource = IActionSource.ofPlayer(player, wap);
         MEStorage inventory = grid.getStorageService().getInventory();
         AEItemKey aeKey = AEItemKey.of(stack);
-        if (aeKey == null) { player.sendSystemMessage(Component.literal("§cInvalid item!")); return; }
+        if (aeKey == null) { player.sendSystemMessage(Component.translatable("colonylink.wh_pkt.invalid_item")); return; }
 
         long inStock = grid.getStorageService().getCachedInventory().get(aeKey);
         if (inStock <= 0)
         {
-            player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink] " + stack.getDisplayName().getString() + " not available in ME."));
+            player.sendSystemMessage(Component.translatable("colonylink.wh_pkt.not_available", stack.getDisplayName()));
             return;
         }
 
         IColony colony = IColonyManager.getInstance().getClosestColony(level, redirectorPos);
-        if (colony == null) { player.sendSystemMessage(Component.literal("§cNo colony found!")); return; }
+        if (colony == null) { player.sendSystemMessage(Component.translatable("colonylink.wh_pkt.no_colony")); return; }
 
         int remaining = Math.min(count, (int) inStock);
         int totalInserted = 0;
@@ -145,11 +144,9 @@ public record SendToWarehousePacket(ItemStack stack, BlockPos redirectorPos, int
             itemName = itemName.substring(1, itemName.length() - 1);
 
         if (totalInserted > 0)
-            player.sendSystemMessage(Component.literal(
-                    "§a[ColonyLink] Sent §f" + totalInserted + "x " + itemName + "§a to warehouse."));
+            player.sendSystemMessage(Component.translatable("colonylink.wh_pkt.sent", totalInserted, itemName));
         else
-            player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink] Could not send " + itemName + " — warehouse full or not found."));
+            player.sendSystemMessage(Component.translatable("colonylink.wh_pkt.could_not_send", itemName));
     }
 
     private static ItemStack insertIntoHandler(IItemHandler handler, ItemStack stack)

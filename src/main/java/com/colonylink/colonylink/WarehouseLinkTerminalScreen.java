@@ -386,29 +386,29 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
         // 6. Boutons push centre colonne — visibles dans les DEUX onglets : les
         //    panneaux WH/ME et leurs transferts restent actifs en Craft comme en Cutter.
         renderPushButton(g, mx, my, x + BTN1_X, y + BTN1_Y, btn1Pushed,
-                "Transfer selected WH \u2194 ME\n\u00a77Shift+click to select items");
+                Component.translatable("colonylink.term.btn_transfer_wh_me").getString());
         renderPushButton(g, mx, my, x + BTN2_X, y + BTN2_Y, btn2Pushed,
-                "Transfer selected \u2192 Inventory\n\u00a77Shift+click to select items");
+                Component.translatable("colonylink.term.btn_transfer_inv").getString());
 
         // 7. Tooltips des croix de la grille craft (onglet Craft uniquement)
         if (activeTab == 0)
         {
             if (over(mx, my, x + 136, yb + 273, 7, 7))
-                hoveredTooltip = "Clear crafting grid \u2192 Inventory\n\u00a77Shift: also clear output";
+                hoveredTooltip = Component.translatable("colonylink.term.clear_grid").getString();
             if (over(mx, my, x + 252, yb + 279, 7, 7))
-                hoveredTooltip = "Output \u2192 Warehouse\n\u00a77Shift: full stack";
+                hoveredTooltip = Component.translatable("colonylink.term.output_wh").getString();
             if (over(mx, my, x + 268, yb + 279, 8, 7))
-                hoveredTooltip = "Output \u2192 ME Network\n\u00a77Shift: full stack";
+                hoveredTooltip = Component.translatable("colonylink.term.output_me").getString();
             if (over(mx, my, x + 260, yb + 313, 7, 7))
-                hoveredTooltip = "Output \u2192 Inventory";
+                hoveredTooltip = Component.translatable("colonylink.term.output_inv").getString();
         }
 
         // 8. Sélection count sur panels
         if (!whSelected.isEmpty())
-            g.drawString(font, "\u00a7e" + whSelected.size() + " selected",
+            g.drawString(font, Component.translatable("colonylink.term.selected", whSelected.size()).getString(),
                     x + 136, y + 15, 0xFFFFDD00, false);
         if (!meSelected.isEmpty())
-            g.drawString(font, "\u00a7e" + meSelected.size() + " selected",
+            g.drawString(font, Component.translatable("colonylink.term.selected", meSelected.size()).getString(),
                     x + 361, y + 15, 0xFFFFDD00, false);
 
         // 9. v1.4.2 — Onglets
@@ -422,9 +422,7 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
         if (!hasWarehouseCard)
             if (over(mx, my, x + WarehouseLinkTerminalMenu.CARD_SLOT_X,
                     y + WarehouseLinkTerminalMenu.CARD_SLOT_Y, 16, 16))
-                hoveredTooltip = "\u00a7fWarehouse Link Card\n"
-                        + "\u00a77Insert into this slot to enable Warehouse scanning.\n"
-                        + "\u00a77Pulls items from Warehouse racks first.";
+                hoveredTooltip = Component.translatable("colonylink.term.card_slot_tip").getString();
     }
 
     // ── Onglets (x=295, y=269 craft / y=291 cutter) ───────────────────────────
@@ -436,7 +434,7 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
         g.blit(TEX_ICO_CRAFT,
                 x + ICO_CRAFT_X, y + ICO_CRAFT_Y, 0, 0, ICO_SIZE, ICO_SIZE, ICO_SIZE, ICO_SIZE);
         if (over(mx, my, x + TAB_X, y + TAB_CRAFT_Y, TAB_W, TAB_H))
-            hoveredTooltip = "Crafting Table";
+            hoveredTooltip = Component.translatable("colonylink.term.tab_craft").getString();
 
         boolean cutActive = (activeTab == 1);
         TerminalSkin.draw(g, cutActive ? TerminalSkin.TAB_ON : TerminalSkin.TAB_OFF,
@@ -444,7 +442,7 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
         g.blit(TEX_ICO_CUTTER,
                 x + ICO_CUT_X, y + ICO_CUT_Y, 0, 0, ICO_SIZE, ICO_SIZE, ICO_SIZE, ICO_SIZE);
         if (over(mx, my, x + TAB_X, y + TAB_CUTTER_Y, TAB_W, TAB_H))
-            hoveredTooltip = "Domum Pattern Encoder";
+            hoveredTooltip = Component.translatable("colonylink.term.tab_cutter").getString();
     }
 
     // ── Overlay Cutter ────────────────────────────────────────────────────────
@@ -464,15 +462,13 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
             g.renderItem(target, ox + CUT_REF_X, oy + CUT_REF_Y);
             g.renderItemDecorations(font, target, ox + CUT_REF_X, oy + CUT_REF_Y);
             if (over(mx, my, ox + CUT_REF_X, oy + CUT_REF_Y, 16, 16))
-                hoveredTooltip = "§fModel: §7" + target.getDisplayName().getString()
-                        + "\n§7Place a crafted Domum block here"
-                        + "\n§7then click §aEncode §7to create a pattern";
+                hoveredTooltip = Component.translatable("colonylink.term.ref_model", target.getDisplayName()).getString();
             updateMaterialCache(target);
         }
         else
         {
             if (over(mx, my, ox + CUT_REF_X, oy + CUT_REF_Y, 16, 16))
-                hoveredTooltip = "\u00a77Place a Domum block here to preview its materials";
+                hoveredTooltip = Component.translatable("colonylink.term.preview_domum").getString();
             cachedMaterials.clear();
             lastTargetForCache = ItemStack.EMPTY;
         }
@@ -484,10 +480,10 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
             ItemStack mat1 = cachedMaterials.get(0);
             g.renderItem(mat1, ox + CUT_MAT1_X, oy + CUT_MAT1_Y);
             if (over(mx, my, ox + CUT_MAT1_X, oy + CUT_MAT1_Y, 16, 16))
-                hoveredTooltip = "Material 1: " + mat1.getDisplayName().getString();
+                hoveredTooltip = Component.translatable("colonylink.term.material1", mat1.getDisplayName()).getString();
         }
         else if (over(mx, my, ox + CUT_MAT1_X, oy + CUT_MAT1_Y, 16, 16))
-            hoveredTooltip = "\u00a78Material slot 1";
+            hoveredTooltip = Component.translatable("colonylink.term.material_slot1").getString();
 
         // ── Aperçu matériau 2 (x3 y46) ──────────────────────────────────────
         renderSlotOutline(g, ox + CUT_MAT2_X - 1, oy + CUT_MAT2_Y - 1);
@@ -496,10 +492,10 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
             ItemStack mat2 = cachedMaterials.get(1);
             g.renderItem(mat2, ox + CUT_MAT2_X, oy + CUT_MAT2_Y);
             if (over(mx, my, ox + CUT_MAT2_X, oy + CUT_MAT2_Y, 16, 16))
-                hoveredTooltip = "Material 2: " + mat2.getDisplayName().getString();
+                hoveredTooltip = Component.translatable("colonylink.term.material2", mat2.getDisplayName()).getString();
         }
         else if (over(mx, my, ox + CUT_MAT2_X, oy + CUT_MAT2_Y, 16, 16))
-            hoveredTooltip = "\u00a78Material slot 2";
+            hoveredTooltip = Component.translatable("colonylink.term.material_slot2").getString();
 
         // ── Blank Pattern (réutilise BLANK_RENDER_X/Y existants) ─────────────
         ItemStack blank = menu.getSlot(BLANK_PATTERN_SLOT).getItem();
@@ -510,7 +506,7 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
             g.renderItemDecorations(font, blank, x + BLANK_RENDER_X, y + BLANK_RENDER_Y);
         }
         if (over(mx, my, x + BLANK_RENDER_X, y + BLANK_RENDER_Y, 16, 16))
-            hoveredTooltip = blank.isEmpty() ? "\u00a77Insert a Blank Pattern here" : blank.getDisplayName().getString();
+            hoveredTooltip = blank.isEmpty() ? Component.translatable("colonylink.term.insert_blank").getString() : blank.getDisplayName().getString();
 
         // ── Slot output (réutilise OUTPUT_RENDER_X/Y existants) ──────────────
         ItemStack output = menu.getDomumOutput();
@@ -520,10 +516,10 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
             g.renderItem(output, x + OUTPUT_RENDER_X, y + OUTPUT_RENDER_Y);
             g.renderItemDecorations(font, output, x + OUTPUT_RENDER_X, y + OUTPUT_RENDER_Y);
             if (over(mx, my, x + OUTPUT_RENDER_X, y + OUTPUT_RENDER_Y, 16, 16))
-                hoveredTooltip = output.getDisplayName().getString() + "\n\u00a77Click to pick up the encoded pattern";
+                hoveredTooltip = output.getDisplayName().getString() + Component.translatable("colonylink.term.pickup_pattern").getString();
         }
         else if (over(mx, my, x + OUTPUT_RENDER_X, y + OUTPUT_RENDER_Y, 16, 16))
-            hoveredTooltip = "\u00a78Encoded pattern appears here";
+            hoveredTooltip = Component.translatable("colonylink.term.encoded_appears").getString();
 
         // ── Bouton Encode ─────────────────────────────────────────────────────
         boolean canEncode = domumQueueSelected >= 0
@@ -542,15 +538,15 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
             boolean blankReady = !blank.isEmpty();
             boolean outFree    = output.isEmpty();
             if (queueReady && blankReady && outFree)
-                hoveredTooltip = "§aEncode from queue\n§7Consumes 1x Blank Pattern";
+                hoveredTooltip = Component.translatable("colonylink.term.encode_queue").getString();
             else if (slotReady && blankReady && outFree)
-                hoveredTooltip = "§aEncode from reference slot\n§7Consumes 1x Blank Pattern";
+                hoveredTooltip = Component.translatable("colonylink.term.encode_ref").getString();
             else if (!blankReady)
-                hoveredTooltip = "§cInsert a Blank Pattern first";
+                hoveredTooltip = Component.translatable("colonylink.term.encode_need_blank").getString();
             else if (!outFree)
-                hoveredTooltip = "§eTake the encoded pattern from the output slot first";
+                hoveredTooltip = Component.translatable("colonylink.term.encode_take_first").getString();
             else
-                hoveredTooltip = "§7Select an item from the list first,\n§7or place a crafted Domum block\n§7in the left reference slot";
+                hoveredTooltip = Component.translatable("colonylink.term.encode_select_first").getString();
         }
 
         // ── Liste scrollable (x33 y3 → x124 y66) ─────────────────────────────
@@ -573,11 +569,11 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
 
         if (domumQueue.isEmpty())
         {
-            g.drawString(font, "\u00a78No pending recipes",
+            g.drawString(font, Component.translatable("colonylink.term.no_pending").getString(),
                     ox + CUT_LIST_X + 4, oy + CUT_LIST_Y + 4, 0xFFAAAAAA, false);
-            g.drawString(font, "\u00a78Click 'No Pattern'",
+            g.drawString(font, Component.translatable("colonylink.term.click_nopattern").getString(),
                     ox + CUT_LIST_X + 4, oy + CUT_LIST_Y + 14, 0xFFAAAAAA, false);
-            g.drawString(font, "\u00a78in the Clipboard",
+            g.drawString(font, Component.translatable("colonylink.term.in_clipboard").getString(),
                     ox + CUT_LIST_X + 4, oy + CUT_LIST_Y + 24, 0xFFAAAAAA, false);
             g.disableScissor();
             return;
@@ -638,7 +634,7 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
                     }
                 }
 
-                tip.append("\n§8Click to select — then click Encode");
+                tip.append(Component.translatable("colonylink.term.click_select").getString());
                 hoveredTooltip = tip.toString();
             }
         }
@@ -687,14 +683,13 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
             {
                 g.fill(ix, iy, ix + 16, iy + 16, 0x88FF0000);
                 if (over(mx, my, ix, iy, 16, 16))
-                    hoveredTooltip = "\u00a7cMissing required material!";
+                    hoveredTooltip = Component.translatable("colonylink.term.missing_material").getString();
             }
             else
             {
                 g.renderItem(mat, ix, iy);
                 if (over(mx, my, ix, iy, 16, 16))
-                    hoveredTooltip = "Material: " + mat.getDisplayName().getString()
-                            + "\n\u00a77Required for this Domum block";
+                    hoveredTooltip = Component.translatable("colonylink.term.material_required", mat.getDisplayName()).getString();
             }
         }
         if (cachedMaterials.size() > MAT_MAX)
@@ -715,13 +710,13 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
     private void renderPanelLabels(GuiGraphics g, int x, int y)
     {
         // Zone label WH : x=9..133, y=2..14
-        String wh = "Warehouse";
+        String wh = Component.translatable("colonylink.term.label_warehouse").getString();
         String whCnt = String.valueOf(whFiltered.size());
         g.drawString(font, wh,    x + 9, y + 3, C_TEXT_WH, false);
         g.drawString(font, whCnt, x + 9 + SEARCH_WH_W - font.width(whCnt) - 1, y + 3, C_TEXT_MUTED, false);
 
         // Zone label AE : x=233..358, y=2..14
-        String ae = "Applied";
+        String ae = Component.translatable("colonylink.term.label_applied").getString();
         String aeCnt = String.valueOf(meFiltered.size());
         g.drawString(font, ae,    x + SEARCH_AE_X, y + 3, C_TEXT_AE, false);
         g.drawString(font, aeCnt, x + SEARCH_AE_X + SEARCH_AE_W - font.width(aeCnt) - 1, y + 3, C_TEXT_MUTED, false);
@@ -733,7 +728,7 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
     {
         // Le fond de la search bar est déjà dans le PNG ; on dessine juste le texte
         if (txt.isEmpty())
-            g.drawString(font, "Search...", x + 2, y + 1, C_SF_PH, false);
+            g.drawString(font, Component.translatable("colonylink.term.search").getString(), x + 2, y + 1, C_SF_PH, false);
         else
             g.drawString(font, txt, x + 2, y + 1, C_SF_TEXT, false);
         if (focused && (System.currentTimeMillis() / 500) % 2 == 0)
@@ -776,8 +771,8 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
 
         if (over(mx, my, sx, sy, SLIDER_W, SLIDER_H))
             hoveredTooltip = warehouseFirst
-                    ? "JEI priority: Warehouse first"
-                    : "JEI priority: ME first";
+                    ? Component.translatable("colonylink.term.jei_wh").getString()
+                    : Component.translatable("colonylink.term.jei_me").getString();
     }
 
     // ── Bouton push (centre colonne) ──────────────────────────────────────────
@@ -802,8 +797,8 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
                     panelX + PANEL_COLS * SLOT_PITCH,
                     guiY + Y_ITEMS + visRows() * SLOT_PITCH,
                     C_NOCARD_OV);
-            String msg1 = "Insert Warehouse";
-            String msg2 = "Link Card";
+            String msg1 = Component.translatable("colonylink.term.nocard1").getString();
+            String msg2 = Component.translatable("colonylink.term.nocard2").getString();
             int cx = panelX + (PANEL_COLS * SLOT_PITCH) / 2;
             int cy = guiY + Y_ITEMS + (visRows() * SLOT_PITCH) / 2;
             g.drawCenteredString(font, msg1, cx, cy - 10, 0xFF8888BB);
@@ -827,7 +822,7 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
                     panelX + PANEL_COLS * SLOT_PITCH,
                     guiY + Y_ITEMS + visRows() * SLOT_PITCH,
                     C_OFFLINE_OV);
-            g.drawCenteredString(font, "AE2 Offline",
+            g.drawCenteredString(font, Component.translatable("colonylink.term.ae2_offline").getString(),
                     panelX + (PANEL_COLS * SLOT_PITCH) / 2,
                     guiY + Y_ITEMS + (visRows() * SLOT_PITCH) / 2, 0xFFFF4444);
             return;
@@ -906,8 +901,8 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
                 var e = whFiltered.get(i);
                 g.renderComponentTooltip(font, List.of(
                                 e.stack().getDisplayName(),
-                                Component.literal("\u00a77In warehouse: \u00a7f" + e.count()),
-                                Component.literal("\u00a78Left: pick  Right: half  Shift+drag: select")),
+                                Component.translatable("colonylink.term.in_warehouse", e.count()),
+                                Component.translatable("colonylink.term.controls_wh")),
                         rawMx, rawMy);
                 return;
             }
@@ -923,12 +918,12 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
                 List<Component> lines = new ArrayList<>();
                 lines.add(e.stack().getDisplayName());
                 if (e.craftable() && e.count() <= 0)
-                    lines.add(Component.literal("\u00a7aCraftable-only \u00a7e(middle-click to autocraft)"));
+                    lines.add(Component.translatable("colonylink.term.craftable_only"));
                 else if (e.craftable())
-                    lines.add(Component.literal("\u00a77In ME: \u00a7f" + e.count() + " \u00a7a\u25cf craftable"));
+                    lines.add(Component.translatable("colonylink.term.in_me_craftable", e.count()));
                 else
-                    lines.add(Component.literal("\u00a77In ME: \u00a7f" + e.count()));
-                lines.add(Component.literal("\u00a78Left: pick  Right: half  Middle: autocraft"));
+                    lines.add(Component.translatable("colonylink.term.in_me", e.count()));
+                lines.add(Component.translatable("colonylink.term.controls_me"));
                 g.renderComponentTooltip(font, lines, rawMx, rawMy);
             }
         }

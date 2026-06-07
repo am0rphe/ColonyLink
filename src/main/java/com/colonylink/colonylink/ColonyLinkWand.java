@@ -129,7 +129,7 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
                 + " §7/ §f" + formatRF(capacity) + " RF §7(" + pct + "%)"));
 
         if (stored <= 0)
-            tooltip.add(Component.literal("§c⚠ OUT OF POWER — charge Clipboard in AE2 Charger or FE charger"));
+            tooltip.add(Component.translatable("colonylink.wand.tooltip.out_of_power"));
 
         boolean linkedAE2 = ColonyLinkWandLinkableHandler.isLinked(stack);
         List<BuilderEntry> entries = ColonyLinkWandLinkableHandler.getBuilderEntries(stack);
@@ -137,34 +137,32 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
 
         if (!linkedAE2)
         {
-            tooltip.add(Component.literal("§c✘ Clipboard not linked to AE2"));
-            tooltip.add(Component.literal("§8  → Insert Clipboard into a §fWireless Access Point"));
+            tooltip.add(Component.translatable("colonylink.wand.tooltip.not_linked"));
+            tooltip.add(Component.translatable("colonylink.wand.tooltip.insert_wap"));
         }
         else
         {
-            tooltip.add(Component.literal("§a✔ Linked to AE2 network"));
+            tooltip.add(Component.translatable("colonylink.wand.tooltip.linked"));
             if (entries.isEmpty())
             {
-                tooltip.add(Component.literal("§e⚠ No Builder linked"));
-                tooltip.add(Component.literal("§8  → §fSneak + Right-click §8a Builder's Hut"));
+                tooltip.add(Component.translatable("colonylink.wand.tooltip.no_builder"));
+                tooltip.add(Component.translatable("colonylink.wand.tooltip.link_hint"));
             }
             else
             {
-                tooltip.add(Component.literal("§a✔ " + entries.size() + "/"
-                        + ColonyLinkWandLinkableHandler.getMaxBuilders() + " Builder(s) linked"));
+                tooltip.add(Component.translatable("colonylink.wand.tooltip.builders_linked", entries.size(), ColonyLinkWandLinkableHandler.getMaxBuilders()));
                 BuilderEntry active = entries.get(Math.min(activeTab, entries.size() - 1));
-                tooltip.add(Component.literal("§7Active: §f" + active.builderName()
-                        + " §8@ " + active.builderPos().toShortString()));
+                tooltip.add(Component.translatable("colonylink.wand.tooltip.active", active.builderName(), active.builderPos().toShortString()));
                 if (!active.hasRedirector())
-                    tooltip.add(Component.literal("§e⚠ No Redirector linked for this builder"));
+                    tooltip.add(Component.translatable("colonylink.wand.tooltip.no_redirector"));
             }
         }
 
         tooltip.add(Component.literal("§8──────────────────"));
-        tooltip.add(Component.literal("§7Right-click §8(air) → open resource GUI"));
-        tooltip.add(Component.literal("§7Sneak + Right-click §8Builder's Hut → add/link builder"));
-        tooltip.add(Component.literal("§7Sneak + Right-click §8Redirector → link to active builder"));
-        tooltip.add(Component.literal("§8Charge Clipboard: §fAE2 Charger §8· §fany FE charger mod"));
+        tooltip.add(Component.translatable("colonylink.wand.tooltip.help_rclick"));
+        tooltip.add(Component.translatable("colonylink.wand.tooltip.help_hut"));
+        tooltip.add(Component.translatable("colonylink.wand.tooltip.help_redirector"));
+        tooltip.add(Component.translatable("colonylink.wand.tooltip.help_charge"));
     }
 
     private static String formatRF(long rf)
@@ -186,22 +184,20 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
 
         if (WandEnergyStorage.getStoredRF(wandStack) <= 0)
         {
-            player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink] Out of Power! Charge Clipboard in AE2 Charger or FE charger."));
+            player.sendSystemMessage(Component.translatable("colonylink.wand.msg.out_of_power"));
             return InteractionResultHolder.fail(wandStack);
         }
 
         if (!ColonyLinkWandLinkableHandler.isLinked(wandStack))
         {
-            player.sendSystemMessage(Component.literal("§cThis Clipboard is not linked to an AE2 network!"));
+            player.sendSystemMessage(Component.translatable("colonylink.wand.msg.not_linked"));
             return InteractionResultHolder.fail(wandStack);
         }
 
         List<BuilderEntry> entries = ColonyLinkWandLinkableHandler.getBuilderEntries(wandStack);
         if (entries.isEmpty())
         {
-            player.sendSystemMessage(Component.literal(
-                    "§eNo Builder's Hut linked yet. Sneak + Right-click a Builder's Hut first."));
+            player.sendSystemMessage(Component.translatable("colonylink.wand.msg.no_builder_yet"));
             return InteractionResultHolder.fail(wandStack);
         }
 
@@ -245,15 +241,15 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
         {
             if (redirector.getManagedGridNode().getNode() == null)
             {
-                player.sendSystemMessage(Component.literal("§cRedirector is not adjacent to a ME Controller!"));
+                player.sendSystemMessage(Component.translatable("colonylink.wand.msg.redirector_no_controller"));
                 return net.minecraft.world.InteractionResult.FAIL;
             }
 
             List<BuilderEntry> entries = ColonyLinkWandLinkableHandler.getBuilderEntries(wandStack);
             if (entries.isEmpty())
             {
-                player.sendSystemMessage(Component.literal("§cNo Builder's Hut linked to this Clipboard!"));
-                player.sendSystemMessage(Component.literal("§7Sneak + Right-click a Builder's Hut first."));
+                player.sendSystemMessage(Component.translatable("colonylink.wand.msg.no_builder_hut"));
+                player.sendSystemMessage(Component.translatable("colonylink.wand.msg.sneak_hut_first"));
                 return net.minecraft.world.InteractionResult.FAIL;
             }
 
@@ -261,9 +257,7 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
             {
                 if (e.redirectorPos().equals(pos))
                 {
-                    player.sendSystemMessage(Component.literal(
-                            "§c[ColonyLink] This Redirector is already paired with builder §f"
-                                    + e.builderName() + "§c!"));
+                    player.sendSystemMessage(Component.translatable("colonylink.wand.msg.redirector_paired", e.builderName()));
                     return net.minecraft.world.InteractionResult.FAIL;
                 }
             }
@@ -286,16 +280,14 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
             entries.set(targetIndex, target.withRedirector(pos));
             ColonyLinkWandLinkableHandler.setBuilderEntries(wandStack, entries);
 
-            player.sendSystemMessage(Component.literal(
-                    "§aRedirector linked to builder §f" + target.builderName()
-                            + " §7@ " + target.builderPos().toShortString()));
+            player.sendSystemMessage(Component.translatable("colonylink.wand.msg.redirector_linked", target.builderName(), target.builderPos().toShortString()));
             return net.minecraft.world.InteractionResult.SUCCESS;
         }
 
         // ── Sneak + Builder's Hut ─────────────────────────────────────────────
         if (!ColonyLinkWandLinkableHandler.isLinked(wandStack))
         {
-            player.sendSystemMessage(Component.literal("§cThis Clipboard is not linked to an AE2 network!"));
+            player.sendSystemMessage(Component.translatable("colonylink.wand.msg.not_linked"));
             return net.minecraft.world.InteractionResult.FAIL;
         }
 
@@ -303,13 +295,13 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
         IWirelessAccessPoint wap = getWap(wandStack, sl);
         if (wap == null)
         {
-            player.sendSystemMessage(Component.literal("§cCannot connect to AE2 network!"));
+            player.sendSystemMessage(Component.translatable("colonylink.wand.msg.no_wap"));
             return net.minecraft.world.InteractionResult.FAIL;
         }
         IGrid grid = wap.getGrid();
         if (grid == null)
         {
-            player.sendSystemMessage(Component.literal("§cAE2 network is offline!"));
+            player.sendSystemMessage(Component.translatable("colonylink.wand.msg.network_offline"));
             return net.minecraft.world.InteractionResult.FAIL;
         }
 
@@ -318,7 +310,7 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
 
         if (!colony.getPermissions().hasPermission(sp, Action.ACCESS_HUTS))
         {
-            player.sendSystemMessage(Component.literal("§c[ColonyLink] No permission for this colony!"));
+            player.sendSystemMessage(Component.translatable("colonylink.wand.msg.no_permission_colony"));
             return net.minecraft.world.InteractionResult.FAIL;
         }
 
@@ -339,9 +331,7 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
             if (existingEntries.get(i).builderPos().equals(pos))
             {
                 BuilderEntry existing = existingEntries.get(i);
-                player.sendSystemMessage(Component.literal(
-                        "§e[ColonyLink] This Builder's Hut is already linked in tab §f"
-                                + (i + 1) + " §e(§f" + existing.builderName() + "§e)!"));
+                player.sendSystemMessage(Component.translatable("colonylink.wand.msg.hut_already_linked", i + 1, existing.builderName()));
                 return net.minecraft.world.InteractionResult.FAIL;
             }
         }
@@ -358,8 +348,7 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
         BuilderEntry newEntry = new BuilderEntry(pos, BlockPos.ZERO, builderName, buildingLabel, level.dimension());
         if (!ColonyLinkWandLinkableHandler.addOrUpdateEntry(wandStack, newEntry))
         {
-            player.sendSystemMessage(Component.literal(
-                    "§cMax builders reached (" + ColonyLinkWandLinkableHandler.getMaxBuilders() + ")!"));
+            player.sendSystemMessage(Component.translatable("colonylink.wand.msg.max_builders", ColonyLinkWandLinkableHandler.getMaxBuilders()));
             return net.minecraft.world.InteractionResult.FAIL;
         }
 
@@ -369,11 +358,8 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
             if (entries.get(i).builderPos().equals(pos)) { newIdx = i; break; }
         ColonyLinkWandLinkableHandler.setActiveTab(wandStack, newIdx);
 
-        player.sendSystemMessage(Component.literal(
-                "§aBuilder §f" + builderName + " §aadded! (slot "
-                        + (newIdx + 1) + "/" + ColonyLinkWandLinkableHandler.getMaxBuilders() + ")"));
-        player.sendSystemMessage(Component.literal(
-                "§7Now §fSneak + Right-click a Colony Link Redirector §7to pair it."));
+        player.sendSystemMessage(Component.translatable("colonylink.wand.msg.builder_added", builderName, newIdx + 1, ColonyLinkWandLinkableHandler.getMaxBuilders()));
+        player.sendSystemMessage(Component.translatable("colonylink.wand.msg.now_pair"));
         return net.minecraft.world.InteractionResult.SUCCESS;
     }
 
@@ -383,20 +369,20 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
                                         BlockPos builderPos, int activeTabIndex)
     {
         IWirelessAccessPoint wap = getWap(wandStack, sl);
-        if (wap == null) { player.sendSystemMessage(Component.literal("§cCannot connect to AE2 network!")); return false; }
+        if (wap == null) { player.sendSystemMessage(Component.translatable("colonylink.wand.msg.no_wap")); return false; }
         IGrid grid = wap.getGrid();
-        if (grid == null) { player.sendSystemMessage(Component.literal("§cAE2 network is offline!")); return false; }
+        if (grid == null) { player.sendSystemMessage(Component.translatable("colonylink.wand.msg.network_offline")); return false; }
 
         IColony colony = IColonyManager.getInstance().getClosestColony(sl, builderPos);
-        if (colony == null) { player.sendSystemMessage(Component.literal("§cNo colony found nearby!")); return false; }
+        if (colony == null) { player.sendSystemMessage(Component.translatable("colonylink.wand.msg.no_colony")); return false; }
         if (!colony.getPermissions().hasPermission(player, Action.ACCESS_HUTS))
-        { player.sendSystemMessage(Component.literal("§c[ColonyLink] No permission!")); return false; }
+        { player.sendSystemMessage(Component.translatable("colonylink.wand.msg.no_permission")); return false; }
 
         IBuilding building = null;
         for (IBuilding b : colony.getServerBuildingManager().getBuildings().values())
             if (b.getPosition().equals(builderPos)) { building = b; break; }
         if (!(building instanceof AbstractBuildingStructureBuilder bb))
-        { player.sendSystemMessage(Component.literal("§cBuilder's Hut not found — re-link.")); return false; }
+        { player.sendSystemMessage(Component.translatable("colonylink.wand.msg.hut_not_found")); return false; }
 
         String builderName = "N/A", workerStatus = "IDLE";
         if (!bb.getAllAssignedCitizen().isEmpty())

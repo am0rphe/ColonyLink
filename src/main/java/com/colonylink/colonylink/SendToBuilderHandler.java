@@ -55,10 +55,7 @@ public class SendToBuilderHandler
                         ColonyLinkWandLinkableHandler.getBuilderDimension(wandForDim, builderPos);
                 if (builderDim != null && !player.serverLevel().dimension().equals(builderDim))
                 {
-                    player.sendSystemMessage(Component.literal(
-                            "§c[ColonyLink] This builder is in another dimension (§f"
-                                    + builderDim.location().getPath()
-                                    + "§c). The Clipboard cannot reach colonies across dimensions."));
+                    player.sendSystemMessage(Component.translatable("colonylink.handler.cross_dimension", builderDim.location().getPath()));
                     return;
                 }
             }
@@ -68,15 +65,14 @@ public class SendToBuilderHandler
         long sendCost = ColonyLinkConfig.SEND_COST_RF.get();
         if (sendCost > 0 && !ColonyLinkServerTicker.tryConsumeRF(player, sendCost))
         {
-            player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink] Not enough power! Need " + sendCost + " RF to send."));
+            player.sendSystemMessage(Component.translatable("colonylink.stb.not_enough_power", sendCost));
             return;
         }
 
         ItemStack wandStack = findWandInInventory(player);
         if (wandStack == null || !ColonyLinkWandLinkableHandler.isLinked(wandStack))
         {
-            player.sendSystemMessage(Component.literal("§cClipboard not found or not linked!"));
+            player.sendSystemMessage(Component.translatable("colonylink.handler.clipboard_not_linked"));
             return;
         }
 
@@ -115,15 +111,12 @@ public class SendToBuilderHandler
                 if (sub.action() == BuilderToolHelper.SubstituteAction.SEND)
                 {
                     stack = sub.displayStack().copyWithCount(stack.getCount());
-                    player.sendSystemMessage(Component.literal(
-                            "§6[ColonyLink] Tool upgraded: §f" + stack.getDisplayName().getString()));
+                    player.sendSystemMessage(Component.translatable("colonylink.stb.tool_upgraded", stack.getDisplayName()));
                 }
                 else if (sub.action() == BuilderToolHelper.SubstituteAction.CRAFT)
                 {
                     CraftHandler.handleCraftRequest(player, sub.displayStack(), 1);
-                    player.sendSystemMessage(Component.literal(
-                            "§a[ColonyLink] Crafting best tool: §f"
-                                    + sub.displayStack().getDisplayName().getString()));
+                    player.sendSystemMessage(Component.translatable("colonylink.stb.crafting_best_tool", sub.displayStack().getDisplayName()));
                     return;
                 }
             }
@@ -132,8 +125,8 @@ public class SendToBuilderHandler
         BlockPos redirectorPos = ColonyLinkWandLinkableHandler.getActiveRedirectorPos(wandStack);
         if (redirectorPos == null)
         {
-            player.sendSystemMessage(Component.literal("§cNo Redirector linked to this Clipboard!"));
-            player.sendSystemMessage(Component.literal("§7Sneak + Right-click a Colony Link Redirector with the Clipboard."));
+            player.sendSystemMessage(Component.translatable("colonylink.handler.no_redirector"));
+            player.sendSystemMessage(Component.translatable("colonylink.stb.sneak_redirector"));
             return;
         }
 
@@ -143,21 +136,21 @@ public class SendToBuilderHandler
 
         if (redirector == null)
         {
-            player.sendSystemMessage(Component.literal("§cRedirector not found at stored position!"));
+            player.sendSystemMessage(Component.translatable("colonylink.stb.redirector_not_found"));
             return;
         }
 
         var node = redirector.getManagedGridNode().getNode();
         if (node == null || !node.isActive())
         {
-            player.sendSystemMessage(Component.literal("§cRedirector is not connected to the AE2 network!"));
+            player.sendSystemMessage(Component.translatable("colonylink.stb.redirector_not_connected"));
             return;
         }
 
         BlockPos targetPos = redirector.getTargetInventoryPos();
         if (targetPos == null)
         {
-            player.sendSystemMessage(Component.literal("§cRedirector has no target inventory linked!"));
+            player.sendSystemMessage(Component.translatable("colonylink.stb.redirector_no_target"));
             return;
         }
 
@@ -167,17 +160,13 @@ public class SendToBuilderHandler
         IColony sendColony = IColonyManager.getInstance().getClosestColony(level, targetPos);
         if (!ColonyLinkChunkUtil.buildingFullyLoaded(level, sendColony, targetPos))
         {
-            player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink] The Builder's Hut is in unloaded chunks. " +
-                            "Move closer or use a chunk loader, then try again."));
+            player.sendSystemMessage(Component.translatable("colonylink.handler.hut_unloaded"));
             return;
         }
         if (redirector.hasWarehouseCard()
                 && !ColonyLinkChunkUtil.colonyWarehousesFullyLoaded(level, sendColony))
         {
-            player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink] Your colony's Warehouse is in unloaded chunks. " +
-                            "Move closer or use a chunk loader, then try again."));
+            player.sendSystemMessage(Component.translatable("colonylink.handler.warehouse_unloaded"));
             return;
         }
 
@@ -192,9 +181,7 @@ public class SendToBuilderHandler
             IItemHandler direct = level.getCapability(Capabilities.ItemHandler.BLOCK, targetPos, null);
             if (direct == null)
             {
-                player.sendSystemMessage(Component.literal(
-                        "§c[ColonyLink] No inventory found for builder hut. " +
-                                "Make sure the hut has at least one rack placed."));
+                player.sendSystemMessage(Component.translatable("colonylink.stb.no_inventory"));
                 return;
             }
             buildingHandlers = List.of(direct);
@@ -203,16 +190,15 @@ public class SendToBuilderHandler
 
         if (redirector.getState() == ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY)
         {
-            player.sendSystemMessage(Component.literal(
-                    "§6[ColonyLink] Builder inventory is full — free up space or wait for the builder to use items."));
+            player.sendSystemMessage(Component.translatable("colonylink.handler.builder_inv_full"));
             return;
         }
 
         IWirelessAccessPoint wap = getWap(wandStack, level);
-        if (wap == null) { player.sendSystemMessage(Component.literal("§cCannot connect to AE2 network!")); return; }
+        if (wap == null) { player.sendSystemMessage(Component.translatable("colonylink.handler.no_wap")); return; }
 
         IGrid grid = wap.getGrid();
-        if (grid == null) { player.sendSystemMessage(Component.literal("§cAE2 network is offline!")); return; }
+        if (grid == null) { player.sendSystemMessage(Component.translatable("colonylink.handler.network_offline")); return; }
 
         IStorageService storageService = grid.getStorageService();
         MEStorage inventory = storageService.getInventory();
@@ -276,23 +262,17 @@ public class SendToBuilderHandler
                 ColonyLink.LOGGER.debug("[ColonyLink] markDirty after send failed: {}", e.getMessage());
             }
 
-            player.sendSystemMessage(Component.literal(
-                    "§a[ColonyLink] Sent " + totalInserted + "x "
-                            + stack.getDisplayName().getString() + " to builder!"));
+            player.sendSystemMessage(Component.translatable("colonylink.stb.sent", totalInserted, stack.getDisplayName()));
             if (remaining > 0)
-                player.sendSystemMessage(Component.literal(
-                        "§6[ColonyLink] Builder inventory is full — free up space or wait for the builder to use items."));
+                player.sendSystemMessage(Component.translatable("colonylink.handler.builder_inv_full"));
         }
         else
         {
             // Si le redirector vient de passer en STANDBY, le message orange suffit — pas de doublon rouge.
             if (redirector.getState() == ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY)
-                player.sendSystemMessage(Component.literal(
-                        "§6[ColonyLink] Builder inventory is full — free up space or wait for the builder to use items."));
+                player.sendSystemMessage(Component.translatable("colonylink.handler.builder_inv_full"));
             else
-                player.sendSystemMessage(Component.literal(
-                        "§c[ColonyLink] Could not send " + stack.getDisplayName().getString()
-                                + " — not available in ME or Warehouse."));
+                player.sendSystemMessage(Component.translatable("colonylink.stb.could_not_send", stack.getDisplayName()));
         }
     }
 

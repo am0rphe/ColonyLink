@@ -167,13 +167,13 @@ public class DomumPatternItem extends Item
 
         if (target == null || target.isEmpty())
         {
-            lines.add(Component.literal("§cInvalid pattern").withStyle(ChatFormatting.RED));
+            lines.add(Component.translatable("colonylink.domum_item.invalid").withStyle(ChatFormatting.RED));
             return;
         }
 
         // Ligne principale — toujours visible
         int outputCount = getOutputCount(stack);
-        lines.add(Component.literal("§eCrafts: §f").append(target.getDisplayName())
+        lines.add(Component.translatable("colonylink.redir.crafts").append(target.getDisplayName())
                 .append(Component.literal(outputCount > 1 ? " §7(×" + outputCount + ")" : "")
                         .withStyle(ChatFormatting.GRAY)));
 
@@ -184,7 +184,7 @@ public class DomumPatternItem extends Item
                     stack.get(net.minecraft.core.component.DataComponents.BLOCK_STATE);
             if (blockState != null && !blockState.properties().isEmpty())
             {
-                lines.add(Component.literal("§7Variant:").withStyle(ChatFormatting.GRAY));
+                lines.add(Component.translatable("colonylink.domum_item.variant").withStyle(ChatFormatting.GRAY));
                 for (var entry : blockState.properties().entrySet())
                     lines.add(Component.literal("§7  " + entry.getKey() + ": §f" + entry.getValue()));
             }
@@ -193,7 +193,7 @@ public class DomumPatternItem extends Item
             List<MaterialEntry> materials = getMaterials(stack, provider);
             if (!materials.isEmpty())
             {
-                lines.add(Component.literal("§7Materials:").withStyle(ChatFormatting.GRAY));
+                lines.add(Component.translatable("colonylink.redir.materials").withStyle(ChatFormatting.GRAY));
                 for (MaterialEntry mat : materials)
                 {
                     if (mat.resolved())
@@ -201,19 +201,19 @@ public class DomumPatternItem extends Item
                                 .append(new ItemStack(mat.block()).getDisplayName())
                                 .append(Component.literal(" ×1").withStyle(ChatFormatting.GRAY)));
                     else
-                        lines.add(Component.literal("§c  • MISSING: " + mat.componentId().getPath()));
+                        lines.add(Component.translatable("colonylink.domum_item.missing", mat.componentId().getPath()));
                 }
             }
 
             // Guide
-            lines.add(Component.literal("§8Place in Redirector buffer → enables AE2 crafting.")
+            lines.add(Component.translatable("colonylink.domum_item.place")
                     .withStyle(ChatFormatting.DARK_GRAY));
-            lines.add(Component.literal("§8Shift+Right-click to clear → Blank Pattern.")
+            lines.add(Component.translatable("colonylink.domum_item.clear")
                     .withStyle(ChatFormatting.DARK_GRAY));
         }
         else
         {
-            lines.add(Component.literal("§8Hold §eShift §8for details.")
+            lines.add(Component.translatable("colonylink.tip.hold_shift_details")
                     .withStyle(ChatFormatting.DARK_GRAY));
         }
     }

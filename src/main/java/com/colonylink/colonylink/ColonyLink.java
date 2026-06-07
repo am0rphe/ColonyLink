@@ -166,35 +166,31 @@ public class ColonyLink
                 var blockState = event.getLevel().getBlockState(pos);
                 Block.dropResources(blockState, event.getLevel(), pos, be, player, held);
                 event.getLevel().removeBlock(pos, false);
-                player.sendSystemMessage(Component.literal("§aColony Link Redirector removed!"));
+                player.sendSystemMessage(Component.translatable("colonylink.redir_block.removed"));
             }
             else
             {
                 redirector.updateState();
-                player.sendSystemMessage(Component.literal(
-                        "§7[Redirector] AE2: " + (redirector.isAe2Active() ? "§aLinked" : "§cUnlinked")));
+                player.sendSystemMessage(Component.translatable(redirector.isAe2Active() ? "colonylink.redir_block.ae2_linked" : "colonylink.redir_block.ae2_unlinked"));
                 switch (redirector.getState())
                 {
                     case NOT_LINKED -> player.sendSystemMessage(
-                            Component.literal("§e[Redirector] No builder linked."));
+                            Component.translatable("colonylink.redir_block.no_builder"));
                     case STANDBY -> player.sendSystemMessage(
-                            Component.literal("§6[Redirector] Builder inventory is full."));
+                            Component.translatable("colonylink.redir_block.inv_full"));
                     case LINKED ->
                     {
-                        player.sendSystemMessage(Component.literal("§a[Redirector] Operational!"));
+                        player.sendSystemMessage(Component.translatable("colonylink.redir_block.operational"));
                         // v1.4.2 — Affiche le nombre de patterns Domum chargés
                         int patternCount = 0;
                         for (int slot = 0; slot < redirector.buffer.getSlots(); slot++)
                             if (!redirector.buffer.getStackInSlot(slot).isEmpty()) patternCount++;
                         if (patternCount > 0)
-                            player.sendSystemMessage(Component.literal(
-                                    "§b[Redirector] §f" + patternCount + " Domum pattern(s) loaded."));
+                            player.sendSystemMessage(Component.translatable("colonylink.redir_block.patterns", patternCount));
                         if (redirector.getTargetInventoryPos() != null)
-                            player.sendSystemMessage(Component.literal(
-                                    "§7Target: " + redirector.getTargetInventoryPos().toShortString()));
+                            player.sendSystemMessage(Component.translatable("colonylink.redir_block.target", redirector.getTargetInventoryPos().toShortString()));
                         if (redirector.getLinkedBuilderPos() != null)
-                            player.sendSystemMessage(Component.literal(
-                                    "§7Builder: " + redirector.getLinkedBuilderPos().toShortString()));
+                            player.sendSystemMessage(Component.translatable("colonylink.redir_block.builder", redirector.getLinkedBuilderPos().toShortString()));
                     }
                     default -> {}
                 }
