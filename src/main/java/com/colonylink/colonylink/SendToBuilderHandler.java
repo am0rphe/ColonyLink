@@ -10,6 +10,7 @@ import appeng.api.storage.MEStorage;
 import com.minecolonies.api.colony.IColony;
 import com.minecolonies.api.colony.IColonyManager;
 import com.minecolonies.api.colony.buildings.IBuilding;
+import com.minecolonies.api.colony.permissions.Action;
 import com.minecolonies.core.colony.buildings.workerbuildings.BuildingWareHouse;
 import com.minecolonies.core.colony.buildings.AbstractBuildingStructureBuilder;
 import com.minecolonies.core.colony.buildings.utils.BuildingBuilderResource;
@@ -43,9 +44,32 @@ import java.util.List;
  */
 public class SendToBuilderHandler
 {
+    /** v1.6.0 — upper bound for the client-supplied count (anti Integer.MAX_VALUE). */
+    private static final int MAX_SEND_COUNT = 10_000;
+
     public static void handleSendToBuilder(ServerPlayer player, ItemStack stack,
                                            BlockPos builderPos, int realCount)
     {
+        // ── v1.6.0 — input hardening (before any RF charge) ──────────────────
+        // A non-positive count can only come from a modified client — reject,
+        // don't clamp up. The upper clamp bounds ME extraction loops.
+        if (realCount <= 0 || stack.isEmpty())
+        {
+            player.sendSystemMessage(Component.translatable("colonylink.stw.invalid_request"));
+            return;
+        }
+        realCount = Math.min(realCount, MAX_SEND_COUNT);
+
+        // ── v1.6.0 — delivery mode guard (before any RF charge) ──────────────
+        // Server-decreed: when the server is configured for WAREHOUSE delivery,
+        // direct-to-builder sends are rejected server-side. Hiding the button
+        // client-side is not a guard — a modified client sends anyway.
+        if (ColonyLinkConfig.SEND_TARGET.get() == ColonyLinkConfig.SendTarget.WAREHOUSE)
+        {
+            player.sendSystemMessage(Component.translatable("colonylink.delivery.blocked_builder"));
+            return;
+        }
+
         // ── v1.4.9 — cross-dimension : refus propre AVANT de consommer du RF ──
         {
             ItemStack wandForDim = findWandInInventory(player);
@@ -61,12 +85,18 @@ public class SendToBuilderHandler
             }
         }
 
-        // ── Coût RF ───────────────────────────────────────────────────────────
-        long sendCost = ColonyLinkConfig.SEND_COST_RF.get();
-        if (sendCost > 0 && !ColonyLinkServerTicker.tryConsumeRF(player, sendCost))
+        // ── v1.6.0 — colony permission check, server-side, before any RF charge.
+        // getClosestColony can resolve a colony the player has zero rights in;
+        // ACCESS_HUTS is the same action the ticker and the wand already require.
         {
-            player.sendSystemMessage(Component.translatable("colonylink.stb.not_enough_power", sendCost));
-            return;
+            IColony permColony = IColonyManager.getInstance()
+                    .getClosestColony(player.serverLevel(), builderPos);
+            if (permColony != null
+                    && !permColony.getPermissions().hasPermission(player, Action.ACCESS_HUTS))
+            {
+                player.sendSystemMessage(Component.translatable("colonylink.wand.msg.no_permission"));
+                return;
+            }
         }
 
         ItemStack wandStack = findWandInInventory(player);
@@ -77,6 +107,42 @@ public class SendToBuilderHandler
         }
 
         ServerLevel level = player.serverLevel();
+
+        // v1.6.2 — the item is not authoritative. Validate it is something this builder
+        // legitimately needs right now: a missing build material, a live open request,
+        // or a valid tool/armor substitute for one of those — exactly what the GUI
+        // offers (mirrors fetchBuilderRequest, so tool substitution keeps working).
+        // Fail-safe: if the ME grid or the builder cannot be resolved at this instant,
+        // we do NOT reject — the downstream redirector/target/grid guards refuse
+        // cleanly, and a transient miss must never reject a legitimate send.
+        {
+            IWirelessAccessPoint vWap = getWap(wandStack, level);
+            IColony vColony = IColonyManager.getInstance().getClosestColony(level, builderPos);
+            AbstractBuildingStructureBuilder vBb = null;
+            if (vColony != null)
+                for (IBuilding b : vColony.getServerBuildingManager().getBuildings().values())
+                    if (b.getPosition().equals(builderPos)
+                            && b instanceof AbstractBuildingStructureBuilder sb) { vBb = sb; break; }
+            if (vWap != null && vWap.getGrid() != null && vBb != null)
+            {
+                appeng.api.stacks.KeyCounter vInv = vWap.getGrid().getStorageService().getCachedInventory();
+                appeng.api.networking.crafting.ICraftingService vCs = vWap.getGrid().getCraftingService();
+                boolean toolUpgrade = ColonyLinkConfig.ENABLE_TOOL_UPGRADE.get();
+                if (!isLegitimateBuilderSend(vBb, stack, vBb.getBuildingLevel(), vInv, vCs, toolUpgrade))
+                {
+                    player.sendSystemMessage(Component.translatable("colonylink.stw.not_needed", stack.getDisplayName()));
+                    return;
+                }
+            }
+        }
+
+        // ── Coût RF (après validation, comme SendToWarehousePacket) ────────────
+        long sendCost = ColonyLinkConfig.SEND_COST_RF.get();
+        if (sendCost > 0 && !ColonyLinkServerTicker.tryConsumeRF(player, sendCost))
+        {
+            player.sendSystemMessage(Component.translatable("colonylink.stb.not_enough_power", sendCost));
+            return;
+        }
 
         // ── Substitution d'outils ─────────────────────────────────────────────
         if (BuilderToolHelper.isTool(stack))
@@ -218,18 +284,18 @@ public class SendToBuilderHandler
         {
             // Priorité warehouse : racks d'abord, puis ME.
             remaining = pullFromWarehouse(player, level, stack, remaining, redirector, buildingHandlers);
-            remaining = pullFromMe(aeKey, remaining, inventory, actionSource, redirector, buildingHandlers);
+            remaining = pullFromMe(player, aeKey, remaining, inventory, actionSource, redirector, buildingHandlers);
         }
         else if (warehouseEnabled)
         {
             // Carte présente sans priorité : ME d'abord, puis warehouse en fallback.
-            remaining = pullFromMe(aeKey, remaining, inventory, actionSource, redirector, buildingHandlers);
+            remaining = pullFromMe(player, aeKey, remaining, inventory, actionSource, redirector, buildingHandlers);
             remaining = pullFromWarehouse(player, level, stack, remaining, redirector, buildingHandlers);
         }
         else
         {
             // Pas de carte warehouse : ME uniquement.
-            remaining = pullFromMe(aeKey, remaining, inventory, actionSource, redirector, buildingHandlers);
+            remaining = pullFromMe(player, aeKey, remaining, inventory, actionSource, redirector, buildingHandlers);
         }
 
         long totalInserted = realCount - remaining;
@@ -253,6 +319,9 @@ public class SendToBuilderHandler
                         // (getNeededResources) pour que la ligne disparaisse immédiatement,
                         // même quand le builder est loin et ne recalcule pas. Voir le helper.
                         creditDeliveredResource(b, stack, (int) totalInserted);
+                        // v1.6.1 — open-request lines (Priority Request) are not covered
+                        // by the credit above: guard them against the cascade.
+                        markOpenRequestSent(b, stack, wandStack, builderPos);
                         break;
                     }
                 }
@@ -322,6 +391,179 @@ public class SendToBuilderHandler
         }
     }
 
+    /**
+     * v1.6.1 — Anti-cascade for the Clipboard's « Priority Request » line.
+     *
+     * That line is fed by getOpenRequests() (tools, armor, food...), NOT by
+     * getNeededResources(). creditDeliveredResource only credits the latter, and a
+     * direct BUILDER-mode fulfill bypasses the courier — so nothing tells the request
+     * system the delivery happened. MineColonies closes the open request on its own
+     * work tick, which is why the line sometimes clears at once and sometimes not at
+     * all. Meanwhile the button stays active: re-clicks cascade and drain the ME.
+     *
+     * We record the same sent-key the WAREHOUSE path uses: the ticker then renders the
+     * line grey SENT_PENDING (Send disabled) and pruneBuilderSentKeys drops the key as
+     * soon as the open request is gone. Reconciliation is MineColonies' own truth —
+     * never a timer — so a slow reconcile only means a longer grey, never a cascade.
+     *
+     * Baseline 0: open requests carry no 'available' counter (same convention as
+     * SendToWarehousePacket). Build materials are skipped on purpose — they already
+     * vanish via creditDeliveredResource, so BUILDER-mode material lines are untouched.
+     */
+    private static void markOpenRequestSent(IBuilding building, ItemStack delivered,
+                                            ItemStack wandStack, BlockPos builderPos)
+    {
+        if (delivered.isEmpty() || wandStack == null) return;
+        if (!(building instanceof AbstractBuildingStructureBuilder bb)) return;
+
+        try
+        {
+            // Build material → creditDeliveredResource owns it, no key.
+            var needed = bb.getNeededResources();
+            if (needed != null)
+                for (BuildingBuilderResource res : needed.values())
+                    if (ItemStack.isSameItemSameComponents(res.getItemStack(), delivered)) return;
+
+            // Open request only → guard the line until MineColonies reconciles.
+            if (!matchesOpenRequest(bb, delivered)) return;
+
+            ColonyLinkWandLinkableHandler.addSentRequestKey(wandStack,
+                    ColonyLinkWandLinkableHandler.builderSentKey(builderPos, delivered.getItem(), 0));
+        }
+        catch (Exception e)
+        {
+            ColonyLink.LOGGER.debug("[ColonyLink] open-request sent-key skipped: {}", e.getMessage());
+        }
+    }
+
+    /** True when the builder has a live open request matching this stack.
+     *  Mirrors the ticker's fetchBuilderRequest pass 1 (IDeliverable.matches). */
+    private static boolean matchesOpenRequest(AbstractBuildingStructureBuilder bb, ItemStack stack)
+    {
+        try
+        {
+            if (bb.getAllAssignedCitizen().isEmpty()) return false;
+            var citizen = bb.getAllAssignedCitizen().iterator().next();
+            var reqs = bb.getOpenRequests(citizen.getId());
+            if (reqs == null) return false;
+            for (com.minecolonies.api.colony.requestsystem.request.IRequest<?> req : reqs)
+            {
+                if (req.getState() == com.minecolonies.api.colony.requestsystem.request.RequestState.CANCELLED
+                        || req.getState() == com.minecolonies.api.colony.requestsystem.request.RequestState.OVERRULED)
+                    continue;
+                if (!(req.getRequest() instanceof com.minecolonies.api.colony.requestsystem.requestable.IDeliverable del))
+                    continue;
+                if (del.matches(stack)) return true;
+            }
+        }
+        catch (Exception e)
+        {
+            ColonyLink.LOGGER.debug("[ColonyLink] open-request match failed: {}", e.getMessage());
+        }
+        return false;
+    }
+
+    /**
+     * v1.6.2 — True if {@code stack} is something this builder legitimately needs
+     * right now, so a direct ME→hut send is authorised. Mirrors what the GUI /
+     * fetchBuilderRequest would emit, so the intentional tool substitution
+     * (v1.6.0) keeps working: the sent item is often the substituted tool, not the
+     * raw needed-resource item.
+     *
+     * Accepts when {@code stack} is:
+     *   1. a missing build material (getNeededResources, miss > 0), directly or as
+     *      a valid tool substitute of one;
+     *   2. a live open request of the assigned citizen (IDeliverable.matches),
+     *      directly or as a valid tool/armor substitute of one.
+     *
+     * Fail-safe: any unexpected error returns true (never block a legit send on a
+     * bug); the caller already skips this check entirely when the grid/builder
+     * cannot be resolved.
+     */
+    private static boolean isLegitimateBuilderSend(
+            AbstractBuildingStructureBuilder bb, ItemStack stack, int buildingLevel,
+            appeng.api.stacks.KeyCounter inv,
+            appeng.api.networking.crafting.ICraftingService cs, boolean toolUpgrade)
+    {
+        if (stack.isEmpty()) return false;
+        try
+        {
+            BuilderToolHelper.ToolInventoryView invView = BuilderToolHelper.fromAE2Inventory(inv);
+            BuilderToolHelper.ToolCraftingView csView  = BuilderToolHelper.fromAE2CraftingService(cs);
+
+            // 1) Missing build material — direct, or via tool substitution.
+            var needed = bb.getNeededResources();
+            if (needed != null)
+            {
+                for (BuildingBuilderResource res : needed.values())
+                {
+                    if (res.getAmount() - res.getAvailable() <= 0) continue;
+                    ItemStack req = res.getItemStack();
+                    if (ItemStack.isSameItemSameComponents(req, stack)) return true;
+                    if (toolUpgrade && BuilderToolHelper.isTool(req)
+                            && toolSubstituteMatches(req, stack, buildingLevel, invView, csView))
+                        return true;
+                }
+            }
+
+            // 2) Live open request — direct match first (reuses matchesOpenRequest),
+            //    then tool/armor substitution against each request's display stack.
+            if (matchesOpenRequest(bb, stack)) return true;
+            if (toolUpgrade && !bb.getAllAssignedCitizen().isEmpty())
+            {
+                var citizen = bb.getAllAssignedCitizen().iterator().next();
+                var reqs = bb.getOpenRequests(citizen.getId());
+                if (reqs != null)
+                {
+                    for (com.minecolonies.api.colony.requestsystem.request.IRequest<?> req : reqs)
+                    {
+                        if (req.getState() == com.minecolonies.api.colony.requestsystem.request.RequestState.CANCELLED
+                                || req.getState() == com.minecolonies.api.colony.requestsystem.request.RequestState.OVERRULED)
+                            continue;
+                        if (!(req.getRequest() instanceof com.minecolonies.api.colony.requestsystem.requestable.IDeliverable))
+                            continue;
+                        var ds = req.getDisplayStacks();
+                        if (ds == null) continue;
+                        for (ItemStack disp : ds)
+                        {
+                            if (disp.isEmpty()) continue;
+                            if (BuilderToolHelper.isTool(disp)
+                                    && toolSubstituteMatches(disp, stack, buildingLevel, invView, csView))
+                                return true;
+                            if (BuilderToolHelper.isArmor(disp)
+                                    && armorSubstituteMatches(disp, stack, buildingLevel, invView, csView))
+                                return true;
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            ColonyLink.LOGGER.debug("[ColonyLink] isLegitimateBuilderSend failed: {}", e.getMessage());
+            return true; // fail-safe: never block a potentially legitimate send on a bug
+        }
+        return false;
+    }
+
+    /** True if the best tool substitute for {@code requested} equals {@code candidate}. */
+    private static boolean toolSubstituteMatches(ItemStack requested, ItemStack candidate,
+            int level, BuilderToolHelper.ToolInventoryView inv, BuilderToolHelper.ToolCraftingView cs)
+    {
+        BuilderToolHelper.SubstituteResult sub = BuilderToolHelper.findBestTool(requested, level, inv, cs);
+        return sub.action() != BuilderToolHelper.SubstituteAction.NONE
+                && ItemStack.isSameItemSameComponents(sub.displayStack(), candidate);
+    }
+
+    /** True if the best armor substitute for {@code requested} equals {@code candidate}. */
+    private static boolean armorSubstituteMatches(ItemStack requested, ItemStack candidate,
+            int level, BuilderToolHelper.ToolInventoryView inv, BuilderToolHelper.ToolCraftingView cs)
+    {
+        BuilderToolHelper.SubstituteResult sub = BuilderToolHelper.findBestArmor(requested, level, inv, cs);
+        return sub.action() != BuilderToolHelper.SubstituteAction.NONE
+                && ItemStack.isSameItemSameComponents(sub.displayStack(), candidate);
+    }
+
     // ── Primitives d'extraction (void-safe) ───────────────────────────────────
 
     /**
@@ -331,6 +573,7 @@ public class SendToBuilderHandler
      * @return le nouveau remaining
      */
     private static int pullFromMe(
+            ServerPlayer player,
             AEItemKey aeKey, int remaining, MEStorage inventory, IActionSource actionSource,
             ColonyLinkRedirectorBlockEntity redirector, List<IItemHandler> buildingHandlers)
     {
@@ -350,7 +593,14 @@ public class SendToBuilderHandler
             if (!leftOver.isEmpty())
             {
                 // Builder plein → on remet le surplus dans le ME (jamais de void).
-                inventory.insert(aeKey, leftOver.getCount(), Actionable.MODULATE, actionSource);
+                // v1.6.0 — VERIFY the re-insert (an overflow/void cell or a full
+                // network can silently discard); player inventory is the
+                // last-resort sink so nothing is ever voided.
+                long reinserted = inventory.insert(aeKey, leftOver.getCount(),
+                        Actionable.MODULATE, actionSource);
+                int lost = leftOver.getCount() - (int) reinserted;
+                if (lost > 0)
+                    player.getInventory().placeItemBackInInventory(aeKey.toStack(lost));
                 redirector.setState(ColonyLinkRedirectorBlockEntity.RedirectorState.STANDBY);
                 break;
             }

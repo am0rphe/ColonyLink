@@ -106,13 +106,18 @@ public class ColonyLinkCommand
             Map.entry("low_power_threshold_percent",      "Energy — low-power warning threshold 0–100"),
             Map.entry("max_builders_per_wand",            "General — max linked builders per wand (1–10)"),
             Map.entry("wand_range_check",                 "General — enforce WAP range check (true/false)"),
+            Map.entry("send_target",                      "Delivery — where Send delivers (BUILDER/WAREHOUSE)"),
             Map.entry("enable_tool_upgrade",              "Tools — enable tool tier substitution (true/false)"),
             Map.entry("tool_upgrade_send_auto",           "Tools — auto-send substituted tool (true/false)"),
             Map.entry("respect_enchant_level_cap",        "Tools — enforce enchant level cap (true/false)"),
             Map.entry("show_crafting_status",             "Interface — show crafting items in GUI (true/false)"),
             Map.entry("show_no_pattern_items",            "Interface — show no-pattern items in GUI (true/false)"),
             Map.entry("max_resources_displayed",          "Interface — max resource entries in GUI (10–500)"),
-            Map.entry("warehouse_snapshot_validity_ticks","Interface — warehouse snapshot TTL in ticks (20–24000)")
+            Map.entry("warehouse_snapshot_validity_ticks","Interface — warehouse snapshot TTL in ticks (20–24000)"),
+            // v1.6.0 — these two existed in applyConfig but were missing here,
+            // so the gate in cmdConfigSet rejected them before applyConfig ran.
+            Map.entry("enable_advanced_ae_compat",        "AdvancedAE — enable compat when installed (true/false)"),
+            Map.entry("advanced_ae_craft_submission_limit","AdvancedAE — craft submission limit (0–256)")
     );
 
     // ── Métadonnées typées par clé (pour la tab-complétion de la valeur) ──────
@@ -210,6 +215,18 @@ public class ColonyLinkCommand
         String key;
         try { key = StringArgumentType.getString(ctx, "key"); }
         catch (IllegalArgumentException e) { return b.buildFuture(); }
+
+        // v1.6.0 — enum key, special-cased (ConfigSpec only models bool/numeric).
+        if (key.equals("send_target"))
+        {
+            String remE = b.getRemaining().toUpperCase(Locale.ROOT);
+            String curE = ColonyLinkConfig.SEND_TARGET.get().name();
+            for (ColonyLinkConfig.SendTarget t : ColonyLinkConfig.SendTarget.values())
+                if (t.name().startsWith(remE))
+                    b.suggest(t.name(), Component.literal(
+                            t.name().equals(curE) ? "Current value" : "Delivery target"));
+            return b.buildFuture();
+        }
 
         ConfigSpec spec = CONFIG_SPECS.get(key);
         if (spec == null) return b.buildFuture();
@@ -332,6 +349,7 @@ public class ColonyLinkCommand
                 send(src, "§a    ✔ " + s.key);
         send(src, "");
         send(src, "§6  Config snapshot:");
+        send(src, "§7    send_target            : §f" + ColonyLinkConfig.SEND_TARGET.get().name());
         send(src, "§7    ticker_interval_ticks : §f" + ColonyLinkConfig.TICKER_INTERVAL_TICKS.get());
         send(src, "§7    max_builders_per_wand  : §f" + ColonyLinkConfig.MAX_BUILDERS_PER_WAND.get());
         send(src, "§7    enable_tool_upgrade    : §f" + ColonyLinkConfig.ENABLE_TOOL_UPGRADE.get());
@@ -431,7 +449,12 @@ public class ColonyLinkCommand
             boolean changed = applyConfig(key, value);
             if (changed)
             {
-                send(src, "§a[ColonyLink] §f" + key + " §a→ §f" + value);
+                // v1.6.0 — ConfigValue.set() only mutates memory; without this
+                // save() the change was silently lost on server restart.
+                ColonyLinkConfig.SPEC.save();
+                send(src, "§a[ColonyLink] §f" + key + " §a→ §f" + value + " §a(saved)");
+                send(src, "§7Server behaviour updates immediately; connected clients keep their");
+                send(src, "§7synced display values until they reconnect.");
                 ColonyLink.LOGGER.info("[ColonyLink] config set {} = {}", key, value);
             }
             else
@@ -522,6 +545,18 @@ public class ColonyLinkCommand
                 ColonyLinkConfig.WAND_RANGE_CHECK.set(v);
                 return true;
             }
+            // ── [delivery] ────────────────────────────────────────────────────
+            case "send_target" ->
+            {
+                ColonyLinkConfig.SendTarget v;
+                try { v = ColonyLinkConfig.SendTarget.valueOf(value.toUpperCase(Locale.ROOT)); }
+                catch (IllegalArgumentException e)
+                { throw new IllegalArgumentException("Expected BUILDER or WAREHOUSE, got '" + value + "'"); }
+                ColonyLinkConfig.SendTarget old = ColonyLinkConfig.SEND_TARGET.get();
+                if (v == old) return false;
+                ColonyLinkConfig.SEND_TARGET.set(v);
+                return true;
+            }
             // ── [tools] ───────────────────────────────────────────────────────
             case "enable_tool_upgrade" ->
             {
@@ -607,23 +642,25 @@ public class ColonyLinkCommand
     {
         CommandSourceStack src = ctx.getSource();
         // NeoForge 1.21.1: ModConfigSpec.save() writes the current in-memory values back
-        // to colonylink-common.toml. This is the safe and supported operation.
+        // to colonylink-server.toml (Type.SERVER since v1.6.0; the file lives in the
+        // global config folder, with an optional per-world serverconfig/ override).
         //
         // Disk → memory direction: NeoForge handles that automatically via its FileWatcher
-        // whenever the TOML file changes on disk. There is no public API to force-trigger
-        // that reload from code without reflection hacks — we intentionally avoid those.
+        // whenever the TOML file changes on disk (server-side only — already-connected
+        // clients keep their login-synced values until they reconnect). There is no
+        // public API to force-trigger that reload from code without reflection hacks.
         //
         // Practical usage of /reload:
-        //   1. You edited colonylink-common.toml manually on disk
+        //   1. You edited colonylink-server.toml manually on disk
         //      → Wait ~2s for NeoForge's FileWatcher to pick it up automatically, OR restart.
         //   2. You used /colonylink config set to change values in memory
-        //      → /reload persists those changes to the TOML file.
+        //      → since v1.6.0 those are saved immediately; /reload remains a manual save.
         try
         {
             ColonyLinkConfig.SPEC.save();
-            send(src, "§a[ColonyLink] In-memory config saved to §fcolonylink-common.toml§a.");
+            send(src, "§a[ColonyLink] In-memory config saved to §fcolonylink-server.toml§a.");
             send(src, "§7If you edited the TOML manually, NeoForge reloads it automatically");
-            send(src, "§7within ~2s via its file watcher (no command needed).");
+            send(src, "§7within ~2s via its file watcher (server side; clients resync at login).");
             ColonyLink.LOGGER.info("[ColonyLink] Config saved to disk via /colonylink reload");
         }
         catch (Exception e)

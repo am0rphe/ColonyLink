@@ -115,8 +115,10 @@ public class ColonyLink
             NeoForge.EVENT_BUS.addListener(ColonyLinkClient::onKeyInput);
         NeoForge.EVENT_BUS.addListener(ColonyLink::onRightClickBlock);
 
-        modContainer.registerConfig(ModConfig.Type.COMMON, ColonyLinkConfig.SPEC,
-                "colonylink-common.toml");
+        // v1.6.0 — SERVER config: synced to clients on login, lockable by modpacks.
+        // NeoForge derives the filename automatically: config/colonylink-server.toml
+        // (a per-world override in <world>/serverconfig/ wins if that file exists).
+        modContainer.registerConfig(ModConfig.Type.SERVER, ColonyLinkConfig.SPEC);
     }
 
     // ── Screens ───────────────────────────────────────────────────────────────
@@ -209,7 +211,10 @@ public class ColonyLink
 
     private void registerPayloads(RegisterPayloadHandlersEvent event)
     {
-        PayloadRegistrar registrar = event.registrar("1");
+        // v1.6.0 — bumped to "2": SendToWarehousePacket and PackageTokenPacket changed
+        // shape and ResourceStatus gained an ordinal; mismatched client/server versions
+        // must fail the handshake cleanly instead of corrupting codecs.
+        PayloadRegistrar registrar = event.registrar("2");
 
         registrar.playToClient(ColonyLinkPacket.TYPE, ColonyLinkPacket.STREAM_CODEC,
                 (p, c) -> ClientPacketHandler.handleColonyLink(p, c));

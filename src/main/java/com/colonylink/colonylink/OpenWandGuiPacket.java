@@ -49,31 +49,31 @@ public record OpenWandGuiPacket() implements CustomPacketPayload
             ItemStack wand = ColonyLinkServerTicker.findWandInInventory(sp);
             if (wand == null)
             {
-                sp.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                        "§c[ColonyLink] No Clipboard found in inventory."));
+                sp.sendSystemMessage(net.minecraft.network.chat.Component.translatable(
+                        "colonylink.open_gui.no_clipboard"));
                 return;
             }
 
             // Vérifications identiques à ColonyLinkWand.use()
             if (WandEnergyStorage.getStoredRF(wand) <= 0)
             {
-                sp.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                        "§c[ColonyLink] Out of Power! Charge Clipboard in AE2 Charger or FE charger."));
+                sp.sendSystemMessage(net.minecraft.network.chat.Component.translatable(
+                        "colonylink.wand.msg.out_of_power"));
                 return;
             }
 
             if (!ColonyLinkWandLinkableHandler.isLinked(wand))
             {
-                sp.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                        "§cThis Clipboard is not linked to an AE2 network!"));
+                sp.sendSystemMessage(net.minecraft.network.chat.Component.translatable(
+                        "colonylink.wand.msg.not_linked"));
                 return;
             }
 
             List<BuilderEntry> entries = ColonyLinkWandLinkableHandler.getBuilderEntries(wand);
             if (entries.isEmpty())
             {
-                sp.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                        "§eNo Builder's Hut linked yet. Sneak + Right-click a Builder's Hut first."));
+                sp.sendSystemMessage(net.minecraft.network.chat.Component.translatable(
+                        "colonylink.wand.msg.no_builder_yet"));
                 return;
             }
 

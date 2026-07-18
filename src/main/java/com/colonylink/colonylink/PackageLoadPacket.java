@@ -51,8 +51,8 @@ public record PackageLoadPacket() implements CustomPacketPayload
         int space = maxStore - current;
         if (space <= 0)
         {
-            player.sendSystemMessage(Component.literal(
-                    "§e[ColonyLink] Clipboard is full (64/64 packages stored)."));
+            player.sendSystemMessage(Component.translatable(
+                    "colonylink.pkg_load.full", current, maxStore));
             net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player,
                     new PackageTokenSyncPacket(current));
             return;
@@ -72,16 +72,15 @@ public record PackageLoadPacket() implements CustomPacketPayload
 
         if (loaded == 0)
         {
-            player.sendSystemMessage(Component.literal(
-                    "§c[ColonyLink] No ColonyLink Packages found in inventory!"));
+            player.sendSystemMessage(Component.translatable(
+                    "colonylink.pkg_load.none"));
         }
         else
         {
             ColonyLinkWandLinkableHandler.addCitizenPackages(wand, loaded);
             int newCount = ColonyLinkWandLinkableHandler.getCitizenPackages(wand);
-            player.sendSystemMessage(Component.literal(
-                    "§a[ColonyLink] Loaded §f" + loaded + " package"
-                            + (loaded != 1 ? "s" : "") + " §ainto Clipboard (§f" + newCount + "§a stored)."));
+            player.sendSystemMessage(Component.translatable(
+                    "colonylink.pkg_load.loaded", loaded, newCount));
         }
 
         net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player,

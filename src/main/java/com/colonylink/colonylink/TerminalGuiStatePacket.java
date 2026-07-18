@@ -61,9 +61,19 @@ public record TerminalGuiStatePacket(boolean open, BlockPos hostPos, int sideByt
     {
         var be = player.serverLevel().getBlockEntity(pos);
         if (!(be instanceof IPartHost host)) return null;
-        Direction side = sideOrd < Direction.values().length
+        Direction side = sideOrd >= 0 && sideOrd < Direction.values().length
                 ? Direction.values()[sideOrd] : Direction.NORTH;
         var raw = host.getPart(side);
-        return raw instanceof WarehouseLinkTerminalPart p ? p : null;
+        if (!(raw instanceof WarehouseLinkTerminalPart p)) return null;
+
+        // v1.6.2 — the client is never authoritative on which terminal it targets.
+        // Only accept the part the player actually has open on the server: this closes
+        // position spoofing, "no menu open", and targeting another player's terminal.
+        // The menu is only opened by onUseWithoutItem, after a physical in-range
+        // interaction and checkPermission.
+        if (!(player.containerMenu instanceof WarehouseLinkTerminalMenu menu)
+                || menu.getPart() != p)
+            return null;
+        return p;
     }
 }

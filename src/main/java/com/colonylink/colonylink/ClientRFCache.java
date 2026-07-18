@@ -1,6 +1,5 @@
 package com.colonylink.colonylink;
 
-import net.minecraft.client.Minecraft;
 import net.minecraft.world.item.ItemStack;
 
 /**
@@ -15,13 +14,17 @@ import net.minecraft.world.item.ItemStack;
  *
  * Solution :
  * ──────────
- * Le serveur ne touche PLUS au NBT de la wand pour le drain passif.
- * Il envoie la valeur RF dans ColonyLinkPacket (rfStored/rfMax) toutes les 40t.
- * Le client stocke cette valeur ici et ColonyLinkWand.getBarWidth/getBarColor
- * lisent ce cache au lieu du NBT — pas de re-render item, pas de pop.
+ * Ce cache masque le rendu de la BARRE : ColonyLinkWand.getBarWidth/getBarColor
+ * lisent la valeur poussée par ColonyLinkPacket (rfStored/rfMax) au lieu de relire
+ * le NBT à chaque frame — la barre ne clignote donc plus.
  *
- * Le NBT réel n'est modifié que lors des actions (craft/send) où le coût est
- * prélevé côté serveur, ce qui est acceptable (action ponctuelle, pas de loop).
+ * Note (v1.6.2) — correction d'une doc trompeuse : le serveur CONTINUE bel et bien
+ * de drainer le RF dans le NBT de la wand au repos (drain passif, GUI ouvert : voir
+ * ColonyLinkServerTicker.onServerTick + WandEnergyStorage.setStoredRF). Le RF étant
+ * stocké en NBT, le décrémenter implique nécessairement une écriture NBT. Ce cache
+ * supprime uniquement le clignotement VISUEL de la barre ; l'écriture NBT et la
+ * resync de slot associées subsistent (coût réseau minime, décision v1.6.2 =
+ * conserver le drain passif tel quel).
  *
  * Usage :
  * ───────
@@ -95,9 +98,11 @@ public class ClientRFCache
         else
         {
             stored = WandEnergyStorage.getStoredRF(stack);
-            max    = ColonyLinkConfig.WAND_RF_CAPACITY.get();
+            max    = ColonyLinkConfig.safeGet(ColonyLinkConfig.WAND_RF_CAPACITY, 160_000L);
         }
-        return max > 0 ? (int)(stored * 100L / max) : 0;
+        // v1.6.1 — clamp [0..100] : si le cap est abaisse sous le stored, on plafonne
+        // l'affichage au lieu d'un pourcentage aberrant (ex. 625%).
+        return max > 0 ? (int) Math.max(0L, Math.min(100L, stored * 100L / max)) : 0;
     }
 
     /**
@@ -114,10 +119,12 @@ public class ClientRFCache
         else
         {
             stored = WandEnergyStorage.getStoredRF(stack);
-            max    = ColonyLinkConfig.WAND_RF_CAPACITY.get();
+            max    = ColonyLinkConfig.safeGet(ColonyLinkConfig.WAND_RF_CAPACITY, 160_000L);
         }
         if (max <= 0) return 0;
-        return (int)(stored * 13L / max);
+        // v1.6.1 — clamp [0..13] : evite que la barre deborde du slot (barre verte qui
+        // traverse l'ecran) quand stored > max apres une baisse de capacite.
+        return (int) Math.max(0L, Math.min(13L, stored * 13L / max));
     }
 
     /**
@@ -126,7 +133,7 @@ public class ClientRFCache
     public static int getBarColor(ItemStack stack)
     {
         int pct = getPercent(stack);
-        int threshold = ColonyLinkConfig.LOW_POWER_THRESHOLD_PERCENT.get();
+        int threshold = ColonyLinkConfig.safeGet(ColonyLinkConfig.LOW_POWER_THRESHOLD_PERCENT, 10);
         if (pct <= threshold) return 0xFF2222; // rouge
         if (pct <= 30)        return 0xFFAA00; // jaune
         return 0x22CC22;                        // vert

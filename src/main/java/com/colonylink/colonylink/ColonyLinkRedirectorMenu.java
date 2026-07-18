@@ -79,7 +79,14 @@ public class ColonyLinkRedirectorMenu extends AbstractContainerMenu
     @Override
     public boolean stillValid(Player player)
     {
-        return true;
+        // v1.6.2 — range check (like a chest, 8 blocks) instead of always-true: the
+        // buffer GUI closes if the player walks away or the redirector is removed.
+        if (blockEntity == null || blockEntity.isRemoved()) return false;
+        var hp = blockEntity.getBlockPos();
+        double dx = hp.getX() + 0.5 - player.getX();
+        double dy = hp.getY() + 0.5 - player.getY();
+        double dz = hp.getZ() + 0.5 - player.getZ();
+        return (dx * dx + dy * dy + dz * dz) <= 64.0;
     }
 
     @Override

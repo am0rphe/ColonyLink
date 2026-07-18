@@ -49,8 +49,15 @@ public class ColonyLinkScreen extends Screen
     private List<CitizensPacket.CitizenRequestEntry> citizenEntries = new ArrayList<>();
     private boolean citizensLoading = false;
     private int citizenPackageCount = 0; // count synced depuis serveur
-    // Items déjà envoyés cette session — visuellement grisés mais recliquables
+    // v1.6.0 — READ-ONLY cache of the server-written sent keys (wand NBT is
+    // authoritative and synced by the server; the client never writes it).
     private final java.util.Set<String> sentCitizenRequests = new java.util.HashSet<>();
+    // v1.6.0 — optimistic overlays: rows grey out immediately on click, and the
+    // server truth takes over on the next sync. Time-bounded so a server-side
+    // rejection cannot leave a row stuck grey (same pattern as craftHoldUntil).
+    private static final long PENDING_HOLD_MS = 5_000L;
+    private final java.util.Map<String, Long> optimisticCitizenSentUntil = new java.util.HashMap<>();
+    private final java.util.Map<String, Long> pendingSentUntil = new java.util.HashMap<>();
 
     private List<ColonyLinkPacket.ResourceEntry> entries = new ArrayList<>();
     private BlockPos builderPos      = BlockPos.ZERO;
@@ -99,7 +106,43 @@ public class ColonyLinkScreen extends Screen
 
     private long getSnapshotValidityMs()
     {
+        // v1.6.0 — the config is Type.SERVER now: unavailable outside a world.
+        // This finally wires the SNAPSHOT_VALIDITY_MS fallback (dead since it
+        // was written) instead of throwing on an unloaded spec.
+        if (!ColonyLinkConfig.isLoaded()) return SNAPSHOT_VALIDITY_MS;
         return ColonyLinkConfig.WAREHOUSE_SNAPSHOT_VALIDITY_TICKS.get() * 50L; // ticks → ms
+    }
+
+    // ── v1.6.0 — delivery mode helpers (client side, synced SERVER config) ────
+
+    private static boolean isWarehouseDeliveryMode()
+    {
+        return ColonyLinkConfig.getSendTarget() == ColonyLinkConfig.SendTarget.WAREHOUSE;
+    }
+
+    /**
+     * Status actually shown/acted on for a builder resource row. In WAREHOUSE
+     * mode two client-side overrides apply on top of the server status:
+     *   - optimistic pending: the player just clicked Send (grey immediately,
+     *     server truth takes over within PENDING_HOLD_MS);
+     *   - finished Domum block already in the warehouse: a courier will deliver
+     *     it on its own — the direct warehouse→builder bypass is a BUILDER-mode
+     *     feature, so the row shows as pending instead of offering it.
+     */
+    private ResourceStatus displayStatus(ResourceStatus raw, ItemStack stack)
+    {
+        if (raw == ResourceStatus.SENT_PENDING || !isWarehouseDeliveryMode()) return raw;
+        Long until = pendingSentUntil.get(pendingKey(stack));
+        if (until != null && until > System.currentTimeMillis()) return ResourceStatus.SENT_PENDING;
+        if (isDomumFinishedInWarehouse(stack)) return ResourceStatus.SENT_PENDING;
+        return raw;
+    }
+
+    private static String pendingKey(ItemStack s) { return craftKey(s); }
+
+    private void markPendingSent(ItemStack stack)
+    {
+        pendingSentUntil.put(pendingKey(stack), System.currentTimeMillis() + PENDING_HOLD_MS);
     }
     private enum WareCheckState { IDLE, LOADING, DONE }
     private WareCheckState wareCheckState = WareCheckState.IDLE;
@@ -246,18 +289,38 @@ public class ColonyLinkScreen extends Screen
     {
         this.citizenEntries = packet.entries();
         this.citizensLoading = false;
-        // Reconstruire les clés actives pour pruner les requests résolues
-        java.util.Set<String> activeKeys = new java.util.HashSet<>();
-        for (CitizensPacket.CitizenRequestEntry ce : packet.entries())
-            activeKeys.add(sentKey(ce));
-        // Pruner la NBT wand + resynchroniser le cache
+        // v1.6.0 — the SERVER now owns citizen_sent_keys: keys are added in
+        // PackageTokenPacket.handle and pruned in CitizensScanHandler, on the
+        // authoritative wand stack (synced to us automatically). The client
+        // only rebuilds its read cache — ZERO client-side NBT writes.
+        refreshSentCache();
+    }
+
+    /**
+     * v1.6.0 — rebuilds the read-only sent-keys cache from the (server-written,
+     * auto-synced) wand NBT and drops optimistic overlays the server confirmed
+     * (now in NBT) or that expired. The overlay itself is checked live at
+     * render/click time via isCitizenSentDisplayed(), so a server-side
+     * rejection un-greys the row after PENDING_HOLD_MS without waiting for the
+     * next citizens scan.
+     */
+    private void refreshSentCache()
+    {
+        this.sentCitizenRequests.clear();
         net.minecraft.world.item.ItemStack wand = getClientWand();
         if (!wand.isEmpty())
-        {
-            ColonyLinkWandLinkableHandler.pruneSentRequestKeys(wand, activeKeys);
-            this.sentCitizenRequests.clear();
             this.sentCitizenRequests.addAll(ColonyLinkWandLinkableHandler.getSentRequestKeys(wand));
-        }
+        long now = System.currentTimeMillis();
+        this.optimisticCitizenSentUntil.entrySet().removeIf(e ->
+                this.sentCitizenRequests.contains(e.getKey()) || e.getValue() <= now);
+    }
+
+    /** True if a citizen row must show as sent: server truth OR live optimistic overlay. */
+    private boolean isCitizenSentDisplayed(String key)
+    {
+        if (sentCitizenRequests.contains(key)) return true;
+        Long until = optimisticCitizenSentUntil.get(key);
+        return until != null && until > System.currentTimeMillis();
     }
 
     public void updatePackageCount(int count)
@@ -280,9 +343,8 @@ public class ColonyLinkScreen extends Screen
 
     private static String sentKey(CitizensPacket.CitizenRequestEntry ce)
     {
-        String itemId = net.minecraft.core.registries.BuiltInRegistries.ITEM
-                .getKey(ce.stack().getItem()).toString();
-        return ce.citizenName() + "|" + itemId;
+        // v1.6.0 — prefixed format ("c|name|itemId"), shared with the server.
+        return ColonyLinkWandLinkableHandler.citizenSentKey(ce.citizenName(), ce.stack().getItem());
     }
 
     public void updateEntries(List<ColonyLinkPacket.ResourceEntry> newEntries, String builderName,
@@ -398,20 +460,11 @@ public class ColonyLinkScreen extends Screen
         super.init();
         int serverTabIndex = (activeTabIndex == CITIZENS_TAB_INDEX) ? 0 : activeTabIndex;
         PacketDistributor.sendToServer(new GuiStatePacket(true, builderPos, serverTabIndex));
-        // Lire le count packages + sent keys depuis la wand NBT côté client
-        if (this.minecraft != null && this.minecraft.player != null)
-        {
-            for (net.minecraft.world.item.ItemStack s : this.minecraft.player.getInventory().items)
-            {
-                if (s.getItem() instanceof ColonyLinkWand)
-                {
-                    this.citizenPackageCount = ColonyLinkWandLinkableHandler.getCitizenPackages(s);
-                    this.sentCitizenRequests.clear();
-                    this.sentCitizenRequests.addAll(ColonyLinkWandLinkableHandler.getSentRequestKeys(s));
-                    break;
-                }
-            }
-        }
+        // Lire le count packages + sent keys depuis la wand NBT côté client (read-only)
+        net.minecraft.world.item.ItemStack initWand = getClientWand();
+        if (!initWand.isEmpty())
+            this.citizenPackageCount = ColonyLinkWandLinkableHandler.getCitizenPackages(initWand);
+        refreshSentCache();
     }
 
     /**
@@ -479,55 +532,60 @@ public class ColonyLinkScreen extends Screen
     private int getButtonColor(ResourceStatus status)
     {
         return switch (status) {
-            case AVAILABLE  -> 0xFF004488;
-            case CRAFTABLE  -> 0xFF005500;
-            case NO_PATTERN -> 0xFF550000;
-            case CRAFTING   -> 0xFF885500;
-            case MISSING    -> 0xFF5D3A00;
+            case AVAILABLE    -> 0xFF004488;
+            case CRAFTABLE    -> 0xFF005500;
+            case NO_PATTERN   -> 0xFF550000;
+            case CRAFTING     -> 0xFF885500;
+            case MISSING      -> 0xFF5D3A00;
+            case SENT_PENDING -> 0xFF2A2A2A; // grey — same palette as the citizens "Sent" button
         };
     }
 
     private int getButtonHoverColor(ResourceStatus status)
     {
         return switch (status) {
-            case AVAILABLE  -> 0xFF0066CC;
-            case CRAFTABLE  -> 0xFF007700;
-            case NO_PATTERN -> 0xFF660000;
-            case CRAFTING   -> 0xFF885500;
-            case MISSING    -> 0xFF8B5E00;
+            case AVAILABLE    -> 0xFF0066CC;
+            case CRAFTABLE    -> 0xFF007700;
+            case NO_PATTERN   -> 0xFF660000;
+            case CRAFTING     -> 0xFF885500;
+            case MISSING      -> 0xFF8B5E00;
+            case SENT_PENDING -> 0xFF3A3A3A;
         };
     }
 
     private int getButtonTextColor(ResourceStatus status)
     {
         return switch (status) {
-            case AVAILABLE  -> 0x4488FF;
-            case CRAFTABLE  -> 0x00FF00;
-            case NO_PATTERN -> 0xFF4444;
-            case CRAFTING   -> 0xFFAA00;
-            case MISSING    -> 0xFFCC66;
+            case AVAILABLE    -> 0x4488FF;
+            case CRAFTABLE    -> 0x00FF00;
+            case NO_PATTERN   -> 0xFF4444;
+            case CRAFTING     -> 0xFFAA00;
+            case MISSING      -> 0xFFCC66;
+            case SENT_PENDING -> 0x888888;
         };
     }
 
     private String getButtonText(ResourceStatus status)
     {
         return switch (status) {
-            case AVAILABLE  -> Component.translatable("colonylink.screen.btn.send").getString();
-            case CRAFTABLE  -> Component.translatable("colonylink.screen.btn.craft").getString();
-            case NO_PATTERN -> Component.translatable("colonylink.screen.btn.no_pattern").getString();
-            case CRAFTING   -> Component.translatable("colonylink.screen.btn.crafting").getString();
-            case MISSING    -> Component.translatable("colonylink.screen.btn.missing").getString();
+            case AVAILABLE    -> Component.translatable("colonylink.screen.btn.send").getString();
+            case CRAFTABLE    -> Component.translatable("colonylink.screen.btn.craft").getString();
+            case NO_PATTERN   -> Component.translatable("colonylink.screen.btn.no_pattern").getString();
+            case CRAFTING     -> Component.translatable("colonylink.screen.btn.crafting").getString();
+            case MISSING      -> Component.translatable("colonylink.screen.btn.missing").getString();
+            case SENT_PENDING -> Component.translatable("colonylink.screen.btn.sent_pending").getString();
         };
     }
 
     private String getRequestButtonText(ResourceStatus status)
     {
         return switch (status) {
-            case AVAILABLE  -> Component.translatable("colonylink.screen.btn.fulfill").getString();
-            case CRAFTABLE  -> Component.translatable("colonylink.screen.btn.craft").getString();
-            case NO_PATTERN -> Component.translatable("colonylink.screen.btn.no_pattern").getString();
-            case CRAFTING   -> Component.translatable("colonylink.screen.btn.crafting").getString();
-            case MISSING    -> Component.translatable("colonylink.screen.btn.missing").getString();
+            case AVAILABLE    -> Component.translatable("colonylink.screen.btn.fulfill").getString();
+            case CRAFTABLE    -> Component.translatable("colonylink.screen.btn.craft").getString();
+            case NO_PATTERN   -> Component.translatable("colonylink.screen.btn.no_pattern").getString();
+            case CRAFTING     -> Component.translatable("colonylink.screen.btn.crafting").getString();
+            case MISSING      -> Component.translatable("colonylink.screen.btn.missing").getString();
+            case SENT_PENDING -> Component.translatable("colonylink.screen.btn.sent_pending").getString();
         };
     }
 
@@ -556,6 +614,8 @@ public class ColonyLinkScreen extends Screen
 
     private String getButtonTextWithWarehouse(ResourceStatus status, ItemStack stack)
     {
+        // v1.6.0 — pending always wins over the warehouse fast-path hints.
+        if (status == ResourceStatus.SENT_PENDING) return getButtonText(status);
         // v1.4.9 — finished Domum block in the warehouse → delivered directly (Send).
         if (isDomumFinishedInWarehouse(stack)) return Component.translatable("colonylink.screen.btn.send_wh").getString();
         if (status == ResourceStatus.NO_PATTERN)
@@ -569,6 +629,8 @@ public class ColonyLinkScreen extends Screen
 
     private int getButtonColorWithWarehouse(ResourceStatus status, ItemStack stack, boolean hovered)
     {
+        // v1.6.0 — pending always wins over the warehouse fast-path hints.
+        if (status == ResourceStatus.SENT_PENDING) return getButtonColor(status);
         // v1.4.9 — finished Domum block in the warehouse → Send color (green).
         if (isDomumFinishedInWarehouse(stack)) return hovered ? 0xFF336655 : 0xFF224433;
         if (status == ResourceStatus.NO_PATTERN)
@@ -631,6 +693,12 @@ public class ColonyLinkScreen extends Screen
     {
         if (isOutOfPower()) return false;
         if (redirectorState.equals("N/A") || redirectorState.equals("NOT_LINKED")) return false;
+        // v1.6.0 — WAREHOUSE mode: only ME-available rows are sendable (the
+        // Domum-in-warehouse fast path is a BUILDER-mode courier bypass, and
+        // pending rows are excluded by displayStatus).
+        if (isWarehouseDeliveryMode())
+            return entries.stream().anyMatch(e ->
+                    displayStatus(e.status(), e.stack()) == ResourceStatus.AVAILABLE);
         return entries.stream().anyMatch(e ->
                 e.status() == ResourceStatus.AVAILABLE || isDomumFinishedInWarehouse(e.stack()));
     }
@@ -995,7 +1063,7 @@ public class ColonyLinkScreen extends Screen
                 + builderRequest.stack().getDisplayName().getString(), x + 28, pY + 17, 0xFFFFFF, false);
 
         int rbX = getReqBtnX(), rbY = getReqBtnY(), rbW = getReqBtnW(), rbH = getReqBtnH();
-        ResourceStatus rs = builderRequest.status();
+        ResourceStatus rs = displayStatus(builderRequest.status(), builderRequest.stack());
         boolean hov = mx >= rbX && mx <= rbX + rbW && my >= rbY && my <= rbY + rbH;
         int bg = _cr.applyOpacity(hov && isButtonClickable(rs) ? getButtonHoverColor(rs) : getButtonColor(rs));
         g.fill(rbX, rbY, rbX + rbW, rbY + rbH, bg);
@@ -1007,7 +1075,14 @@ public class ColonyLinkScreen extends Screen
 
         // Tooltip survol bouton ou ligne item — affiche les infos de substitution si présentes
         boolean lineHov = mx >= x + 10 && mx <= rbX - 2 && my >= pY + 10 && my <= pY + 30;
-        if ((hov || lineHov) && !builderRequest.tooltipLines().isEmpty())
+        if ((hov || lineHov) && rs == ResourceStatus.SENT_PENDING
+                && builderRequest.status() != ResourceStatus.SENT_PENDING)
+        {
+            // v1.6.0 — client-side pending overlay (see displayStatus).
+            pendingTooltipOut.clear();
+            pendingTooltipOut.add(Component.translatable("colonylink.screen.tip.sent_pending"));
+        }
+        else if ((hov || lineHov) && !builderRequest.tooltipLines().isEmpty())
         {
             pendingTooltipOut.clear();
             for (Component line : builderRequest.tooltipLines())
@@ -1266,7 +1341,7 @@ public class ColonyLinkScreen extends Screen
                     g.drawString(this.font, "§7" + ce.citizenName() + " §8· §7" + ce.jobName(),
                             x + 29, ey + 12, 0xAAAAAA, false);
 
-                    boolean alreadySent = sentCitizenRequests.contains(sentKey(ce));
+                    boolean alreadySent = isCitizenSentDisplayed(sentKey(ce));
                     if (alreadySent && hasBtn)
                     {
                         // Grisé — déjà envoyé, mais recliquable pour renvoyer
@@ -1342,7 +1417,8 @@ public class ColonyLinkScreen extends Screen
                 int idx = i + scrollOffset;
                 var entry = entries.get(idx);
                 ItemStack stack = entry.stack();
-                ResourceStatus status = entry.status();
+                // v1.6.0 — client-side pending overlays (WAREHOUSE mode only).
+                ResourceStatus status = displayStatus(entry.status(), stack);
                 int rc = entry.realCount();
                 int ey = listY + i * ENTRY_HEIGHT;
 
@@ -1422,7 +1498,14 @@ public class ColonyLinkScreen extends Screen
                 int bx2 = btn[0], by2 = btn[1], bw2 = btn[2], bh2 = btn[3];
                 boolean hov = mx >= bx2 && mx <= bx2 + bw2 && my >= by2 && my <= by2 + bh2;
 
-                if (hov && !entry.tooltipLines().isEmpty())
+                if (hov && status == ResourceStatus.SENT_PENDING && entry.status() != ResourceStatus.SENT_PENDING)
+                {
+                    // v1.6.0 — client-side pending overlay: the server tooltip
+                    // doesn't know yet, show the pending explanation instead.
+                    tip.clear();
+                    tip.add(Component.translatable("colonylink.screen.tip.sent_pending"));
+                }
+                else if (hov && !entry.tooltipLines().isEmpty())
                 {
                     tip.clear();
                     for (Component ln : entry.tooltipLines()) tip.add(ln);
@@ -1574,7 +1657,8 @@ public class ColonyLinkScreen extends Screen
                 tip.clear();
                 tip.add(Component.translatable("colonylink.screen.tip.locate_builder"));
                 tip.add(Component.translatable("colonylink.screen.tip.locate_desc"));
-                tip.add(Component.translatable("colonylink.screen.tip.locate_dur", ColonyLinkConfig.LOCATE_GLOW_DURATION_SECONDS.get()));
+                tip.add(Component.translatable("colonylink.screen.tip.locate_dur",
+                        ColonyLinkConfig.safeGet(ColonyLinkConfig.LOCATE_GLOW_DURATION_SECONDS, 8)));
             }
         }
 
@@ -1672,16 +1756,11 @@ public class ColonyLinkScreen extends Screen
                     citizensLoading  = true;
                     citizenEntries   = new java.util.ArrayList<>();
                     PacketDistributor.sendToServer(new CitizensRequestPacket());
-                    // Rafraîchir le count + sent keys depuis la wand NBT
-                    if (this.minecraft != null && this.minecraft.player != null)
-                        for (net.minecraft.world.item.ItemStack _ws : this.minecraft.player.getInventory().items)
-                            if (_ws.getItem() instanceof ColonyLinkWand)
-                            {
-                                this.citizenPackageCount = ColonyLinkWandLinkableHandler.getCitizenPackages(_ws);
-                                this.sentCitizenRequests.clear();
-                                this.sentCitizenRequests.addAll(ColonyLinkWandLinkableHandler.getSentRequestKeys(_ws));
-                                break;
-                            }
+                    // Rafraîchir le count + sent keys depuis la wand NBT (read-only)
+                    net.minecraft.world.item.ItemStack tabWand = getClientWand();
+                    if (!tabWand.isEmpty())
+                        this.citizenPackageCount = ColonyLinkWandLinkableHandler.getCitizenPackages(tabWand);
+                    refreshSentCache();
                 }
                 return true;
             }
@@ -1751,24 +1830,36 @@ public class ColonyLinkScreen extends Screen
         boolean hasReq = builderRequest != null && !builderRequest.stack().isEmpty() && builderRequest.count() > 0;
         if (hasReq)
         {
+            // v1.6.0 — act on the DISPLAYED status: pending rows are never
+            // clickable, and the mode routes Send to the right packet.
+            ResourceStatus reqStatus = displayStatus(builderRequest.status(), builderRequest.stack());
             int rbX2 = getReqBtnX(), rbY2 = getReqBtnY(), rbW2 = getReqBtnW(), rbH2 = getReqBtnH();
             if (mx >= rbX2 && mx <= rbX2 + rbW2 && my >= rbY2 && my <= rbY2 + rbH2
-                    && isButtonClickable(builderRequest.status(), builderRequest.stack()))
+                    && isButtonClickable(reqStatus, builderRequest.stack()))
             {
                 // v1.4.9 — finished Domum block in the warehouse → deliver straight to the
                 // builder (Warehouse -> Builder), bypassing AE2 and the terminal queue.
-                if (isDomumFinishedInWarehouse(builderRequest.stack()))
+                // v1.6.0 — BUILDER mode only: in WAREHOUSE mode the courier handles it
+                // (the row shows as pending via displayStatus and is not clickable).
+                if (!isWarehouseDeliveryMode() && isDomumFinishedInWarehouse(builderRequest.stack()))
                 {
                     PacketDistributor.sendToServer(new SendToBuilderPacket(
                             builderRequest.stack(), builderPos, builderRequest.count()));
                     return true;
                 }
-                switch (builderRequest.status())
+                switch (reqStatus)
                 {
                     case AVAILABLE ->
                     {
-                        PacketDistributor.sendToServer(new SendToBuilderPacket(
-                                builderRequest.stack(), builderPos, builderRequest.count()));
+                        if (isWarehouseDeliveryMode())
+                        {
+                            PacketDistributor.sendToServer(new SendToWarehousePacket(
+                                    builderRequest.stack(), builderPos, builderRequest.count()));
+                            markPendingSent(builderRequest.stack());
+                        }
+                        else
+                            PacketDistributor.sendToServer(new SendToBuilderPacket(
+                                    builderRequest.stack(), builderPos, builderRequest.count()));
                     }
                     case CRAFTABLE ->
                     {
@@ -1842,27 +1933,48 @@ public class ColonyLinkScreen extends Screen
         int saX = getSendAllBtnX(), saY = getSendAllBtnY(), saW = getSendAllBtnW(), saH = getSendAllBtnH();
         if (mx >= saX && mx <= saX + saW && my >= saY && my <= saY + saH && hasSendableItems())
         {
-            // v1.4.9 — Component.translatable("colonylink.screen.btn.send_all").getString() inclut aussi les blocs Domum finis détectés en warehouse
+            boolean warehouseAll = isWarehouseDeliveryMode();
+            // v1.4.9 — Send All inclut aussi les blocs Domum finis détectés en warehouse
             // (en plus des items AVAILABLE en ME). Tout part via SendToBuilderPacket ; le
             // serveur choisit la source (ME / warehouse) selon le toggle de priorité.
+            // v1.6.0 — en mode WAREHOUSE : uniquement les lignes AVAILABLE (statut
+            // affiché — les lignes pending sont exclues), via SendToWarehousePacket.
             boolean prioritySent = builderRequest != null && !builderRequest.stack().isEmpty()
-                    && (builderRequest.status() == ResourceStatus.AVAILABLE
-                    || isDomumFinishedInWarehouse(builderRequest.stack()));
+                    && (displayStatus(builderRequest.status(), builderRequest.stack()) == ResourceStatus.AVAILABLE
+                    || (!warehouseAll && isDomumFinishedInWarehouse(builderRequest.stack())));
             if (prioritySent)
             {
-                PacketDistributor.sendToServer(new SendToBuilderPacket(
-                        builderRequest.stack(), builderPos, builderRequest.count()));
+                if (warehouseAll)
+                {
+                    PacketDistributor.sendToServer(new SendToWarehousePacket(
+                            builderRequest.stack(), builderPos, builderRequest.count()));
+                    markPendingSent(builderRequest.stack());
+                }
+                else
+                    PacketDistributor.sendToServer(new SendToBuilderPacket(
+                            builderRequest.stack(), builderPos, builderRequest.count()));
             }
             for (var entry : entries)
             {
-                if (entry.status() != ResourceStatus.AVAILABLE
+                if (warehouseAll)
+                {
+                    if (displayStatus(entry.status(), entry.stack()) != ResourceStatus.AVAILABLE) continue;
+                }
+                else if (entry.status() != ResourceStatus.AVAILABLE
                         && !isDomumFinishedInWarehouse(entry.stack())) continue;
                 // Éviter le double envoi si la priority request est aussi dans la liste
                 if (prioritySent
                         && ItemStack.isSameItemSameComponents(entry.stack(), builderRequest.stack()))
                     continue;
-                PacketDistributor.sendToServer(new SendToBuilderPacket(
-                        entry.stack(), builderPos, entry.realCount()));
+                if (warehouseAll)
+                {
+                    PacketDistributor.sendToServer(new SendToWarehousePacket(
+                            entry.stack(), builderPos, entry.realCount()));
+                    markPendingSent(entry.stack());
+                }
+                else
+                    PacketDistributor.sendToServer(new SendToBuilderPacket(
+                            entry.stack(), builderPos, entry.realCount()));
             }
             return true;
         }
@@ -1902,19 +2014,21 @@ public class ColonyLinkScreen extends Screen
                                 this.minecraft.player.sendSystemMessage(net.minecraft.network.chat.Component.translatable("colonylink.screen.msg.no_packages"));
                             return true;
                         }
-                        boolean wasAlreadySent = sentCitizenRequests.contains(sentKey(ce));
+                        boolean wasAlreadySent = isCitizenSentDisplayed(sentKey(ce));
                         String ceKey = sentKey(ce);
                         String itemLabel = "§f" + ce.count() + "x " + stripItemName(ce.stack().getDisplayName().getString());
 
                         if (!wasAlreadySent)
                         {
-                            // Premier clic : action normale (Send ou Craft selon disponibilité)
-                            sentCitizenRequests.add(ceKey);
-                            net.minecraft.world.item.ItemStack wandForSent = getClientWand();
-                            if (!wandForSent.isEmpty())
-                                ColonyLinkWandLinkableHandler.addSentRequestKey(wandForSent, ceKey);
+                            // Premier clic : action normale (Send ou Craft selon disponibilité).
+                            // v1.6.0 — ZERO client-side NBT write: the SERVER records the
+                            // key on success (PackageTokenPacket.handle). The in-memory
+                            // optimistic overlay keeps the row grey during the round-trip;
+                            // it expires if the server rejected (refund path → no key).
+                            optimisticCitizenSentUntil.put(ceKey,
+                                    System.currentTimeMillis() + PENDING_HOLD_MS);
                             PacketDistributor.sendToServer(new PackageTokenPacket(
-                                    ce.stack(), ce.count(), redirectorPos, !canSend));
+                                    ce.stack(), ce.count(), redirectorPos, !canSend, ce.citizenName()));
                             citizenPackageCount = Math.max(0, citizenPackageCount - 1);
                         }
                         else
@@ -1928,10 +2042,10 @@ public class ColonyLinkScreen extends Screen
                             }
                             // Craft d'abord
                             PacketDistributor.sendToServer(new PackageTokenPacket(
-                                    ce.stack(), ce.count(), redirectorPos, true));
+                                    ce.stack(), ce.count(), redirectorPos, true, ce.citizenName()));
                             // Puis send
                             PacketDistributor.sendToServer(new PackageTokenPacket(
-                                    ce.stack(), ce.count(), redirectorPos, false));
+                                    ce.stack(), ce.count(), redirectorPos, false, ce.citizenName()));
                             citizenPackageCount = Math.max(0, citizenPackageCount - 2);
                             if (this.minecraft != null && this.minecraft.player != null)
                                 this.minecraft.player.sendSystemMessage(net.minecraft.network.chat.Component.translatable("colonylink.screen.msg.resending", itemLabel));
@@ -1948,19 +2062,22 @@ public class ColonyLinkScreen extends Screen
         {
             int idx = i + scrollOffset;
             var entry = entries.get(idx);
-            if (!isButtonClickable(entry.status(), entry.stack())) continue;
+            // v1.6.0 — act on the DISPLAYED status: pending rows are never clickable.
+            ResourceStatus ds = displayStatus(entry.status(), entry.stack());
+            if (!isButtonClickable(ds, entry.stack())) continue;
             int[] b = new int[4]; getBtnBounds(i, b);
             if (mx >= b[0] && mx <= b[0] + b[2] && my >= b[1] && my <= b[1] + b[3])
             {
                 // v1.4.9 — finished Domum block in the warehouse → deliver straight to the
                 // builder (Warehouse -> Builder), bypassing AE2 and the terminal queue.
-                if (isDomumFinishedInWarehouse(entry.stack()))
+                // v1.6.0 — BUILDER mode only (in WAREHOUSE mode the courier handles it).
+                if (!isWarehouseDeliveryMode() && isDomumFinishedInWarehouse(entry.stack()))
                 {
                     PacketDistributor.sendToServer(new SendToBuilderPacket(
                             entry.stack(), builderPos, entry.realCount()));
                     return true;
                 }
-                if (entry.status() == ResourceStatus.CRAFTABLE && entry.isDomum())
+                if (ds == ResourceStatus.CRAFTABLE && entry.isDomum())
                 {
                     // Domum CRAFTABLE = les composants bruts sont en stock (AE2 ou RS2)
                     // → craft virtuel via WarehouseCraftPacket (extrait composants → buffer redirector)
@@ -1973,23 +2090,31 @@ public class ColonyLinkScreen extends Screen
                         PacketDistributor.sendToServer(new CraftRequestPacket(
                                 entry.stack(), entry.realCount(), true, entry.redirectorPos(), ResourceStatus.CRAFTABLE));
                 }
-                else if (entry.status() == ResourceStatus.CRAFTABLE)
+                else if (ds == ResourceStatus.CRAFTABLE)
                 {
                     PacketDistributor.sendToServer(hasWarehouseCraft(entry.stack())
                             ? new WarehouseCraftPacket(entry.stack(), entry.realCount(), false, entry.redirectorPos())
                             : new CraftRequestPacket(entry.stack(), entry.realCount(), false, BlockPos.ZERO, ResourceStatus.CRAFTABLE));
                 }
-                else if (entry.status() == ResourceStatus.MISSING)
+                else if (ds == ResourceStatus.MISSING)
                 {
                     PacketDistributor.sendToServer(new CraftRequestPacket(
                             entry.stack(), entry.realCount(), true, entry.redirectorPos(), ResourceStatus.MISSING));
                 }
-                else if (entry.status() == ResourceStatus.AVAILABLE)
+                else if (ds == ResourceStatus.AVAILABLE)
                 {
-                    PacketDistributor.sendToServer(new SendToBuilderPacket(
-                            entry.stack(), builderPos, entry.realCount()));
+                    // v1.6.0 — delivery target routing (server-decreed mode).
+                    if (isWarehouseDeliveryMode())
+                    {
+                        PacketDistributor.sendToServer(new SendToWarehousePacket(
+                                entry.stack(), builderPos, entry.realCount()));
+                        markPendingSent(entry.stack());
+                    }
+                    else
+                        PacketDistributor.sendToServer(new SendToBuilderPacket(
+                                entry.stack(), builderPos, entry.realCount()));
                 }
-                else if (entry.status() == ResourceStatus.NO_PATTERN)
+                else if (ds == ResourceStatus.NO_PATTERN)
                 {
                     if (entry.isDomum())
                     {

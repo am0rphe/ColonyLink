@@ -16,6 +16,7 @@ import com.ldtteam.domumornamentum.client.model.data.MaterialTextureData;
 import com.minecolonies.api.colony.IColony;
 import com.minecolonies.api.colony.IColonyManager;
 import com.minecolonies.api.colony.buildings.IBuilding;
+import com.minecolonies.api.colony.permissions.Action;
 import com.minecolonies.core.colony.buildings.workerbuildings.BuildingWareHouse;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -76,11 +77,46 @@ public class WarehouseCraftHandler
             return;
         }
 
+        // v1.6.2 — wand must be linked (was only checked deep in the AE2 block below).
+        if (!ColonyLinkWandLinkableHandler.isLinked(wandStack))
+        {
+            player.sendSystemMessage(Component.translatable("colonylink.whc.clipboard_not_linked"));
+            return;
+        }
+
+        // v1.6.2 — the client is NOT authoritative on redirectorPos. It must be a
+        // redirector actually linked to THIS player's wand (mirrors SendToWarehousePacket
+        // validating builderPos). Without this, a modified client could point the craft
+        // at any colony's warehouse and drain it into its own ME network.
+        boolean redirectorLinked = false;
+        for (BuilderEntry e : ColonyLinkWandLinkableHandler.getBuilderEntries(wandStack))
+        {
+            if (e.hasRedirector() && e.redirectorPos().equals(redirectorPos))
+            {
+                redirectorLinked = true;
+                break;
+            }
+        }
+        if (!redirectorLinked)
+        {
+            player.sendSystemMessage(Component.translatable("colonylink.stw.invalid_request"));
+            return;
+        }
+
         // ── Trouve la Warehouse de la colonie ─────────────────────────────────
         IColony colony = IColonyManager.getInstance().getClosestColony(level, redirectorPos);
         if (colony == null)
         {
             player.sendSystemMessage(Component.translatable("colonylink.whc.no_colony"));
+            return;
+        }
+
+        // v1.6.2 — colony permission, server-side (same action the wand and ticker
+        // already require). getClosestColony can resolve a colony the player has zero
+        // rights in.
+        if (!colony.getPermissions().hasPermission(player, Action.ACCESS_HUTS))
+        {
+            player.sendSystemMessage(Component.translatable("colonylink.wand.msg.no_permission"));
             return;
         }
 
@@ -99,13 +135,17 @@ public class WarehouseCraftHandler
             return;
         }
 
+        // v1.6.2 — RF cost, aligned with the normal Craft button (CraftRequestPacket).
+        // Charged once per click, after every validation passed, before any extraction.
+        long craftCost = ColonyLinkConfig.CRAFT_COST_RF.get();
+        if (craftCost > 0 && !ColonyLinkServerTicker.tryConsumeRF(player, craftCost))
+        {
+            player.sendSystemMessage(Component.translatable("colonylink.ch.not_enough_power", craftCost));
+            return;
+        }
+
         // ── Route vers AE2 ──────────────────────────────────────────────────────
         {
-            if (!ColonyLinkWandLinkableHandler.isLinked(wandStack))
-            {
-                player.sendSystemMessage(Component.translatable("colonylink.whc.clipboard_not_linked"));
-                return;
-            }
             IWirelessAccessPoint wap = getWap(wandStack, level);
             if (wap == null)
             {

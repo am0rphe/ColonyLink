@@ -54,15 +54,17 @@ public record DomumEncodePatternPacket(
 
     public static void handle(DomumEncodePatternPacket packet, IPayloadContext ctx)
     {
-        ctx.enqueueWork(() -> handleServer((ServerPlayer) ctx.player(), packet));
+        ctx.enqueueWork(() -> {
+            if (ctx.player() instanceof ServerPlayer sp) handleServer(sp, packet);
+        });
     }
 
     private static void handleServer(ServerPlayer player, DomumEncodePatternPacket packet)
     {
         if (!DomumCraftHandler.isDomumItem(packet.targetStack))
         {
-            player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                    "§c[ColonyLink] Invalid Domum item — cannot encode pattern."));
+            player.sendSystemMessage(net.minecraft.network.chat.Component.translatable(
+                    "colonylink.encode.invalid"));
             return;
         }
 
@@ -73,8 +75,8 @@ public record DomumEncodePatternPacket(
         ItemStack blank = findBlankInMenu(player);
         if (blank.isEmpty())
         {
-            player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                    "§c[ColonyLink] No Blank Pattern in slot."));
+            player.sendSystemMessage(net.minecraft.network.chat.Component.translatable(
+                    "colonylink.encode.no_blank"));
             return;
         }
 
@@ -82,8 +84,8 @@ public record DomumEncodePatternPacket(
         if (player.containerMenu instanceof WarehouseLinkTerminalMenu tm
                 && !tm.domumOutputSlot.getStackInSlot(0).isEmpty())
         {
-            player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                    "§e[ColonyLink] Take the encoded pattern from the output slot first."));
+            player.sendSystemMessage(net.minecraft.network.chat.Component.translatable(
+                    "colonylink.encode.take_first"));
             return;
         }
 
@@ -93,8 +95,8 @@ public record DomumEncodePatternPacket(
         ItemStack encoded = DomumPatternItem.encode(packet.targetStack, provider, outputCount);
         if (encoded.isEmpty())
         {
-            player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                    "§c[ColonyLink] Pattern encoding failed."));
+            player.sendSystemMessage(net.minecraft.network.chat.Component.translatable(
+                    "colonylink.encode.failed"));
             return;
         }
 
@@ -116,8 +118,8 @@ public record DomumEncodePatternPacket(
                 player.drop(encoded, false);
         }
 
-        player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                "§a[ColonyLink] Domum Pattern encoded — take it from the output slot."));
+        player.sendSystemMessage(net.minecraft.network.chat.Component.translatable(
+                "colonylink.encode.success"));
     }
 
     /**

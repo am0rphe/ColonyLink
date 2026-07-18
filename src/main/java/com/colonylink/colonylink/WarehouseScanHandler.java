@@ -51,8 +51,13 @@ import java.util.Set;
  */
 public class WarehouseScanHandler
 {
-    /** Cooldown en ticks entre deux scans (400 ticks = 20 secondes). */
-    private static final int SCAN_COOLDOWN_TICKS = 400;
+    // v1.6.0 — the scan cooldown is now driven by the same config value the
+    // client uses for snapshot expiry (warehouse_snapshot_validity_ticks);
+    // the previous hardcoded 400 silently ignored the config.
+    private static int scanCooldownTicks()
+    {
+        return ColonyLinkConfig.WAREHOUSE_SNAPSHOT_VALIDITY_TICKS.get();
+    }
 
     /** Profondeur max de récursion pour la résolution des patterns AE2. */
     private static final int MAX_RECURSION_DEPTH = 10;
@@ -70,15 +75,23 @@ public class WarehouseScanHandler
         java.util.UUID uuid = player.getUUID();
 
         // Cooldown check
+        int cooldown = scanCooldownTicks();
+
+        // v1.6.0 — opportunistic purge of long-expired entries so the static
+        // per-player map cannot grow forever. Deliberately NOT tied to logout:
+        // clearing on logout would let a relog reset the cooldown.
+        long purgeBefore = currentTick - (long) cooldown * 10;
+        lastScanTick.values().removeIf(t -> t < purgeBefore);
+
         Long lastTick = lastScanTick.get(uuid);
-        if (lastTick != null && currentTick - lastTick < SCAN_COOLDOWN_TICKS)
+        if (lastTick != null && currentTick - lastTick < cooldown)
         {
-            long remaining = SCAN_COOLDOWN_TICKS - (currentTick - lastTick);
+            long remaining = cooldown - (currentTick - lastTick);
             player.sendSystemMessage(Component.translatable("colonylink.whs.cooldown", (remaining / 20)));
             return;
         }
-
-        lastScanTick.put(uuid, currentTick);
+        // v1.6.0 — the cooldown is armed just before the actual scan (below),
+        // so a failed validation no longer burns the full cooldown.
 
         // Récupère la wand et le réseau AE2
         ItemStack wandStack = findWandInInventory(player);
@@ -169,6 +182,9 @@ public class WarehouseScanHandler
             sendFailure(player, currentTick);
             return;
         }
+
+        // All validations passed — arm the cooldown and run the scan.
+        lastScanTick.put(uuid, currentTick);
 
         Map<Item, Long> warehouseStock = new HashMap<>();
         List<ItemStack> warehouseDomumStock = new ArrayList<>();

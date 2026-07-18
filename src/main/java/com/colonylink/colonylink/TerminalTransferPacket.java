@@ -70,13 +70,21 @@ public record TerminalTransferPacket(
                         buf.writeBlockPos(p.hostPos());
                         buf.writeByte(p.sideByte());
                     },
-                    buf -> new TerminalTransferPacket(
-                            ItemStack.OPTIONAL_STREAM_CODEC.decode(buf),
-                            buf.readInt(),
-                            Direction.values()[buf.readInt()],
-                            buf.readBlockPos(),
-                            buf.readByte() & 0xFF
-                    )
+                    buf -> {
+                        ItemStack stack = ItemStack.OPTIONAL_STREAM_CODEC.decode(buf);
+                        int count       = buf.readInt();
+                        // v1.6.2 — validate the enum ordinal: an out-of-range value can
+                        // only come from a modified client and would throw AIOOBE. Reject
+                        // the malformed packet cleanly (connection closed) instead.
+                        int ord = buf.readInt();
+                        if (ord < 0 || ord >= Direction.values().length)
+                            throw new io.netty.handler.codec.DecoderException(
+                                    "Invalid TerminalTransfer Direction ordinal: " + ord);
+                        BlockPos hostPos = buf.readBlockPos();
+                        int sideByte     = buf.readByte() & 0xFF;
+                        return new TerminalTransferPacket(
+                                stack, count, Direction.values()[ord], hostPos, sideByte);
+                    }
             );
 
     @Override

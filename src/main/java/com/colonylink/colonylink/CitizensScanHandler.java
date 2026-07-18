@@ -29,6 +29,16 @@ public class CitizensScanHandler
 {
     public static void sendCitizensPacket(ServerPlayer player)
     {
+        sendCitizensPacket(player, true);
+    }
+
+    /**
+     * v1.6.2 — {@code force=false} (ticker path) skips the broadcast when the content
+     * is identical to the last one sent to this player, avoiding a full colony rescan
+     * push every ticker interval. {@code force=true} (explicit click) always sends.
+     */
+    public static void sendCitizensPacket(ServerPlayer player, boolean force)
+    {
         ItemStack wandStack = findWandInInventory(player);
         if (wandStack == null) return;
 
@@ -193,7 +203,58 @@ public class CitizensScanHandler
             }
         }
 
+        // v1.6.0 — server-side reconciliation of the citizen sent-keys ("c|").
+        // Any stored citizen key whose request is no longer active is pruned, so
+        // the grey "Sent ↺" button re-arms when the request resolves. Scoped to
+        // the citizen family: builder keys ("b|") are reconciled by the ticker.
+        // The early returns above skip this on failure — a failed scan must
+        // never wipe the memory.
+        // v1.6.2 — throttle the ticker path: identical content means nothing to send
+        // and nothing to reconcile. An explicit click (force) always proceeds.
+        long sig = computeCitizensSig(result);
+        if (!force)
+        {
+            Long last = LAST_SIG.get(player.getUUID());
+            if (last != null && last == sig) return;
+        }
+        LAST_SIG.put(player.getUUID(), sig);
+
+        java.util.Set<String> activeCitizenKeys = new java.util.HashSet<>();
+        for (CitizensPacket.CitizenRequestEntry entry : result)
+            activeCitizenKeys.add(ColonyLinkWandLinkableHandler.citizenSentKey(
+                    entry.citizenName(), entry.stack().getItem()));
+        ColonyLinkWandLinkableHandler.pruneSentRequestKeys(wandStack, activeCitizenKeys,
+                ColonyLinkWandLinkableHandler.SENT_PREFIX_CITIZEN);
+
         PacketDistributor.sendToPlayer(player, new CitizensPacket(result));
+    }
+
+    // ── v1.6.2 — throttle state for the ticker Citizens tab ────────────────────
+    private static final java.util.Map<java.util.UUID, Long> LAST_SIG =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Drops a player's throttle signature (called on logout by the server ticker). */
+    public static void forget(java.util.UUID uuid)
+    {
+        LAST_SIG.remove(uuid);
+    }
+
+    /** FNV-1a fold over the visible Citizens content — same idea as computeWandSig. */
+    private static long computeCitizensSig(java.util.List<CitizensPacket.CitizenRequestEntry> entries)
+    {
+        long sig = 0xcbf29ce484222325L;
+        final long P = 0x100000001b3L;
+        for (CitizensPacket.CitizenRequestEntry e : entries)
+        {
+            int h = net.minecraft.world.item.Item.getId(e.stack().getItem());
+            h = 31 * h + e.citizenName().hashCode();
+            h = 31 * h + e.jobName().hashCode();
+            h = 31 * h + e.count();
+            h = 31 * h + (e.availableInME()  ? 1 : 0);
+            h = 31 * h + (e.craftableInME() ? 1 : 0);
+            sig = (sig ^ h) * P;
+        }
+        return sig;
     }
 
     private static ItemStack findWandInInventory(ServerPlayer player)

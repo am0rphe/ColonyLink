@@ -11,7 +11,6 @@ import net.neoforged.neoforge.energy.IEnergyStorage;
  * Stocke le RF en NBT dans la CustomData de l'item (clé "wand_rf").
  * Expose la capability forge:energy pour être compatible avec :
  *   - Mods de charge tiers (Powah, Mekanism, IE, Mining Gadgets…)
- *   - Le slot output du WAP (ColonyLinkWandCharger)
  *
  * La clé "wand_rf" est intentionnellement SÉPARÉE des autres données wand
  * pour ne PAS être effacée par ClearNbtRecipe (qui reconstruit l'item vierge
@@ -47,7 +46,7 @@ public class WandEnergyStorage implements IEnergyStorage
 
     public static void setStoredRF(ItemStack stack, long rf)
     {
-        long clamped = Math.max(0, Math.min(rf, ColonyLinkConfig.WAND_RF_CAPACITY.get()));
+        long clamped = Math.max(0, Math.min(rf, ColonyLinkConfig.safeGet(ColonyLinkConfig.WAND_RF_CAPACITY, 160_000L)));
         stack.update(DataComponents.CUSTOM_DATA, CustomData.EMPTY, data -> {
             var tag = data.copyTag();
             tag.putLong(NBT_KEY, clamped);
@@ -83,8 +82,8 @@ public class WandEnergyStorage implements IEnergyStorage
     public int receiveEnergy(int maxReceive, boolean simulate)
     {
         long stored   = getStoredRF(stack);
-        long capacity = ColonyLinkConfig.WAND_RF_CAPACITY.get();
-        long rate     = ColonyLinkConfig.WAND_RF_TRANSFER_RATE.get();
+        long capacity = ColonyLinkConfig.safeGet(ColonyLinkConfig.WAND_RF_CAPACITY, 160_000L);
+        long rate     = ColonyLinkConfig.safeGet(ColonyLinkConfig.WAND_RF_TRANSFER_RATE, 2_500L);
         long toInsert = Math.min(maxReceive, Math.min(rate, capacity - stored));
         if (toInsert <= 0) return 0;
         if (!simulate)
@@ -108,7 +107,7 @@ public class WandEnergyStorage implements IEnergyStorage
     @Override
     public int getMaxEnergyStored()
     {
-        return (int) Math.min(ColonyLinkConfig.WAND_RF_CAPACITY.get(), Integer.MAX_VALUE);
+        return (int) Math.min(ColonyLinkConfig.safeGet(ColonyLinkConfig.WAND_RF_CAPACITY, 160_000L), Integer.MAX_VALUE);
     }
 
     @Override

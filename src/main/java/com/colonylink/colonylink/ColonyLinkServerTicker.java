@@ -61,18 +61,35 @@ public class ColonyLinkServerTicker
     { allTerminalParts.remove(part); }
 
     /**
-     * Retourne le premier WarehouseLinkTerminalPart dans le level donné,
-     * qu'il soit actif (GUI ouvert) ou non.
+     * v1.6.1 — Tous les WarehouseLinkTerminalPart VIVANTS d'une grille ME donnee.
+     * Utilise par la queue Domum partagee (seed / persistance NBT / broadcast). Exclut les
+     * instances fantomes (noeud null/inactif, laissees par un unload de chunk).
      */
-    public static WarehouseLinkTerminalPart findTerminalPartForLevel(net.minecraft.server.level.ServerLevel level)
+    public static java.util.List<WarehouseLinkTerminalPart> findLiveTerminalsForGrid(
+            net.minecraft.server.level.ServerLevel level, appeng.api.networking.IGrid grid)
     {
-        // Priorité aux Parts actives (GUI ouvert = déjà synced)
+        java.util.List<WarehouseLinkTerminalPart> result = new java.util.ArrayList<>();
+        if (grid == null) return result;
+        java.util.Set<WarehouseLinkTerminalPart> seen = new java.util.HashSet<>();
         for (WarehouseLinkTerminalPart part : activeTerminalParts)
-            if (part.getLevel() == level) return part;
-        // Fallback : toutes les Parts placées
+            if (isLiveTerminal(part, level) && isOnGrid(part, grid) && seen.add(part)) result.add(part);
         for (WarehouseLinkTerminalPart part : allTerminalParts)
-            if (part.getLevel() == level) return part;
-        return null;
+            if (isLiveTerminal(part, level) && isOnGrid(part, grid) && seen.add(part)) result.add(part);
+        return result;
+    }
+
+    private static boolean isLiveTerminal(WarehouseLinkTerminalPart part,
+                                          net.minecraft.server.level.ServerLevel level)
+    {
+        if (part == null || part.getLevel() != level) return false;
+        var node = part.getMainNode().getNode();
+        return node != null && node.isActive();
+    }
+
+    private static boolean isOnGrid(WarehouseLinkTerminalPart part, appeng.api.networking.IGrid grid)
+    {
+        var node = part.getMainNode().getNode();
+        return node != null && node.getGrid() == grid;
     }
     private record ViewerState(BlockPos builderPos, int activeTabIndex, int colonyId, long lastContentSig) {
         ViewerState(BlockPos builderPos, int activeTabIndex, int colonyId) {
@@ -102,7 +119,10 @@ public class ColonyLinkServerTicker
     public static void onPlayerLogout(PlayerEvent.PlayerLoggedOutEvent event)
     {
         if (event.getEntity() instanceof ServerPlayer sp)
+        {
             activeViewers.remove(sp.getUUID());
+            CitizensScanHandler.forget(sp.getUUID()); // v1.6.2 — drop throttle state
+        }
     }
 
     // ── Immediate update ──────────────────────────────────────────────────────
@@ -156,9 +176,10 @@ public class ColonyLinkServerTicker
 
             sendFullUpdate(player, state.builderPos(), state.activeTabIndex(), wand);
             sendTabCounts(player, state.activeTabIndex(), wand);
-            // Refresh auto de la tab Citizens si elle est active (Integer.MAX_VALUE)
+            // Refresh auto de la tab Citizens si elle est active (Integer.MAX_VALUE).
+            // v1.6.2 — force=false: le scan complet n'est diffusé que si le contenu a changé.
             if (state.activeTabIndex() == Integer.MAX_VALUE)
-                CitizensScanHandler.sendCitizensPacket(player);
+                CitizensScanHandler.sendCitizensPacket(player, false);
         });
 
         toRemove.forEach(activeViewers::remove);
@@ -233,6 +254,13 @@ public class ColonyLinkServerTicker
             return;
         }
 
+        // v1.6.0 — server-side reconciliation of the builder sent-keys ("b|"),
+        // across ALL builders linked to this wand (not just the active tab).
+        // Runs every ticker interval while the GUI is open, and immediately at
+        // GUI open via sendImmediateUpdate — the state is reconciled before the
+        // player can see anything stale.
+        pruneBuilderSentKeys(player, wandStack);
+
         IBuilding building = IColonyManager.getInstance().getBuilding(level, builderPos);
         if (building == null)
             for (IBuilding b : colony.getServerBuildingManager().getBuildings().values())
@@ -292,7 +320,10 @@ public class ColonyLinkServerTicker
         BlockPos rPos = null;
         if (!allEntries.isEmpty())
         {
-            int st = Math.min(activeTabIndex, allEntries.size() - 1);
+            // v1.6.2 — last-resort clamp (low + high): activeTabIndex is client-sourced
+            // and must never index allEntries out of bounds, even if it slipped past the
+            // GuiStatePacket sanitisation. Integer.MAX_VALUE (Citizens) collapses to size-1.
+            int st = Math.max(0, Math.min(activeTabIndex, allEntries.size() - 1));
             BuilderEntry ae = allEntries.get(st);
             if (ae.hasRedirector()) rPos = ae.redirectorPos();
         }
@@ -320,6 +351,17 @@ public class ColonyLinkServerTicker
         BlockPos safeR = rPos != null ? rPos : BlockPos.ZERO;
         int buildingLevel = bb.getBuildingLevel();
 
+        // v1.6.0 — WAREHOUSE delivery mode: resources already sent to the
+        // warehouse render as grey SENT_PENDING (Send disabled) until the
+        // courier delivers and the key is pruned above. Read AFTER pruning so
+        // the status reflects the reconciled state. In BUILDER mode (default)
+        // sentKeys stays empty and SENT_PENDING can never appear.
+        boolean warehouseMode =
+                ColonyLinkConfig.SEND_TARGET.get() == ColonyLinkConfig.SendTarget.WAREHOUSE;
+        java.util.Set<String> sentKeys = warehouseMode
+                ? ColonyLinkWandLinkableHandler.getSentRequestKeys(wandStack)
+                : java.util.Collections.emptySet();
+
         Map<String, BuildingBuilderResource> needed = bb.getNeededResources();
         List<ColonyLinkPacket.ResourceEntry> entries = new ArrayList<>();
         if (needed != null)
@@ -331,7 +373,11 @@ public class ColonyLinkServerTicker
                 int miss = res.getAmount() - res.getAvailable();
                 if (miss <= 0) continue;
 
-                if (toolUpgrade && BuilderToolHelper.isTool(st2))
+                // v1.6.0 — no tool substitution in WAREHOUSE mode: the courier
+                // fulfills the request, so ColonyLink sends exactly what was
+                // requested (a substituted tool may not match the request and
+                // would strand in the warehouse). Rows show the original tool.
+                if (!warehouseMode && toolUpgrade && BuilderToolHelper.isTool(st2))
                 {
                     BuilderToolHelper.SubstituteResult sub =
                             BuilderToolHelper.findBestTool(st2, buildingLevel, inv, cs);
@@ -372,6 +418,13 @@ public class ColonyLinkServerTicker
                     else if (cs.isCraftable(dk))  dStat = ResourceStatus.CRAFTABLE;
                     else                          dStat = ResourceStatus.NO_PATTERN;
 
+                    // v1.6.0 — SENT_PENDING override, BEFORE the display filters:
+                    // a pending line is essential state and must never be hidden.
+                    // CRAFTING keeps priority (craft progress is not mode-related).
+                    if (warehouseMode && dStat != ResourceStatus.CRAFTING
+                            && ColonyLinkWandLinkableHandler.hasBuilderSentKey(sentKeys, builderPos, st2.getItem()))
+                        dStat = ResourceStatus.SENT_PENDING;
+
                     if (!showCrafting && dStat == ResourceStatus.CRAFTING) continue;
                     if (!showNoPattern && dStat == ResourceStatus.NO_PATTERN) continue;
                     entries.add(new ColonyLinkPacket.ResourceEntry(
@@ -387,6 +440,11 @@ public class ColonyLinkServerTicker
                 else if (cs.isCraftable(k))  stat = ResourceStatus.CRAFTABLE;
                 else                         stat = ResourceStatus.NO_PATTERN;
 
+                // v1.6.0 — SENT_PENDING override (see the Domum branch above).
+                if (warehouseMode && stat != ResourceStatus.CRAFTING
+                        && ColonyLinkWandLinkableHandler.hasBuilderSentKey(sentKeys, builderPos, st2.getItem()))
+                    stat = ResourceStatus.SENT_PENDING;
+
                 if (!showCrafting && stat == ResourceStatus.CRAFTING) continue;
                 if (!showNoPattern && stat == ResourceStatus.NO_PATTERN) continue;
 
@@ -395,7 +453,8 @@ public class ColonyLinkServerTicker
             }
         }
 
-        ColonyLinkPacket.BuilderRequest req = fetchBuilderRequest(bb, inv, cs, grid, safeR, buildingLevel, toolUpgrade, level);
+        ColonyLinkPacket.BuilderRequest req = fetchBuilderRequest(bb, inv, cs, grid, safeR,
+                buildingLevel, toolUpgrade, level, warehouseMode, sentKeys, builderPos);
         List<ColonyLinkPacket.BuilderTabMeta> tabMetas = ColonyLinkWand.buildTabMetas(allEntries);
 
         // Throttle : ne pas renvoyer si le contenu n'a pas changé
@@ -447,7 +506,8 @@ public class ColonyLinkServerTicker
     @SuppressWarnings("unchecked")
     private static ColonyLinkPacket.BuilderRequest fetchBuilderRequest(
             AbstractBuildingStructureBuilder bb, KeyCounter inv, ICraftingService cs,
-            IGrid grid, BlockPos rPos, int buildingLevel, boolean toolUpgrade, ServerLevel level)
+            IGrid grid, BlockPos rPos, int buildingLevel, boolean toolUpgrade, ServerLevel level,
+            boolean warehouseMode, java.util.Set<String> sentKeys, BlockPos builderPos)
     {
         // Passe 1 : getOpenRequests
         if (!bb.getAllAssignedCitizen().isEmpty())
@@ -479,12 +539,16 @@ public class ColonyLinkServerTicker
                             else if (cs.isRequesting(dk)) dStat = ResourceStatus.CRAFTING;
                             else if (cs.isCraftable(dk))  dStat = ResourceStatus.CRAFTABLE;
                             else                          dStat = ResourceStatus.NO_PATTERN;
+                            if (warehouseMode && dStat != ResourceStatus.CRAFTING
+                                    && ColonyLinkWandLinkableHandler.hasBuilderSentKey(sentKeys, builderPos, rs.getItem()))
+                                dStat = ResourceStatus.SENT_PENDING;
                             return new ColonyLinkPacket.BuilderRequest(
                                     disp, cnt, dStat, rPos,
                                     buildDomumTooltip(rs, dStat, cnt));
                         }
 
-                        if (toolUpgrade && BuilderToolHelper.isTool(rs))
+                        // v1.6.0 — no tool substitution in WAREHOUSE mode (courier fidelity).
+                        if (!warehouseMode && toolUpgrade && BuilderToolHelper.isTool(rs))
                         {
                             BuilderToolHelper.SubstituteResult sub =
                                     BuilderToolHelper.findBestTool(rs, buildingLevel, inv, cs);
@@ -511,6 +575,10 @@ public class ColonyLinkServerTicker
                         else if (cs.isRequesting(k)) st = ResourceStatus.CRAFTING;
                         else if (cs.isCraftable(k))  st = ResourceStatus.CRAFTABLE;
                         else                         st = ResourceStatus.NO_PATTERN;
+
+                        if (warehouseMode && st != ResourceStatus.CRAFTING
+                                && ColonyLinkWandLinkableHandler.hasBuilderSentKey(sentKeys, builderPos, rs.getItem()))
+                            st = ResourceStatus.SENT_PENDING;
 
                         return new ColonyLinkPacket.BuilderRequest(disp, cnt, st, rPos,
                                 buildStandardTooltip(rs, st, cnt, inSt));
@@ -552,12 +620,16 @@ public class ColonyLinkServerTicker
                     else if (cs.isRequesting(dk)) dStat = ResourceStatus.CRAFTING;
                     else if (cs.isCraftable(dk))  dStat = ResourceStatus.CRAFTABLE;
                     else                          dStat = ResourceStatus.NO_PATTERN;
+                    if (warehouseMode && dStat != ResourceStatus.CRAFTING
+                            && ColonyLinkWandLinkableHandler.hasBuilderSentKey(sentKeys, builderPos, st2.getItem()))
+                        dStat = ResourceStatus.SENT_PENDING;
                     return new ColonyLinkPacket.BuilderRequest(
                             disp, miss, dStat, rPos,
                             buildDomumTooltip(st2, dStat, miss));
                 }
 
-                if (toolUpgrade && BuilderToolHelper.isTool(st2))
+                // v1.6.0 — no tool substitution in WAREHOUSE mode (courier fidelity).
+                if (!warehouseMode && toolUpgrade && BuilderToolHelper.isTool(st2))
                 {
                     BuilderToolHelper.SubstituteResult sub =
                             BuilderToolHelper.findBestTool(st2, buildingLevel, inv, cs);
@@ -584,6 +656,10 @@ public class ColonyLinkServerTicker
                 else if (cs.isRequesting(k)) st = ResourceStatus.CRAFTING;
                 else if (cs.isCraftable(k))  st = ResourceStatus.CRAFTABLE;
                 else                         st = ResourceStatus.NO_PATTERN;
+
+                if (warehouseMode && st != ResourceStatus.CRAFTING
+                        && ColonyLinkWandLinkableHandler.hasBuilderSentKey(sentKeys, builderPos, st2.getItem()))
+                    st = ResourceStatus.SENT_PENDING;
 
                 return new ColonyLinkPacket.BuilderRequest(disp, miss, st, rPos,
                         buildStandardTooltip(st2, st, miss, inSt));
@@ -693,10 +769,12 @@ public class ColonyLinkServerTicker
         lines.add(Component.translatable("colonylink.avail.tool_best", substitute.getDisplayName()));
         switch (stat)
         {
-            case AVAILABLE -> lines.add(Component.translatable("colonylink.avail.tool_ready", inStorage));
-            case CRAFTABLE -> lines.add(Component.translatable("colonylink.avail.craftable_ae2"));
-            case CRAFTING  -> lines.add(Component.translatable("colonylink.avail.crafting"));
-            default        -> lines.add(Component.translatable("colonylink.avail.no_pattern_short"));
+            case AVAILABLE    -> lines.add(Component.translatable("colonylink.avail.tool_ready", inStorage));
+            case CRAFTABLE    -> lines.add(Component.translatable("colonylink.avail.craftable_ae2"));
+            case CRAFTING     -> lines.add(Component.translatable("colonylink.avail.crafting"));
+            case SENT_PENDING -> { lines.add(Component.translatable("colonylink.avail.sent_pending"));
+                lines.add(Component.translatable("colonylink.avail.sent_pending_wait")); }
+            default           -> lines.add(Component.translatable("colonylink.avail.no_pattern_short"));
         }
         lines.add(Component.translatable("colonylink.avail.needed", missing));
         return lines;
@@ -718,6 +796,8 @@ public class ColonyLinkServerTicker
                 lines.add(Component.translatable("colonylink.avail.domum_click_send")); }
             case CRAFTABLE  -> lines.add(Component.translatable("colonylink.avail.domum_craftable"));
             case CRAFTING   -> lines.add(Component.translatable("colonylink.avail.domum_crafting"));
+            case SENT_PENDING -> { lines.add(Component.translatable("colonylink.avail.sent_pending"));
+                lines.add(Component.translatable("colonylink.avail.sent_pending_wait")); }
             default         -> {}
         }
         lines.add(Component.translatable("colonylink.avail.needed", missing));
@@ -772,6 +852,8 @@ public class ColonyLinkServerTicker
                 lines.add(Component.translatable("colonylink.avail.needed", missing)); }
             case MISSING    -> { lines.add(Component.translatable("colonylink.avail.std_missing_raw")); lines.add(Component.translatable("colonylink.avail.std_name", n));
                 lines.add(Component.translatable("colonylink.avail.needed", missing)); }
+            case SENT_PENDING -> { lines.add(Component.translatable("colonylink.avail.sent_pending")); lines.add(Component.translatable("colonylink.avail.std_name", n));
+                lines.add(Component.translatable("colonylink.avail.sent_pending_wait")); lines.add(Component.translatable("colonylink.avail.needed", missing)); }
         }
         return lines;
     }
@@ -817,6 +899,200 @@ public class ColonyLinkServerTicker
 
         net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player,
                 new TabCountsPacket(counts, activeTabIndex));
+    }
+
+    // ── Builder sent-key pruning (v1.6.0) ─────────────────────────────────────
+
+    /**
+     * Reconciles the builder sent-keys ("b|x,y,z|itemId|availableAtSend")
+     * against the server truth, across ALL builders linked to the wand.
+     *
+     * A key is DROPPED when its builder resolves and:
+     *   - the item is no longer in getNeededResources() AND matches no live
+     *     open request of the assigned citizen              (request satisfied), or
+     *   - missing <= 0                                      (request satisfied), or
+     *   - it is a build material and 'available' differs from the stored
+     *     baseline (a courier delivered something — the line re-arms so a
+     *     partial send can be topped up), or
+     *   - the builder is no longer linked to this wand, or the key is malformed.
+     *
+     * A key is KEPT (fail-safe) when its builder cannot be resolved: missing
+     * dimension level, no colony, or a null needed map. An unloaded chunk does
+     * NOT unresolve a MineColonies building (colony data is chunk-independent),
+     * so "colony found but no builder building at that position" means the hut
+     * is genuinely gone → dropped.
+     *
+     * Legacy unprefixed keys (pre-v1.6.0) are dropped by the prune call itself;
+     * citizen keys ("c|") are never touched here (CitizensScanHandler owns them).
+     */
+    private static void pruneBuilderSentKeys(ServerPlayer player, ItemStack wandStack)
+    {
+        java.util.Set<String> stored = ColonyLinkWandLinkableHandler.getSentRequestKeys(wandStack);
+        if (stored.isEmpty()) return;
+
+        boolean hasBuilderKeys = false, hasLegacyKeys = false;
+        for (String k : stored)
+        {
+            if (k.startsWith(ColonyLinkWandLinkableHandler.SENT_PREFIX_BUILDER)) hasBuilderKeys = true;
+            else if (!k.startsWith(ColonyLinkWandLinkableHandler.SENT_PREFIX_CITIZEN)) hasLegacyKeys = true;
+        }
+        if (!hasBuilderKeys && !hasLegacyKeys) return;
+
+        List<BuilderEntry> entries = ColonyLinkWandLinkableHandler.getBuilderEntries(wandStack);
+        java.util.Set<String> keep = new java.util.HashSet<>();
+
+        // Per-builder resolution caches.
+        Map<BlockPos, AbstractBuildingStructureBuilder> resolvedBuilders = new java.util.HashMap<>();
+        Map<BlockPos, java.util.Set<String>> openRequestIds = new java.util.HashMap<>();
+        java.util.Set<BlockPos> unresolvable = new java.util.HashSet<>();
+        java.util.Set<BlockPos> gone = new java.util.HashSet<>();
+
+        for (String key : stored)
+        {
+            if (!key.startsWith(ColonyLinkWandLinkableHandler.SENT_PREFIX_BUILDER)) continue;
+
+            BlockPos pos = ColonyLinkWandLinkableHandler.parseBuilderKeyPos(key);
+            String itemId = ColonyLinkWandLinkableHandler.parseBuilderKeyItemId(key);
+            int baseline = ColonyLinkWandLinkableHandler.parseBuilderKeyBaseline(key);
+            if (pos == null || itemId == null || baseline < 0) continue; // malformed → drop
+
+            BuilderEntry entry = null;
+            for (BuilderEntry e : entries)
+                if (e.builderPos().equals(pos)) { entry = e; break; }
+            if (entry == null) continue; // builder unlinked from the wand → drop
+
+            if (unresolvable.contains(pos)) { keep.add(key); continue; }
+            if (gone.contains(pos)) continue;
+
+            AbstractBuildingStructureBuilder bb = resolvedBuilders.get(pos);
+            if (bb == null)
+            {
+                bb = resolveBuilder(player, entry);
+                if (bb == null)
+                {
+                    // Could not resolve — distinguish "hut gone" from "can't tell".
+                    if (builderHutGone(player, entry))
+                    {
+                        gone.add(pos);
+                        continue; // drop this builder's keys
+                    }
+                    unresolvable.add(pos);
+                    keep.add(key); // fail-safe: keep
+                    continue;
+                }
+                resolvedBuilders.put(pos, bb);
+            }
+
+            Map<String, BuildingBuilderResource> needed = bb.getNeededResources();
+            if (needed == null) { keep.add(key); continue; } // fail-safe: keep
+
+            BuildingBuilderResource match = null;
+            for (BuildingBuilderResource res : needed.values())
+            {
+                if (net.minecraft.core.registries.BuiltInRegistries.ITEM
+                        .getKey(res.getItemStack().getItem()).toString().equals(itemId))
+                {
+                    match = res;
+                    break;
+                }
+            }
+            if (match == null)
+            {
+                // Not a build material — keys created for open requests
+                // (tools/armor/food) survive while a matching request is still
+                // alive, and drop once the courier resolved it.
+                if (!openRequestIds.containsKey(pos))
+                    openRequestIds.put(pos, openRequestItemIds(bb));
+                java.util.Set<String> openIds = openRequestIds.get(pos);
+                if (openIds == null || openIds.contains(itemId)) keep.add(key); // null = can't tell → keep
+                continue;
+            }
+            if (match.getAmount() - match.getAvailable() <= 0) continue; // satisfied → drop
+            if (match.getAvailable() != baseline) continue;           // courier delivered → re-arm
+            keep.add(key);
+        }
+
+        ColonyLinkWandLinkableHandler.pruneSentRequestKeys(wandStack, keep,
+                ColonyLinkWandLinkableHandler.SENT_PREFIX_BUILDER);
+    }
+
+    /**
+     * Resolves a linked builder building, honouring the dimension frozen at
+     * pairing time (v1.4.9). Returns null when anything cannot be resolved —
+     * the caller decides keep-vs-drop via builderHutGone.
+     */
+    private static AbstractBuildingStructureBuilder resolveBuilder(
+            ServerPlayer player, BuilderEntry entry)
+    {
+        ServerLevel lvl = entry.dimension() != null
+                ? player.server.getLevel(entry.dimension())
+                : player.serverLevel();
+        if (lvl == null) return null;
+
+        IColony colony = IColonyManager.getInstance().getClosestColony(lvl, entry.builderPos());
+        if (colony == null) return null;
+
+        for (IBuilding b : colony.getServerBuildingManager().getBuildings().values())
+        {
+            if (b.getPosition().equals(entry.builderPos())
+                    && b instanceof AbstractBuildingStructureBuilder bb)
+                return bb;
+        }
+        return null;
+    }
+
+    /**
+     * Item ids (display stacks) of the builder's live open requests, or null
+     * when the request system throws — callers keep keys on null (fail-safe).
+     */
+    private static java.util.Set<String> openRequestItemIds(AbstractBuildingStructureBuilder bb)
+    {
+        try
+        {
+            java.util.Set<String> ids = new java.util.HashSet<>();
+            if (bb.getAllAssignedCitizen().isEmpty()) return ids;
+            var citizen = bb.getAllAssignedCitizen().iterator().next();
+            var reqs = bb.getOpenRequests(citizen.getId());
+            if (reqs == null) return ids;
+            for (IRequest<?> req : reqs)
+            {
+                if (req.getState() == RequestState.CANCELLED
+                        || req.getState() == RequestState.OVERRULED) continue;
+                if (!(req.getRequest() instanceof IDeliverable)) continue;
+                var ds = req.getDisplayStacks();
+                if (ds == null) continue;
+                for (ItemStack s : ds)
+                    if (!s.isEmpty())
+                        ids.add(net.minecraft.core.registries.BuiltInRegistries.ITEM
+                                .getKey(s.getItem()).toString());
+            }
+            return ids;
+        }
+        catch (Exception e)
+        {
+            ColonyLink.LOGGER.debug("[ColonyLink] open-request id scan failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * True only when we can positively tell the builder hut no longer exists:
+     * the colony resolves but has no structure-builder building at that
+     * position. MineColonies building data is colony data (chunk-independent),
+     * so this is reliable even with unloaded chunks.
+     */
+    private static boolean builderHutGone(ServerPlayer player, BuilderEntry entry)
+    {
+        ServerLevel lvl = entry.dimension() != null
+                ? player.server.getLevel(entry.dimension())
+                : player.serverLevel();
+        if (lvl == null) return false;
+        IColony colony = IColonyManager.getInstance().getClosestColony(lvl, entry.builderPos());
+        if (colony == null) return false;
+        for (IBuilding b : colony.getServerBuildingManager().getBuildings().values())
+            if (b.getPosition().equals(entry.builderPos()))
+                return !(b instanceof AbstractBuildingStructureBuilder);
+        return true; // colony known, no building at that position → hut gone
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

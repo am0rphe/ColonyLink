@@ -26,17 +26,6 @@ public final class ColonyLinkCuriosCompat
     }
 
     /**
-     * Registers the Clipboard item as a curio via CuriosApi.registerCurio().
-     * Called from FMLCommonSetupEvent (enqueueWork) in ColonyLink.commonSetup().
-     * No-op if Curios is not installed.
-     */
-    public static void registerCurio()
-    {
-        if (!isLoaded()) return;
-        ColonyLinkCuriosHelper.registerCurio();
-    }
-
-    /**
      * Searches the player's curio slots for a ColonyLink Wand.
      * Returns ItemStack.EMPTY if Curios is not installed or no wand found.
      */

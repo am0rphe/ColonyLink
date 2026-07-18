@@ -32,11 +32,25 @@ public record WarehousePriorityPacket(BlockPos redirectorPos) implements CustomP
             if (!(context.player() instanceof ServerPlayer serverPlayer)) return;
 
             var be = serverPlayer.serverLevel().getBlockEntity(packet.redirectorPos());
-            if (be instanceof ColonyLinkRedirectorBlockEntity redirector)
-            {
-                if (!redirector.hasWarehouseCard()) return;
-                redirector.toggleWarehousePriority();
-            }
+            if (!(be instanceof ColonyLinkRedirectorBlockEntity redirector)) return;
+            if (!redirector.hasWarehouseCard()) return;
+
+            // v1.6.2 — redirectorPos is client-supplied: only allow toggling a
+            // redirector actually linked to THIS player's wand (mirrors the
+            // WarehouseCraft validation). Otherwise a modified client could flip
+            // another player's redirector priority (griefing).
+            var wand = ColonyLinkServerTicker.findWandInInventory(serverPlayer);
+            if (wand == null) return;
+            boolean linked = false;
+            for (BuilderEntry e : ColonyLinkWandLinkableHandler.getBuilderEntries(wand))
+                if (e.hasRedirector() && e.redirectorPos().equals(packet.redirectorPos()))
+                {
+                    linked = true;
+                    break;
+                }
+            if (!linked) return;
+
+            redirector.toggleWarehousePriority();
         });
     }
 }

@@ -37,12 +37,19 @@ import net.neoforged.neoforge.network.handling.IPayloadContext;
  *   2. Au moins 1 Package stocké dans la wand (NBT "citizen_packages")
  *   3. Warehouse card dans le redirector lié
  *   Si l'une échoue → message d'erreur, aucune consommation.
+ *
+ * v1.6.0 — the payload gained {@code citizenName} so the SERVER can record the
+ * sent-request key ("c|name|itemId") in the wand NBT on success. Before this,
+ * the key was written client-side on the client's stack copy and was lost on
+ * every inventory resync/relog. The Package token remains the real consumable
+ * guard on this path; the key only drives the grey "Sent ↺" button state.
  */
 public record PackageTokenPacket(
         ItemStack stack,
         int count,
         BlockPos redirectorPos,
-        boolean isCraft   // false = Send, true = Craft AE2
+        boolean isCraft,     // false = Send, true = Craft AE2
+        String citizenName   // v1.6.0 — for the server-side sent-key
 ) implements CustomPacketPayload
 {
     public static final ResourceLocation ID = ResourceLocation.fromNamespaceAndPath(
@@ -56,12 +63,14 @@ public record PackageTokenPacket(
                 buf.writeInt(p.count());
                 buf.writeBlockPos(p.redirectorPos());
                 buf.writeBoolean(p.isCraft());
+                buf.writeUtf(p.citizenName());
             },
             buf -> new PackageTokenPacket(
                     ItemStack.STREAM_CODEC.decode(buf),
                     buf.readInt(),
                     buf.readBlockPos(),
-                    buf.readBoolean()
+                    buf.readBoolean(),
+                    buf.readUtf()
             )
     );
 
@@ -72,15 +81,25 @@ public record PackageTokenPacket(
     {
         context.enqueueWork(() -> {
             if (!(context.player() instanceof ServerPlayer sp)) return;
-            handlePackageAction(sp, packet.stack(), packet.count(), packet.redirectorPos(), packet.isCraft());
+            handlePackageAction(sp, packet.stack(), packet.count(), packet.redirectorPos(),
+                    packet.isCraft(), packet.citizenName());
         });
     }
 
     // ── Logique principale ────────────────────────────────────────────────────
 
     private static void handlePackageAction(ServerPlayer player, ItemStack stack,
-                                            int count, BlockPos redirectorPos, boolean isCraft)
+                                            int count, BlockPos redirectorPos, boolean isCraft,
+                                            String citizenName)
     {
+        // v1.6.0 — input hardening: a non-positive count or empty stack can only
+        // come from a modified client. Reject before consuming anything.
+        if (count <= 0 || stack.isEmpty())
+        {
+            player.sendSystemMessage(Component.translatable("colonylink.stw.invalid_request"));
+            return;
+        }
+
         // 1. Trouver la wand
         ItemStack wand = findWandInInventory(player);
         if (wand == null)
@@ -147,6 +166,14 @@ public record PackageTokenPacket(
         String itemName = stripBrackets(stack.getDisplayName().getString());
         if (success)
         {
+            // v1.6.0 — record the sent-request key SERVER-side (authoritative
+            // stack, synced to the client, survives relogs). Only on success:
+            // the refund path below must not leave a key behind. addSentRequestKey
+            // dedupes, so the "Sent ↺" re-click (craft+send pair) stays idempotent.
+            if (citizenName != null && !citizenName.isEmpty())
+                ColonyLinkWandLinkableHandler.addSentRequestKey(wand,
+                        ColonyLinkWandLinkableHandler.citizenSentKey(citizenName, stack.getItem()));
+
             String action = (isCraft ? Component.translatable("colonylink.pkg_token.action_craft").getString() : Component.translatable("colonylink.pkg_token.action_sent").getString());
             player.sendSystemMessage(Component.translatable("colonylink.pkg_token.success", action, count, itemName, (stored - 1)));
         }
@@ -210,7 +237,14 @@ public record PackageTokenPacket(
                     remaining -= (int) sent;
                     if (!leftOver.isEmpty())
                     {
-                        inventory.insert(aeKey, leftOver.getCount(), Actionable.MODULATE, actionSource);
+                        // v1.6.0 — zero voiding: VERIFY the ME re-insert (a full
+                        // network or an overflow/void cell can silently discard);
+                        // the player inventory is the last-resort sink.
+                        long reinserted = inventory.insert(aeKey, leftOver.getCount(),
+                                Actionable.MODULATE, actionSource);
+                        int lost = leftOver.getCount() - (int) reinserted;
+                        if (lost > 0)
+                            player.getInventory().placeItemBackInInventory(aeKey.toStack(lost));
                         break;
                     }
                 }

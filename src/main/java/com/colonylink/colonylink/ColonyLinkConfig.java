@@ -3,20 +3,46 @@ package com.colonylink.colonylink;
 import net.neoforged.neoforge.common.ModConfigSpec;
 
 /**
- * Configuration complète de ColonyLink v1.1.3.
- * Fichier : colonylink-common.toml
+ * ColonyLink configuration (v1.6.0).
+ * File: config/colonylink-server.toml (ModConfig.Type.SERVER)
  *
- * Sections :
- *   [energy]    — RF, coûts, drain
- *   [general]   — builders max, ticker, range
- *   [tools]     — substitution d'outils
- *   [interface] — affichage GUI
- *   [advanced_ae] - optional AdvancedAE compatibility
- *   [network]   — redirector buffer
+ * All values are server-authoritative gameplay settings. NeoForge synchronizes
+ * this config from the server to every client during the connection phase, so
+ * client-side reads (tooltips, GUI) always reflect the server's values while
+ * in game. Values are NOT available at the main menu — client-reachable call
+ * sites must go through the safeGet() helpers below.
+ *
+ * Runtime changes via /colonylink config set apply to the server immediately;
+ * already-connected clients see updated display values after reconnecting
+ * (NeoForge only syncs server configs at login).
+ *
+ * Modpack notes: this file can be shipped/locked globally; a template can be
+ * provided via defaultconfigs/colonylink-server.toml. A per-world override in
+ * {@code <world>/serverconfig/} takes precedence if that file exists.
+ *
+ * Sections:
+ *   [energy]      — RF, costs, drain
+ *   [general]     — max builders, ticker, range
+ *   [delivery]    — where the Send button delivers resources
+ *   [tools]       — tool substitution
+ *   [interface]   — GUI list filtering (applied server-side before sending packets)
+ *   [advanced_ae] — optional AdvancedAE compatibility
+ *   [network]     — redirector buffer
  */
 public class ColonyLinkConfig
 {
     public static final ModConfigSpec SPEC;
+
+    /**
+     * Where the "Send" button delivers resources.
+     * Enum (not boolean) so a future PLAYER_CHOICE value can be added without
+     * breaking existing TOML files.
+     */
+    public enum SendTarget
+    {
+        BUILDER,
+        WAREHOUSE
+    }
 
     // ── [energy] ──────────────────────────────────────────────────────────────
     public static final ModConfigSpec.LongValue    WAND_RF_CAPACITY;
@@ -31,6 +57,9 @@ public class ColonyLinkConfig
     public static final ModConfigSpec.IntValue     MAX_BUILDERS_PER_WAND;
     public static final ModConfigSpec.IntValue     TICKER_INTERVAL_TICKS;
     public static final ModConfigSpec.BooleanValue WAND_RANGE_CHECK;
+
+    // ── [delivery] ────────────────────────────────────────────────────────────
+    public static final ModConfigSpec.EnumValue<SendTarget> SEND_TARGET;
 
     // ── [tools] ───────────────────────────────────────────────────────────────
     public static final ModConfigSpec.BooleanValue ENABLE_TOOL_UPGRADE;
@@ -52,8 +81,6 @@ public class ColonyLinkConfig
     public static final ModConfigSpec.LongValue LOCATE_COST_RF;
 
     // ── [network] ─────────────────────────────────────────────────────────────
-    public static final ModConfigSpec.IntValue REDIRECTOR_BUFFER_ROWS;
-    public static final ModConfigSpec.IntValue REDIRECTOR_BUFFER_COLS;
     public static final ModConfigSpec.IntValue REDIRECTOR_CRAFT_QUEUE_MAX;
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -86,7 +113,8 @@ public class ColonyLinkConfig
                 .defineInRange("passive_drain_rf", 1_200L, 0L, Long.MAX_VALUE);
 
         SEND_COST_RF = builder
-                .comment("RF cost per 'Send to Builder' action (per click, regardless of item count).",
+                .comment("RF cost per Send action (per click, regardless of item count).",
+                        "Applies to both delivery targets (see [delivery] send_target).",
                         "Default: 1,500 RF")
                 .defineInRange("send_cost_rf", 1_500L, 0L, Long.MAX_VALUE);
 
@@ -146,6 +174,28 @@ public class ColonyLinkConfig
 
         builder.pop();
 
+        // ── [delivery] ────────────────────────────────────────────────────────
+        builder.comment(
+                "Delivery target settings.",
+                "This is a server/modpack setting: it applies to every player and is",
+                "synced from the server to clients on login."
+        ).push("delivery");
+
+        SEND_TARGET = builder
+                .comment("Controls where the \"Send\" button delivers resources.",
+                        "  BUILDER   - Resources are inserted directly into the Builder's Hut inventory.",
+                        "              Bypasses the courier entirely. Fastest. This is the default and the",
+                        "              intended ColonyLink experience.",
+                        "  WAREHOUSE - Resources are inserted into the colony Warehouse racks instead.",
+                        "              A courier must then deliver them to the builder. Slower, but keeps",
+                        "              couriers relevant. Recommended for balanced modpacks.",
+                        "              While a delivery is pending, the resource line turns grey",
+                        "              (\"Sent\") until the courier completes the delivery.",
+                        "Default: BUILDER")
+                .defineEnum("send_target", SendTarget.BUILDER);
+
+        builder.pop();
+
         // ── [tools] ───────────────────────────────────────────────────────────
         builder.comment(
                 "Tool upgrade and substitution settings.",
@@ -177,7 +227,9 @@ public class ColonyLinkConfig
 
         // ── [interface] ───────────────────────────────────────────────────────
         builder.comment(
-                "GUI display settings for the Colony Link Wand interface."
+                "GUI display settings for the Colony Link Wand interface.",
+                "Despite the section name these are applied SERVER-side: the server filters",
+                "the resource list before sending it to clients."
         ).push("interface");
 
         SHOW_CRAFTING_STATUS = builder
@@ -200,7 +252,7 @@ public class ColonyLinkConfig
 
         WAREHOUSE_SNAPSHOT_VALIDITY_TICKS = builder
                 .comment("How long a warehouse scan result remains valid before expiring (in ticks).",
-                        "After this time the 'Check Warehouse' button resets to allow a new scan.",
+                        "Also the server-side cooldown between two 'Check Warehouse' scans.",
                         "20t = 1s, 400t = 20s. Default: 400")
                 .defineInRange("warehouse_snapshot_validity_ticks", 400, 20, 24000);
 
@@ -226,19 +278,10 @@ public class ColonyLinkConfig
 
         // ── [network] ─────────────────────────────────────────────────────────
         builder.comment(
-                "Colony Link Redirector buffer configuration.",
-                "Changes require existing Redirectors to be broken and replaced to take effect."
+                "Colony Link Redirector settings.",
+                "v1.6.2 — the item buffer is fixed at 3x9 (27 slots) to stay in sync with the",
+                "GUI layout and texture; the old redirector_buffer_rows/cols options were removed."
         ).push("network");
-
-        REDIRECTOR_BUFFER_ROWS = builder
-                .comment("Number of rows in the Redirector item buffer.",
-                        "Total slots = rows × cols. Default: 10 (= 120 slots with default cols)")
-                .defineInRange("redirector_buffer_rows", 3, 1, 20);
-
-        REDIRECTOR_BUFFER_COLS = builder
-                .comment("Number of columns in the Redirector item buffer.",
-                        "Total slots = rows × cols. Default: 12 (= 120 slots with default rows)")
-                .defineInRange("redirector_buffer_cols", 9, 6, 18);
 
         REDIRECTOR_CRAFT_QUEUE_MAX = builder
                 .comment("Maximum number of Domum autocraft jobs the Redirector accepts from AE2",
@@ -252,5 +295,43 @@ public class ColonyLinkConfig
         builder.pop();
 
         SPEC = builder.build();
+    }
+
+    // ── Safe accessors ────────────────────────────────────────────────────────
+    // A SERVER-type config is only loaded while a server/world is active (and,
+    // on remote clients, only after the login sync). These helpers protect the
+    // few client- and capability-side call sites that could in theory execute
+    // outside that window (item bar rendering, tooltips, third-party mods
+    // exercising the energy capability): they fall back to the value's default
+    // instead of throwing "Cannot get config value before config is loaded."
+
+    public static boolean isLoaded()
+    {
+        return SPEC.isLoaded();
+    }
+
+    public static int safeGet(ModConfigSpec.IntValue value, int fallback)
+    {
+        return SPEC.isLoaded() ? value.get() : fallback;
+    }
+
+    public static long safeGet(ModConfigSpec.LongValue value, long fallback)
+    {
+        return SPEC.isLoaded() ? value.get() : fallback;
+    }
+
+    public static boolean safeGet(ModConfigSpec.BooleanValue value, boolean fallback)
+    {
+        return SPEC.isLoaded() ? value.get() : fallback;
+    }
+
+    /**
+     * Current delivery target, defaulting to BUILDER when the config is not
+     * loaded (e.g. main menu). Server-side gameplay code may read SEND_TARGET
+     * directly; client/UI code should use this accessor.
+     */
+    public static SendTarget getSendTarget()
+    {
+        return SPEC.isLoaded() ? SEND_TARGET.get() : SendTarget.BUILDER;
     }
 }

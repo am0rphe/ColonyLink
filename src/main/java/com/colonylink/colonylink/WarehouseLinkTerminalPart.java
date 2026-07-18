@@ -3,6 +3,7 @@ package com.colonylink.colonylink;
 import appeng.api.config.Actionable;
 import appeng.api.networking.IManagedGridNode;
 import appeng.menu.ISubMenu;
+import appeng.api.networking.IGrid;
 import appeng.api.networking.crafting.ICraftingService;
 import appeng.api.networking.security.IActionSource;
 import appeng.api.networking.storage.IStorageService;
@@ -86,9 +87,6 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
 
     // ── Constantes ────────────────────────────────────────────────────────────
 
-    /** Rayon max pour détecter la colonie depuis la position du Part (blocks). */
-    private static final int COLONY_SEARCH_RADIUS = 100;
-
     /**
      * Nombre de slots locaux d'une moitié de rack MineColonies.
      * - Rack simple : 27 slots
@@ -97,27 +95,6 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
      * pour ne pas doublonner les miroirs.
      */
     private static final int RACK_HALF_SLOTS = 27;
-
-    /**
-     * Seuil au-dessus duquel un IItemHandler retourné par warehouse.getContainers()
-     * est considéré comme le méta-handler du warehouse (agrégat de tous les racks),
-     * et non un rack physique.
-     *
-     * Un rack physique MineColonies a au maximum 54 slots (rack double).
-     * Au-delà, c'est forcément le handler agrégé du building (observé empiriquement
-     * avec ~1323 slots = ~49 racks × 27 dans un warehouse en cours de remplissage).
-     *
-     * Utilisé pour :
-     *  - LECTURE : on cible CE handler exclusivement (snapshot rapide et déjà
-     *              dédupliqué par MineColonies).
-     *  - ÉCRITURE : on SKIP ce handler. On n'écrit que dans les racks physiques.
-     */
-    // META_HANDLER_MIN_SLOTS -- plus utilise pour le filtrage depuis v1.4.7.
-    // Le meta-handler est desormais identifie par position (warehouse.getPosition())
-    // dans findMetaHandler(), ce qui permet d'inclure le Warehouse Hut (63 slots)
-    // dans le scan des racks sans ambiguite.
-    @SuppressWarnings("unused")
-    private static final int META_HANDLER_MIN_SLOTS = 55;
 
     // ── État ──────────────────────────────────────────────────────────────────
 
@@ -300,8 +277,7 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
 
         if (!checkPermission(sp))
         {
-            sp.sendSystemMessage(Component.literal(
-                    "§c[Terminal] You are not owner or officer of this colony."));
+            sp.sendSystemMessage(Component.translatable("colonylink.terminal.no_permission"));
             return true;
         }
 
@@ -394,9 +370,14 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         {
             net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player, buildWarehouseSnapshot(level));
             net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player, buildMeSnapshot(level));
-            // Envoie la queue Domum initiale
-            net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player,
-                    new DomumQueueSyncPacket(new java.util.ArrayList<>(domumQueue)));
+            // v1.6.1 — queue Domum PARTAGEE : seme/recupere la liste commune de la grille,
+            // aligne le NBT de tous les terminaux et diffuse a leurs viewers (dont ce joueur).
+            IGrid grid = currentGrid();
+            if (grid != null)
+                syncGrid(level, grid);
+            else
+                net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player,
+                        new DomumQueueSyncPacket(new java.util.ArrayList<>()));
             // Le snapshot vient d'être envoyé : aligner la signature pour
             // éviter un double envoi au prochain tick.
             lastWarehouseSig = computeWarehouseSig(level);
@@ -687,13 +668,13 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
 
         ServerLevel level = player.serverLevel();
         IColony colony = findColony(level);
-        if (colony == null) { msg(player, "§cNo colony found."); return; }
+        if (colony == null) { msg(player, Component.translatable("colonylink.terminal.no_colony")); return; }
         BuildingWareHouse wh = findWarehouse(colony);
-        if (wh == null) { msg(player, "§cNo warehouse found."); return; }
+        if (wh == null) { msg(player, Component.translatable("colonylink.terminal.no_warehouse")); return; }
         // v1.4.9 — fail-off strict : warehouse entièrement chargé requis.
         if (!ColonyLinkChunkUtil.warehouseFullyLoaded(level, wh))
         {
-            msg(player, "§c[Terminal] Warehouse is in unloaded chunks — move closer or use a chunk loader.");
+            msg(player, Component.translatable("colonylink.terminal.warehouse_unloaded"));
             return;
         }
 
@@ -723,7 +704,7 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
             player.containerMenu.broadcastChanges();
         }
         else
-            msg(player, "§c[Terminal] Warehouse full.");
+            msg(player, Component.translatable("colonylink.terminal.warehouse_full"));
     }
 
     /**
@@ -737,9 +718,9 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         if (carried.isEmpty()) return;
 
         var node = this.getMainNode().getNode();
-        if (node == null) { msg(player, "§cAE2 network unavailable."); return; }
+        if (node == null) { msg(player, Component.translatable("colonylink.terminal.network_unavailable")); return; }
         var storage = node.getGrid().getStorageService().getInventory();
-        IActionSource src = IActionSource.ofMachine(this);
+        IActionSource src = IActionSource.ofPlayer(player, this);
         AEItemKey key = AEItemKey.of(carried);
 
         int toDeposit = (count <= 0 || count >= carried.getCount()) ? carried.getCount() : count;
@@ -752,7 +733,7 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
             player.containerMenu.broadcastChanges();
         }
         else
-            msg(player, "§c[Terminal] ME full.");
+            msg(player, Component.translatable("colonylink.terminal.me_full"));
     }
 
     // ── Transferts sélection (flèches centrales) ──────────────────────────────
@@ -764,13 +745,13 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         if (!checkPermission(player)) return;
         ServerLevel level = player.serverLevel();
         IColony colony = findColony(level);
-        if (colony == null) { msg(player, "§cNo colony found."); return; }
+        if (colony == null) { msg(player, Component.translatable("colonylink.terminal.no_colony")); return; }
         BuildingWareHouse wh = findWarehouse(colony);
-        if (wh == null) { msg(player, "§cNo warehouse found."); return; }
+        if (wh == null) { msg(player, Component.translatable("colonylink.terminal.no_warehouse")); return; }
         // v1.4.9 — fail-off strict : warehouse entièrement chargé requis.
         if (!ColonyLinkChunkUtil.warehouseFullyLoaded(level, wh))
         {
-            msg(player, "§c[Terminal] Warehouse is in unloaded chunks — move closer or use a chunk loader.");
+            msg(player, Component.translatable("colonylink.terminal.warehouse_unloaded"));
             return;
         }
 
@@ -830,9 +811,9 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
     {
         if (!checkPermission(player)) return;
         var node = this.getMainNode().getNode();
-        if (node == null) { msg(player, "§cAE2 network unavailable."); return; }
+        if (node == null) { msg(player, Component.translatable("colonylink.terminal.network_unavailable")); return; }
         var storage = node.getGrid().getStorageService().getInventory();
-        IActionSource src = IActionSource.ofMachine(this);
+        IActionSource src = IActionSource.ofPlayer(player, this);
         AEItemKey key = AEItemKey.of(template);
         if (key == null) return;
 
@@ -885,7 +866,7 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         var node = this.getMainNode().getNode();
         if (node == null) return;
         var storage = node.getGrid().getStorageService().getInventory();
-        IActionSource src = IActionSource.ofMachine(this);
+        IActionSource src = IActionSource.ofPlayer(player, this);
         AEItemKey key = AEItemKey.of(carried);
         if (key == null) return;
         long inserted = storage.insert(key, carried.getCount(), Actionable.MODULATE, src);
@@ -903,20 +884,20 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         if (!checkPermission(player)) return 0;
         ServerLevel level = player.serverLevel();
         IColony colony = findColony(level);
-        if (colony == null) { msg(player, "§cNo colony found."); return 0; }
+        if (colony == null) { msg(player, Component.translatable("colonylink.terminal.no_colony")); return 0; }
         BuildingWareHouse wh = findWarehouse(colony);
-        if (wh == null) { msg(player, "§cNo warehouse found."); return 0; }
+        if (wh == null) { msg(player, Component.translatable("colonylink.terminal.no_warehouse")); return 0; }
         // v1.4.9 — fail-off strict : warehouse entièrement chargé requis.
         if (!ColonyLinkChunkUtil.warehouseFullyLoaded(level, wh))
         {
-            msg(player, "§c[Terminal] Warehouse is in unloaded chunks — move closer or use a chunk loader.");
+            msg(player, Component.translatable("colonylink.terminal.warehouse_unloaded"));
             return 0;
         }
 
         var node = this.getMainNode().getNode();
-        if (node == null) { msg(player, "§cAE2 network unavailable."); return 0; }
+        if (node == null) { msg(player, Component.translatable("colonylink.terminal.network_unavailable")); return 0; }
         var storage = node.getGrid().getStorageService().getInventory();
-        IActionSource src = IActionSource.ofMachine(this);
+        IActionSource src = IActionSource.ofPlayer(player, this);
         AEItemKey key = AEItemKey.of(template);
 
         List<ItemStack> extracted = new ArrayList<>();
@@ -940,7 +921,7 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
             }
         }
 
-        if (extracted.isEmpty()) { msg(player, "§c[Terminal] Item not found in warehouse."); return 0; }
+        if (extracted.isEmpty()) { msg(player, Component.translatable("colonylink.terminal.item_not_in_wh")); return 0; }
 
         int transferred = 0;
         List<ItemStack> toReturn = new ArrayList<>();
@@ -965,7 +946,7 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
             }
         }
 
-        if (transferred == 0) msg(player, "§c[Terminal] ME full or item not found.");
+        if (transferred == 0) msg(player, Component.translatable("colonylink.terminal.me_full_or_missing"));
         return transferred;
     }
 
@@ -977,13 +958,13 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         if (!checkPermission(player)) return 0;
         ServerLevel level = player.serverLevel();
         IColony colony = findColony(level);
-        if (colony == null) { msg(player, "§cNo colony found."); return 0; }
+        if (colony == null) { msg(player, Component.translatable("colonylink.terminal.no_colony")); return 0; }
         BuildingWareHouse wh = findWarehouse(colony);
-        if (wh == null) { msg(player, "§cNo warehouse found."); return 0; }
+        if (wh == null) { msg(player, Component.translatable("colonylink.terminal.no_warehouse")); return 0; }
         // v1.4.9 — fail-off strict : warehouse entièrement chargé requis.
         if (!ColonyLinkChunkUtil.warehouseFullyLoaded(level, wh))
         {
-            msg(player, "§c[Terminal] Warehouse is in unloaded chunks — move closer or use a chunk loader.");
+            msg(player, Component.translatable("colonylink.terminal.warehouse_unloaded"));
             return 0;
         }
 
@@ -1008,7 +989,7 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
             }
         }
 
-        if (extracted.isEmpty()) { msg(player, "§c[Terminal] Item not found in warehouse."); return 0; }
+        if (extracted.isEmpty()) { msg(player, Component.translatable("colonylink.terminal.item_not_in_wh")); return 0; }
 
         ItemStack toGive = extracted.get(0).copy();
         for (int i = 1; i < extracted.size(); i++) toGive.grow(extracted.get(i).getCount());
@@ -1026,7 +1007,7 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
                 // v1.3.9 — skip méta-handler.
                 toGive = insertIntoHandler(rack, toGive);
             }
-            msg(player, "§e[Terminal] Inventory full.");
+            msg(player, Component.translatable("colonylink.terminal.inventory_full"));
             return 0;
         }
         return toGive.getCount();
@@ -1040,24 +1021,24 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         if (!checkPermission(player)) return 0;
         ServerLevel level = player.serverLevel();
         IColony colony = findColony(level);
-        if (colony == null) { msg(player, "§cNo colony found."); return 0; }
+        if (colony == null) { msg(player, Component.translatable("colonylink.terminal.no_colony")); return 0; }
         BuildingWareHouse wh = findWarehouse(colony);
-        if (wh == null) { msg(player, "§cNo warehouse found."); return 0; }
+        if (wh == null) { msg(player, Component.translatable("colonylink.terminal.no_warehouse")); return 0; }
         // v1.4.9 — fail-off strict : warehouse entièrement chargé requis.
         if (!ColonyLinkChunkUtil.warehouseFullyLoaded(level, wh))
         {
-            msg(player, "§c[Terminal] Warehouse is in unloaded chunks — move closer or use a chunk loader.");
+            msg(player, Component.translatable("colonylink.terminal.warehouse_unloaded"));
             return 0;
         }
 
         var node = this.getMainNode().getNode();
-        if (node == null) { msg(player, "§cAE2 network unavailable."); return 0; }
+        if (node == null) { msg(player, Component.translatable("colonylink.terminal.network_unavailable")); return 0; }
         var storage = node.getGrid().getStorageService().getInventory();
-        IActionSource src = IActionSource.ofMachine(this);
+        IActionSource src = IActionSource.ofPlayer(player, this);
         AEItemKey key = AEItemKey.of(template);
 
         long extracted = storage.extract(key, count, Actionable.MODULATE, src);
-        if (extracted <= 0) { msg(player, "§c[Terminal] Item not found in ME."); return 0; }
+        if (extracted <= 0) { msg(player, Component.translatable("colonylink.terminal.item_not_in_me")); return 0; }
 
         ItemStack remaining = key.toStack((int) extracted);
         java.util.Set<BlockPos> visitedPos = new java.util.HashSet<>();
@@ -1076,8 +1057,8 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         if (!remaining.isEmpty())
         {
             storage.insert(key, remaining.getCount(), Actionable.MODULATE, src);
-            if (inserted == 0) msg(player, "§c[Terminal] Warehouse full.");
-            else msg(player, "§e[Terminal] Warehouse full — only " + inserted + " inserted.");
+            if (inserted == 0) msg(player, Component.translatable("colonylink.terminal.warehouse_full"));
+            else msg(player, Component.translatable("colonylink.terminal.warehouse_full_partial", inserted));
         }
         return inserted;
     }
@@ -1090,20 +1071,20 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         if (!checkPermission(player)) return 0;
 
         var node = this.getMainNode().getNode();
-        if (node == null) { msg(player, "§cAE2 network unavailable."); return 0; }
+        if (node == null) { msg(player, Component.translatable("colonylink.terminal.network_unavailable")); return 0; }
         var storage = node.getGrid().getStorageService().getInventory();
-        IActionSource src = IActionSource.ofMachine(this);
+        IActionSource src = IActionSource.ofPlayer(player, this);
         AEItemKey key = AEItemKey.of(template);
 
         long extracted = storage.extract(key, count, Actionable.MODULATE, src);
-        if (extracted <= 0) { msg(player, "§c[Terminal] Item not found in ME."); return 0; }
+        if (extracted <= 0) { msg(player, Component.translatable("colonylink.terminal.item_not_in_me")); return 0; }
 
         ItemStack toGive = key.toStack((int) extracted);
         boolean added = player.getInventory().add(toGive.copy());
         if (!added)
         {
             storage.insert(key, extracted, Actionable.MODULATE, src);
-            msg(player, "§e[Terminal] Inventory full.");
+            msg(player, Component.translatable("colonylink.terminal.inventory_full"));
             return 0;
         }
         return (int) extracted;
@@ -1151,7 +1132,7 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         // v1.4.9 — fail-off strict : warehouse entièrement chargé requis.
         if (!ColonyLinkChunkUtil.warehouseFullyLoaded(level, wh))
         {
-            msg(player, "§c[Terminal] Warehouse is in unloaded chunks — move closer or use a chunk loader.");
+            msg(player, Component.translatable("colonylink.terminal.warehouse_unloaded"));
             return 0;
         }
 
@@ -1176,11 +1157,11 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         var node = this.getMainNode().getNode();
         if (node == null) return 0;
         var storage = node.getGrid().getStorageService().getInventory();
-        IActionSource src = IActionSource.ofMachine(this);
+        IActionSource src = IActionSource.ofPlayer(player, this);
         AEItemKey key = AEItemKey.of(stack);
         long inserted = storage.insert(key, stack.getCount(), Actionable.MODULATE, src);
         if (inserted < stack.getCount())
-            msg(player, "§e[Terminal] ME full — " + (stack.getCount()-inserted) + "x not inserted.");
+            msg(player, Component.translatable("colonylink.terminal.me_full_partial", stack.getCount() - inserted));
         return (int) inserted;
     }
 
@@ -1218,11 +1199,68 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
      * Ajoute un item Domum à la queue d'encodage.
      * Persiste le Part et broadcast la queue mise à jour à tous les viewers.
      */
+    // ── v1.6.1 — Queue Domum PARTAGEE par reseau AE2 (DomumQueueManager) ─────
+    // Le champ domumQueue ne sert plus que de copie NBT (filet de persistance) ; la liste
+    // vive commune est tenue par DomumQueueManager, indexee par grille. Tous les terminaux
+    // d'un meme reseau lisent/ecrivent la meme liste → un item mis en file apparait sur
+    // TOUS les terminaux (cable commun, Quantum Ring, etc.).
+
+    /** Grille ME courante de ce terminal (null si non connecte). */
+    private IGrid currentGrid()
+    {
+        var node = this.getMainNode().getNode();
+        return node != null ? node.getGrid() : null;
+    }
+
+    /** Union des copies NBT de tous les terminaux vivants de la grille — seed du manager
+     *  (fusionne aussi les files divergentes d'anciens mondes a la 1re lecture). */
+    private static List<ItemStack> collectSeed(ServerLevel level, IGrid grid)
+    {
+        List<ItemStack> seed = new java.util.ArrayList<>();
+        for (WarehouseLinkTerminalPart t : ColonyLinkServerTicker.findLiveTerminalsForGrid(level, grid))
+            for (ItemStack cur : t.domumQueue)
+            {
+                if (cur.isEmpty()) continue;
+                boolean dup = false;
+                for (ItemStack e : seed)
+                    if (ItemStack.isSameItemSameComponents(e, cur)) { dup = true; break; }
+                if (!dup) seed.add(cur.copyWithCount(1));
+            }
+        return seed;
+    }
+
+    /** Apres toute mutation : recopie la queue partagee dans le NBT de chaque terminal de
+     *  la grille (persistance) et diffuse la liste a tous leurs viewers. */
+    private static void syncGrid(ServerLevel level, IGrid grid)
+    {
+        if (grid == null) return;
+        List<ItemStack> shared = DomumQueueManager.snapshot(grid, () -> collectSeed(level, grid));
+        for (WarehouseLinkTerminalPart t : ColonyLinkServerTicker.findLiveTerminalsForGrid(level, grid))
+        {
+            t.domumQueue.clear();
+            for (ItemStack sh : shared) t.domumQueue.add(sh.copyWithCount(1));
+            t.getHost().markForSave();
+            t.broadcastDomumQueue();
+        }
+    }
+
+    /** Point d'entree depuis DomumQueuePacket : ajoute a la queue partagee de la grille et
+     *  synchronise tous les terminaux. Retourne true si ajoute (false = deja en file). */
+    public static boolean queueDomumOnGrid(ServerLevel level, IGrid grid, ItemStack stack)
+    {
+        if (grid == null) return false;
+        boolean added = DomumQueueManager.add(grid, () -> collectSeed(level, grid), stack);
+        if (added) syncGrid(level, grid);
+        return added;
+    }
+
     public void addToDomumQueue(ItemStack stack)
     {
-        domumQueue.add(stack.copyWithCount(1));
-        getHost().markForSave();
-        broadcastDomumQueue();
+        if (!(this.getLevel() instanceof ServerLevel level)) return;
+        IGrid grid = currentGrid();
+        if (grid == null) return;
+        if (DomumQueueManager.add(grid, () -> collectSeed(level, grid), stack))
+            syncGrid(level, grid);
     }
 
     /**
@@ -1231,10 +1269,11 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
      */
     public void removeFromDomumQueue(int index)
     {
-        if (index < 0 || index >= domumQueue.size()) return;
-        domumQueue.remove(index);
-        getHost().markForSave();
-        broadcastDomumQueue();
+        if (!(this.getLevel() instanceof ServerLevel level)) return;
+        IGrid grid = currentGrid();
+        if (grid == null) return;
+        DomumQueueManager.removeAt(grid, () -> collectSeed(level, grid), index);
+        syncGrid(level, grid);
     }
 
     /**
@@ -1243,15 +1282,18 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
      */
     public boolean isDomumQueued(ItemStack stack)
     {
-        for (ItemStack queued : domumQueue)
-            if (ItemStack.isSameItemSameComponents(queued, stack)) return true;
-        return false;
+        if (!(this.getLevel() instanceof ServerLevel level)) return false;
+        IGrid grid = currentGrid();
+        return DomumQueueManager.isQueued(grid, () -> collectSeed(level, grid), stack);
     }
 
     /** Retourne une vue non-modifiable de la queue (pour le menu / screen). */
     public List<ItemStack> getDomumQueue()
     {
-        return java.util.Collections.unmodifiableList(domumQueue);
+        if (!(this.getLevel() instanceof ServerLevel level))
+            return java.util.Collections.unmodifiableList(domumQueue);
+        IGrid grid = currentGrid();
+        return DomumQueueManager.snapshot(grid, () -> collectSeed(level, grid));
     }
 
     /**
@@ -1260,8 +1302,10 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
      */
     private void tickDomumQueueCraftableCheck()
     {
-        if (domumQueue.isEmpty()) return;
         if (!isActive()) return;
+        if (!(this.getLevel() instanceof ServerLevel level)) return;
+        IGrid grid = currentGrid();
+        if (grid == null || DomumQueueManager.isEmpty(grid)) return;
         var node = this.getMainNode().getNode();
         if (node == null) return;
 
@@ -1269,21 +1313,8 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         try { crafting = node.getGrid().getCraftingService(); }
         catch (Exception e) { return; }
 
-        boolean changed = false;
-        for (int i = domumQueue.size() - 1; i >= 0; i--)
-        {
-            AEItemKey key = AEItemKey.of(domumQueue.get(i));
-            if (key != null && crafting.isCraftable(key))
-            {
-                domumQueue.remove(i);
-                changed = true;
-            }
-        }
-        if (changed)
-        {
-            getHost().markForSave();
-            broadcastDomumQueue();
-        }
+        if (DomumQueueManager.pruneCraftable(grid, () -> collectSeed(level, grid), crafting))
+            syncGrid(level, grid);
     }
 
     /**
@@ -1330,10 +1361,16 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
 
     private boolean checkPermission(ServerPlayer player)
     {
+        // No card: the terminal is a plain ME terminal (it lives on the AE grid,
+        // never wireless). ME access is gated by the caller's IActionSource.ofPlayer
+        // (AE2 security), by resolvePart requiring the menu to be actually open, and
+        // by the menu's range check — no colony binding to enforce here.
         if (!hasWarehouseCard()) return true;
         ServerLevel level = player.serverLevel();
         IColony colony = findColony(level);
-        if (colony == null) return true;
+        // v1.6.2 — card present but no colony resolvable: deny warehouse ops instead
+        // of failing open. A bound card without a colony can only be an anomaly.
+        if (colony == null) return false;
         return colony.getPermissions().hasPermission(player, Action.ACCESS_HUTS);
     }
 
@@ -1358,8 +1395,8 @@ public class WarehouseLinkTerminalPart extends AbstractTerminalPart
         return remaining;
     }
 
-    private static void msg(ServerPlayer player, String text)
+    private static void msg(ServerPlayer player, Component text)
     {
-        player.sendSystemMessage(Component.literal(text));
+        player.sendSystemMessage(text);
     }
 }

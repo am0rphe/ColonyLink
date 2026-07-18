@@ -42,32 +42,59 @@ public record GuiStatePacket(boolean open, BlockPos builderPos, int activeTabInd
 
             if (packet.open())
             {
-                ColonyLinkServerTicker.addViewer(
-                        serverPlayer.getUUID(), packet.builderPos(), packet.activeTabIndex());
-                ColonyLinkServerTicker.sendImmediateUpdate(
-                        serverPlayer, packet.builderPos(), packet.activeTabIndex());
-
+                // v1.6.2 — the client-supplied index is never trusted: a negative value
+                // would crash the server ticker (allEntries.get(negative)) and, once
+                // persisted to the wand NBT, re-crash every GUI open. Clamp to a valid
+                // tab, preserving the Integer.MAX_VALUE sentinel (Citizens tab).
                 net.minecraft.world.item.ItemStack _wand1 = ColonyLinkServerTicker.findWandInInventory(serverPlayer);
+                int entriesSize = _wand1 != null
+                        ? ColonyLinkWandLinkableHandler.getBuilderEntries(_wand1).size() : 0;
+                int safeTab = sanitizeTab(packet.activeTabIndex(), entriesSize);
+
+                ColonyLinkServerTicker.addViewer(
+                        serverPlayer.getUUID(), packet.builderPos(), safeTab);
+                ColonyLinkServerTicker.sendImmediateUpdate(
+                        serverPlayer, packet.builderPos(), safeTab);
+
                 if (_wand1 != null)
-                    ColonyLinkWandLinkableHandler.setActiveTab(_wand1, packet.activeTabIndex());
+                    ColonyLinkWandLinkableHandler.setActiveTab(_wand1, safeTab);
             }
             else
             {
                 ColonyLinkServerTicker.removeViewer(serverPlayer.getUUID());
 
-                // Fix 3 : sauvegarde la tab active en NBT wand à la fermeture du GUI
+                // Fix 3 : sauvegarde la tab active en NBT wand à la fermeture du GUI.
+                // activeTabIndex == -1 reste la sentinelle "mode pairing" (message ci-dessous).
                 if (packet.activeTabIndex() >= 0)
                 {
                     net.minecraft.world.item.ItemStack _wand2 = ColonyLinkServerTicker.findWandInInventory(serverPlayer);
                     if (_wand2 != null)
-                        ColonyLinkWandLinkableHandler.setActiveTab(_wand2, packet.activeTabIndex());
+                    {
+                        int entriesSize = ColonyLinkWandLinkableHandler.getBuilderEntries(_wand2).size();
+                        ColonyLinkWandLinkableHandler.setActiveTab(_wand2,
+                                sanitizeTab(packet.activeTabIndex(), entriesSize));
+                    }
                 }
                 else
                 {
-                    serverPlayer.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                            "§a[ColonyLink] §fSneak + right-click a Builder's Hut to pair a new builder."));
+                    serverPlayer.sendSystemMessage(net.minecraft.network.chat.Component.translatable(
+                            "colonylink.gui.pair_hint"));
                 }
             }
         });
+    }
+
+    /**
+     * v1.6.2 — Clamps a client-supplied tab index to a safe value. The
+     * Integer.MAX_VALUE sentinel (Citizens tab) is preserved as-is; any other
+     * value is bounded to [0, entriesSize-1]. Negative indices (only reachable
+     * from a modified client) would otherwise crash the server ticker and brick
+     * the wand NBT.
+     */
+    private static int sanitizeTab(int raw, int entriesSize)
+    {
+        if (raw == Integer.MAX_VALUE) return Integer.MAX_VALUE;
+        int max = Math.max(0, entriesSize - 1);
+        return Math.max(0, Math.min(raw, max));
     }
 }

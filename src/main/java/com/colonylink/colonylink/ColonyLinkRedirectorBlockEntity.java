@@ -79,10 +79,10 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
 {
     // ── Constantes buffer ─────────────────────────────────────────────────────
 
-    public static int BUFFER_ROWS() { return ColonyLinkConfig.REDIRECTOR_BUFFER_ROWS.get(); }
-    public static int BUFFER_COLS() { return ColonyLinkConfig.REDIRECTOR_BUFFER_COLS.get(); }
-    public static int BUFFER_SIZE() { return BUFFER_ROWS() * BUFFER_COLS(); }
-
+    // v1.6.2 — buffer size is frozen at 3×9 = 27 slots. It must match both the menu
+    // slot layout (ColonyLinkRedirectorMenu) and the fixed GUI texture, so it is no
+    // longer configurable (the old redirector_buffer_rows/cols options never worked:
+    // the texture never adapted).
     public static final int BUFFER_ROWS = 3;
     public static final int BUFFER_COLS = 9;
     public static final int BUFFER_SIZE = BUFFER_ROWS * BUFFER_COLS;
@@ -114,7 +114,7 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
 
     // ── Buffer — accepte UNIQUEMENT les DomumPatternItem ─────────────────────
 
-    public final ItemStackHandler buffer = new ItemStackHandler(BUFFER_SIZE())
+    public final ItemStackHandler buffer = new ItemStackHandler(BUFFER_SIZE)
     {
         @Override
         public boolean isItemValid(int slot, ItemStack stack)
@@ -401,9 +401,15 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
         if (result.isEmpty())
         {
             // Cas pathologique : pattern validé mais reconstruction impossible.
-            // Les matériaux ont été consommés par AE2 ; on ne peut rien produire.
-            ColonyLink.LOGGER.error("[DomumPattern] Failed to build Domum result for: {} (materials already consumed)",
-                    targetStack.getDisplayName().getString());
+            // v1.6.2 — zéro voiding : AE2 a déjà prélevé les matériaux avant pushPattern.
+            // Plutôt que de les perdre, on les renvoie DANS LE ME via pendingOutputs
+            // (réinjecté à chaque tick par flushPendingOutputs, persisté NBT). Pas de
+            // double-comptage : ils n'ont été extraits qu'une fois.
+            ColonyLink.LOGGER.error("[DomumPattern] Failed to build Domum result for: {} — returning {} raw material stack(s) to the ME network (zero voiding)",
+                    targetStack.getDisplayName().getString(), materials.size());
+            for (ItemStack mat : materials)
+                if (!mat.isEmpty()) pendingOutputs.add(mat.copy());
+            setChanged();
             return;
         }
 

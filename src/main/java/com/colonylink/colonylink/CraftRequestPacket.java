@@ -28,13 +28,21 @@ public record CraftRequestPacket(
                 buf.writeBlockPos(packet.redirectorPos());
                 buf.writeInt(packet.domumAction().ordinal());
             },
-            buf -> new CraftRequestPacket(
-                    ItemStack.STREAM_CODEC.decode(buf),
-                    buf.readInt(),
-                    buf.readBoolean(),
-                    buf.readBlockPos(),
-                    ResourceStatus.values()[buf.readInt()]
-            )
+            buf -> {
+                ItemStack stack        = ItemStack.STREAM_CODEC.decode(buf);
+                int realCount          = buf.readInt();
+                boolean isDomum        = buf.readBoolean();
+                BlockPos redirectorPos = buf.readBlockPos();
+                // v1.6.2 — validate the enum ordinal: an out-of-range value can only
+                // come from a modified client and would throw AIOOBE. Reject the
+                // malformed packet cleanly (connection closed) instead.
+                int ord = buf.readInt();
+                if (ord < 0 || ord >= ResourceStatus.values().length)
+                    throw new io.netty.handler.codec.DecoderException(
+                            "Invalid ResourceStatus ordinal: " + ord);
+                return new CraftRequestPacket(stack, realCount, isDomum, redirectorPos,
+                        ResourceStatus.values()[ord]);
+            }
     );
 
     @Override

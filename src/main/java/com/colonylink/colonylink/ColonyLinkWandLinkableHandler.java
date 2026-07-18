@@ -48,13 +48,12 @@ public class ColonyLinkWandLinkableHandler implements IGridLinkableHandler
     private static final String LEGACY_REDIRECTOR_Y = "redirector_y";
     private static final String LEGACY_REDIRECTOR_Z = "redirector_z";
 
-    /** Lu depuis la config — permet jusqu'à 10 builders par wand. */
-    public static int MAX_BUILDERS = 5; // valeur par défaut, écrasée par getMaxBuilders()
-
     /** Retourne la limite actuelle depuis la config (hot-reloadable). */
     public static int getMaxBuilders()
     {
-        return ColonyLinkConfig.MAX_BUILDERS_PER_WAND.get();
+        // v1.6.0 — SERVER config: guarded read, this is called from client
+        // rendering paths (ColonyLinkScreen) as well as server code.
+        return ColonyLinkConfig.safeGet(ColonyLinkConfig.MAX_BUILDERS_PER_WAND, 5);
     }
 
     // ── IGridLinkableHandler (WAP AE2) ───────────────────────────────────
@@ -173,7 +172,7 @@ public class ColonyLinkWandLinkableHandler implements IGridLinkableHandler
     /**
      * Ajoute un BuilderEntry à la liste.
      * Vérifie qu'un entry avec le même builderPos n'existe pas déjà (écrase si oui).
-     * Limite : MAX_BUILDERS entries.
+     * Limite : getMaxBuilders() entries.
      * Retourne false si la limite est atteinte et que l'entry n'existe pas déjà.
      */
     public static boolean addOrUpdateEntry(ItemStack stack, BuilderEntry entry)
@@ -243,7 +242,10 @@ public class ColonyLinkWandLinkableHandler implements IGridLinkableHandler
         if (!tag.contains(NBT_ACTIVE_TAB)) return 0;
         int tab = tag.getInt(NBT_ACTIVE_TAB);
         List<BuilderEntry> entries = getBuilderEntries(stack);
-        return entries.isEmpty() ? 0 : Math.min(tab, entries.size() - 1);
+        // v1.6.2 — clamp low bound too: a wand whose NBT was poisoned with a
+        // negative active_tab (modified client) self-heals instead of crashing on
+        // every read. Integer.MAX_VALUE (Citizens sentinel) still collapses to size-1.
+        return entries.isEmpty() ? 0 : Math.max(0, Math.min(tab, entries.size() - 1));
     }
 
     public static void setActiveTab(ItemStack stack, int tabIndex)
@@ -343,11 +345,111 @@ public class ColonyLinkWandLinkableHandler implements IGridLinkableHandler
         return true;
     }
 
-    // ── Citizen sent requests (persistance NBT) ───────────────────────────────
+    // ── Sent request keys (server-written reconciliation memory) ──────────────
+    //
+    // v1.6.0 — this NBT list is now written EXCLUSIVELY on the server (packet
+    // handlers add keys, the server ticker / citizens scan prune them); the
+    // client only reads it to paint button states. The stack's CUSTOM_DATA is
+    // synced to the client automatically, and survives relogs — the old
+    // client-side writes did not.
+    //
+    // Two key families share the list, distinguished by prefix:
+    //   Builder  : "b|<x>,<y>,<z>|<itemId>|<availableAtSend>"
+    //              The trailing baseline is the builder's 'available' count at
+    //              send time; pruning drops the key when the item leaves
+    //              getNeededResources() OR when 'available' changes (a courier
+    //              delivered), so partially-stocked sends can be topped up.
+    //   Citizen  : "c|<citizenName>|<itemId>" (presence-only, the Package
+    //              token is the real consumable guard on that path)
+    // Legacy unprefixed keys ("<citizenName>|<itemId>", pre-v1.6.0) are
+    // dropped by any prune call.
 
     private static final String NBT_SENT_REQUESTS = "citizen_sent_keys";
 
-    /** Retourne les clés des requests déjà envoyées (citizenName|itemId). */
+    public static final String SENT_PREFIX_BUILDER = "b|";
+    public static final String SENT_PREFIX_CITIZEN = "c|";
+
+    /** Citizen key: {@code c|<citizenName>|<itemId>}. */
+    public static String citizenSentKey(String citizenName, net.minecraft.world.item.Item item)
+    {
+        return SENT_PREFIX_CITIZEN + citizenName + "|"
+                + net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(item);
+    }
+
+    /**
+     * Identity prefix of a builder key: {@code b|<x>,<y>,<z>|<itemId>|}.
+     * Two keys with the same identity prefix refer to the same (builder, item)
+     * pair regardless of their baseline.
+     */
+    public static String builderSentKeyPrefix(BlockPos builderPos, net.minecraft.world.item.Item item)
+    {
+        return SENT_PREFIX_BUILDER
+                + builderPos.getX() + "," + builderPos.getY() + "," + builderPos.getZ()
+                + "|" + net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(item)
+                + "|";
+    }
+
+    /** Full builder key: identity prefix + the builder's 'available' count at send time. */
+    public static String builderSentKey(BlockPos builderPos, net.minecraft.world.item.Item item, int availableAtSend)
+    {
+        return builderSentKeyPrefix(builderPos, item) + availableAtSend;
+    }
+
+    /** True if a builder key for this (builder, item) pair is stored, whatever its baseline. */
+    public static boolean hasBuilderSentKey(java.util.Set<String> keys, BlockPos builderPos, net.minecraft.world.item.Item item)
+    {
+        String prefix = builderSentKeyPrefix(builderPos, item);
+        for (String k : keys)
+            if (k.startsWith(prefix)) return true;
+        return false;
+    }
+
+    /** The builder position encoded in a builder key, or null if malformed. */
+    public static BlockPos parseBuilderKeyPos(String key)
+    {
+        if (!key.startsWith(SENT_PREFIX_BUILDER)) return null;
+        int end = key.indexOf('|', SENT_PREFIX_BUILDER.length());
+        if (end < 0) return null;
+        String[] parts = key.substring(SENT_PREFIX_BUILDER.length(), end).split(",");
+        if (parts.length != 3) return null;
+        try
+        {
+            return new BlockPos(Integer.parseInt(parts[0]),
+                    Integer.parseInt(parts[1]), Integer.parseInt(parts[2]));
+        }
+        catch (NumberFormatException e)
+        {
+            return null;
+        }
+    }
+
+    /** The item registry id encoded in a builder key, or null if malformed. */
+    public static String parseBuilderKeyItemId(String key)
+    {
+        if (!key.startsWith(SENT_PREFIX_BUILDER)) return null;
+        int posEnd = key.indexOf('|', SENT_PREFIX_BUILDER.length());
+        if (posEnd < 0) return null;
+        int itemEnd = key.indexOf('|', posEnd + 1);
+        if (itemEnd < 0) return null;
+        return key.substring(posEnd + 1, itemEnd);
+    }
+
+    /** The stored 'available' baseline of a builder key, or -1 if malformed. */
+    public static int parseBuilderKeyBaseline(String key)
+    {
+        int idx = key.lastIndexOf('|');
+        if (idx < 0 || idx == key.length() - 1) return -1;
+        try
+        {
+            return Integer.parseInt(key.substring(idx + 1));
+        }
+        catch (NumberFormatException e)
+        {
+            return -1;
+        }
+    }
+
+    /** Retourne les clés des requests déjà envoyées (both families, prefixed). */
     public static java.util.Set<String> getSentRequestKeys(ItemStack stack)
     {
         net.minecraft.world.item.component.CustomData data = stack.get(net.minecraft.core.component.DataComponents.CUSTOM_DATA);
@@ -361,18 +463,34 @@ public class ColonyLinkWandLinkableHandler implements IGridLinkableHandler
         return keys;
     }
 
-    /** Ajoute une clé de request envoyée dans le NBT. */
+    /**
+     * Adds a sent-request key. SERVER-side only (packet handlers).
+     * Exact duplicates are ignored; for builder keys, an existing key with the
+     * same identity prefix but a different baseline is replaced.
+     */
     public static void addSentRequestKey(ItemStack stack, String key)
     {
+        // For builder keys, the identity is everything up to (and including)
+        // the last '|'; a re-send must replace the old baseline, not stack up.
+        final String identityPrefix = key.startsWith(SENT_PREFIX_BUILDER)
+                ? key.substring(0, key.lastIndexOf('|') + 1)
+                : null;
+
         stack.update(net.minecraft.core.component.DataComponents.CUSTOM_DATA,
                 net.minecraft.world.item.component.CustomData.EMPTY, data -> {
                     var tag = data.copyTag();
-                    net.minecraft.nbt.ListTag list = tag.contains(NBT_SENT_REQUESTS)
+                    net.minecraft.nbt.ListTag old = tag.contains(NBT_SENT_REQUESTS)
                             ? tag.getList(NBT_SENT_REQUESTS, 8)
                             : new net.minecraft.nbt.ListTag();
-                    // Eviter les doublons
-                    for (int i = 0; i < list.size(); i++)
-                        if (list.getString(i).equals(key)) return data;
+                    net.minecraft.nbt.ListTag list = new net.minecraft.nbt.ListTag();
+                    for (int i = 0; i < old.size(); i++)
+                    {
+                        String k = old.getString(i);
+                        if (k.equals(key)) return data; // exact duplicate, nothing to do
+                        if (identityPrefix != null && k.startsWith(identityPrefix))
+                            continue; // same (builder, item) with stale baseline — replace
+                        list.add(net.minecraft.nbt.StringTag.valueOf(k));
+                    }
                     list.add(net.minecraft.nbt.StringTag.valueOf(key));
                     tag.put(NBT_SENT_REQUESTS, list);
                     return net.minecraft.world.item.component.CustomData.of(tag);
@@ -380,10 +498,17 @@ public class ColonyLinkWandLinkableHandler implements IGridLinkableHandler
     }
 
     /**
-     * Nettoie les clés qui ne sont plus dans la liste active des requests.
-     * Appelé quand le CitizensPacket arrive — supprime les entrées résolues.
+     * Reconciles ONE key family against the server truth. SERVER-side only.
+     *
+     * Keys starting with {@code familyPrefix} are kept only if present in
+     * {@code keysToKeep}; keys of the other recognized family are left
+     * untouched; keys with no recognized prefix (legacy pre-v1.6.0 format)
+     * are always dropped.
+     *
+     * @param familyPrefix SENT_PREFIX_BUILDER or SENT_PREFIX_CITIZEN
+     * @param keysToKeep   full keys of this family that must survive
      */
-    public static void pruneSentRequestKeys(ItemStack stack, java.util.Set<String> activeKeys)
+    public static void pruneSentRequestKeys(ItemStack stack, java.util.Set<String> keysToKeep, String familyPrefix)
     {
         stack.update(net.minecraft.core.component.DataComponents.CUSTOM_DATA,
                 net.minecraft.world.item.component.CustomData.EMPTY, data -> {
@@ -394,9 +519,15 @@ public class ColonyLinkWandLinkableHandler implements IGridLinkableHandler
                     for (int i = 0; i < old.size(); i++)
                     {
                         String k = old.getString(i);
-                        if (activeKeys.contains(k))
-                            pruned.add(net.minecraft.nbt.StringTag.valueOf(k));
+                        boolean recognized = k.startsWith(SENT_PREFIX_BUILDER)
+                                || k.startsWith(SENT_PREFIX_CITIZEN);
+                        if (!recognized) continue; // legacy unprefixed key — drop
+                        if (k.startsWith(familyPrefix) && !keysToKeep.contains(k))
+                            continue; // resolved / delivered — drop
+                        pruned.add(net.minecraft.nbt.StringTag.valueOf(k));
                     }
+                    if (pruned.size() == old.size())
+                        return data; // nothing changed — avoid a dirty component
                     tag.put(NBT_SENT_REQUESTS, pruned);
                     return net.minecraft.world.item.component.CustomData.of(tag);
                 });

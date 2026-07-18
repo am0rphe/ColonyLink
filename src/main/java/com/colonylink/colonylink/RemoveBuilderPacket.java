@@ -40,8 +40,8 @@ public record RemoveBuilderPacket(int tabIndex) implements CustomPacketPayload
             String removedName = entries.get(index).builderName();
             ColonyLinkWandLinkableHandler.removeEntryAt(wandStack, index);
 
-            player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                    "§e[ColonyLink] Builder §f" + removedName + " §eunlinked from Clipboard."));
+            player.sendSystemMessage(net.minecraft.network.chat.Component.translatable(
+                    "colonylink.remove.unlinked", removedName));
 
             java.util.List<BuilderEntry> updated = ColonyLinkWandLinkableHandler.getBuilderEntries(wandStack);
             if (updated.isEmpty())

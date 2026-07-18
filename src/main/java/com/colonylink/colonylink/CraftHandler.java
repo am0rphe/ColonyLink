@@ -23,12 +23,24 @@ import java.util.concurrent.TimeUnit;
 
 public class CraftHandler
 {
-    static final ExecutorService CRAFT_EXECUTOR = Executors.newCachedThreadPool(r ->
+    // v1.6.2 — bounded pool: the thread count caps how many concurrent craft
+    // OPERATIONS run (one per Craft/Craft-All click or terminal autocraft), NOT the
+    // number of AE2 jobs an operation submits. AdvancedAE's per-operation submission
+    // limit (maxCrafts, looped inside a single task) is unaffected. 16 leaves ample
+    // headroom; excess concurrent operations queue instead of spawning unbounded threads.
+    static final ExecutorService CRAFT_EXECUTOR = Executors.newFixedThreadPool(16, r ->
     {
         Thread t = new Thread(r, "ColonyLink-Craft");
         t.setDaemon(true);
         return t;
     });
+
+    /**
+     * v1.6.2 — upper bound for a client-supplied craft count. Neutralises negatives
+     * and the pathological Integer.MAX_VALUE (which would make AE2 attempt a giant
+     * crafting calculation). 1,000,000 is far above any legitimate single job.
+     */
+    private static final int MAX_CRAFT_COUNT = 1_000_000;
 
     public static void handleCraftRequest(ServerPlayer player, ItemStack stack, int realCount)
     {
@@ -37,6 +49,12 @@ public class CraftHandler
 
     public static void handleCraftRequests(ServerPlayer player, List<ItemStack> stacks, List<Integer> realCounts)
     {
+        // v1.6.2 — guard against empty / misaligned lists (a malformed CraftAllRequestPacket):
+        // downstream code indexes realCounts.get(0) and get(idx).
+        if (stacks == null || realCounts == null
+                || stacks.isEmpty() || realCounts.size() != stacks.size())
+            return;
+
         // ── v1.1.3 : Vérification RF avant de lancer quoi que ce soit ─────────
         long craftCost = ColonyLinkConfig.CRAFT_COST_RF.get();
         if (craftCost > 0 && !ColonyLinkServerTicker.tryConsumeRF(player, craftCost))
@@ -97,7 +115,8 @@ public class CraftHandler
             for (int idx = 0; idx < stacks.size(); idx++)
             {
                 ItemStack stack    = stacks.get(idx);
-                int realCount      = realCounts.get(idx);
+                // v1.6.2 — clamp the client-supplied count before any AE2 calculation.
+                int realCount      = net.minecraft.util.Mth.clamp(realCounts.get(idx), 1, MAX_CRAFT_COUNT);
                 AEItemKey aeKey    = AEItemKey.of(stack);
 
                 if (!craftingService.isCraftable(aeKey)) { failCount++; continue; }

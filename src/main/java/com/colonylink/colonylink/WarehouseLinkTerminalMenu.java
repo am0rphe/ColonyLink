@@ -380,8 +380,18 @@ public class WarehouseLinkTerminalMenu extends AbstractContainerMenu
     @Override
     public boolean stillValid(Player p)
     {
-        return part != null && part.getHostBlockEntity() != null
-                && !part.getHostBlockEntity().isRemoved();
+        if (part == null) return false;
+        BlockEntity hostBe = part.getHostBlockEntity();
+        if (hostBe == null || hostBe.isRemoved()) return false;
+
+        // v1.6.2 — range check (like a chest, 8 blocks): the terminal closes when the
+        // player walks away. Combined with resolvePart's open-menu requirement, this
+        // stops packet-driven transfers on a distant or someone else's terminal.
+        var hp = hostBe.getBlockPos();
+        double dx = hp.getX() + 0.5 - p.getX();
+        double dy = hp.getY() + 0.5 - p.getY();
+        double dz = hp.getZ() + 0.5 - p.getZ();
+        return (dx * dx + dy * dy + dz * dz) <= 64.0;
     }
 
     // ── quickMoveStack ────────────────────────────────────────────────────────

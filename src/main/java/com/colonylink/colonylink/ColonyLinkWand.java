@@ -60,7 +60,7 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
     @Override
     public double injectAEPower(ItemStack stack, double amount, Actionable mode)
     {
-        long capacity = ColonyLinkConfig.WAND_RF_CAPACITY.get();
+        long capacity = ColonyLinkConfig.safeGet(ColonyLinkConfig.WAND_RF_CAPACITY, 160_000L);
         long stored   = WandEnergyStorage.getStoredRF(stack);
         long space    = capacity - stored;
         if (space <= 0) return amount;
@@ -80,7 +80,7 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
 
     @Override
     public double getAEMaxPower(ItemStack stack)
-    { return ColonyLinkConfig.WAND_RF_CAPACITY.get() / AE_TO_RF; }
+    { return ColonyLinkConfig.safeGet(ColonyLinkConfig.WAND_RF_CAPACITY, 160_000L) / AE_TO_RF; }
 
     @Override
     public double getAECurrentPower(ItemStack stack)
@@ -91,7 +91,7 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
 
     @Override
     public double getChargeRate(ItemStack stack)
-    { return ColonyLinkConfig.WAND_RF_TRANSFER_RATE.get() / AE_TO_RF; }
+    { return ColonyLinkConfig.safeGet(ColonyLinkConfig.WAND_RF_TRANSFER_RATE, 2_500L) / AE_TO_RF; }
 
     // ── Barre durabilité ──────────────────────────────────────────────────────
 
@@ -120,12 +120,16 @@ public class ColonyLinkWand extends Item implements IAEItemPowerStorage
                                 List<Component> tooltip, TooltipFlag flag)
     {
         long stored   = WandEnergyStorage.getStoredRF(stack);
-        long capacity = ColonyLinkConfig.WAND_RF_CAPACITY.get();
-        int pct       = capacity > 0 ? (int)(stored * 100L / capacity) : 0;
-        int threshold = ColonyLinkConfig.LOW_POWER_THRESHOLD_PERCENT.get();
+        long capacity = ColonyLinkConfig.safeGet(ColonyLinkConfig.WAND_RF_CAPACITY, 160_000L);
+        // v1.6.1 — si le cap a ete abaisse alors que le wand etait charge au-dessus, on
+        // lisse l'affichage (stored plafonne a capacity, % a 100) au lieu d'un 625% / barre
+        // qui deborde. Le surplus reel se draine a la prochaine operation d'energie.
+        long shown    = Math.max(0L, Math.min(stored, capacity));
+        int pct       = capacity > 0 ? (int)(shown * 100L / capacity) : 0;
+        int threshold = ColonyLinkConfig.safeGet(ColonyLinkConfig.LOW_POWER_THRESHOLD_PERCENT, 10);
         String rfColor = pct <= threshold ? "§c" : (pct <= 30 ? "§e" : "§a");
 
-        tooltip.add(Component.literal(rfColor + "⚡ " + formatRF(stored)
+        tooltip.add(Component.literal(rfColor + "⚡ " + formatRF(shown)
                 + " §7/ §f" + formatRF(capacity) + " RF §7(" + pct + "%)"));
 
         if (stored <= 0)

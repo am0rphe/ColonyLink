@@ -10,6 +10,8 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
+import appeng.api.networking.IGrid;
+import appeng.api.networking.IGridNode;
 
 /**
  * DomumQueuePacket — v1.4.8
@@ -47,7 +49,9 @@ public record DomumQueuePacket(
 
     public static void handle(DomumQueuePacket packet, IPayloadContext ctx)
     {
-        ctx.enqueueWork(() -> handleServer((ServerPlayer) ctx.player(), packet));
+        ctx.enqueueWork(() -> {
+            if (ctx.player() instanceof ServerPlayer sp) handleServer(sp, packet);
+        });
     }
 
     private static void handleServer(ServerPlayer player, DomumQueuePacket packet)
@@ -65,24 +69,29 @@ public record DomumQueuePacket(
 
         ServerLevel level = player.serverLevel();
 
-        WarehouseLinkTerminalPart terminal =
-                ColonyLinkServerTicker.findTerminalPartForLevel(level);
+        // v1.6.1 — Resout la GRILLE ME du Redirector (via redirectorPos) et ajoute l'item a
+        // la queue Domum PARTAGEE de cette grille (DomumQueueManager). L'item apparait alors
+        // sur TOUS les terminaux du reseau, pas seulement un. La queue partagee est la source
+        // de verite ; chaque terminal garde une copie NBT comme filet de persistance.
+        IGrid redirectorGrid = null;
+        if (level.getBlockEntity(packet.redirectorPos()) instanceof ColonyLinkRedirectorBlockEntity redirector)
+        {
+            IGridNode rnode = redirector.getActionableNode();
+            if (rnode != null) redirectorGrid = rnode.getGrid();
+        }
 
-        if (terminal == null)
+        if (redirectorGrid == null
+                || ColonyLinkServerTicker.findLiveTerminalsForGrid(level, redirectorGrid).isEmpty())
         {
             player.sendSystemMessage(Component.translatable("colonylink.domum_queue.no_terminal",
                     packet.domumStack().getDisplayName()));
             return;
         }
 
-        if (terminal.isDomumQueued(packet.domumStack()))
-        {
-            player.sendSystemMessage(Component.translatable("colonylink.domum_queue.already_queued"));
-            return;
-        }
+        boolean added = WarehouseLinkTerminalPart.queueDomumOnGrid(
+                level, redirectorGrid, packet.domumStack());
 
-        terminal.addToDomumQueue(packet.domumStack());
-
-        player.sendSystemMessage(Component.translatable("colonylink.domum_queue.sent"));
+        player.sendSystemMessage(Component.translatable(
+                added ? "colonylink.domum_queue.sent" : "colonylink.domum_queue.already_queued"));
     }
 }
