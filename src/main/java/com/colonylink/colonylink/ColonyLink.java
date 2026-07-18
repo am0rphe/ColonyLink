@@ -239,6 +239,8 @@ public class ColonyLink
                 SendToWarehousePacket::handle);
         registrar.playToServer(RestartBuilderPacket.TYPE, RestartBuilderPacket.STREAM_CODEC,
                 RestartBuilderPacket::handle);
+        registrar.playToServer(CancelRequestPacket.TYPE, CancelRequestPacket.STREAM_CODEC,
+                CancelRequestPacket::handle);
         registrar.playToServer(LocateBuilderPacket.TYPE, LocateBuilderPacket.STREAM_CODEC,
                 LocateBuilderPacket::handle);
         registrar.playToServer(RemoveBuilderPacket.TYPE, RemoveBuilderPacket.STREAM_CODEC,

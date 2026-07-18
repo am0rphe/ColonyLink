@@ -435,6 +435,13 @@ public class ColonyLinkScreen extends Screen
     private int getReqBtnW() { return 64; }
     private int getReqBtnH() { return 16; }
 
+    // v1.6.4 — small "cancel request" square, top-right of the priority line
+    // (title strip, above the main action button — no overlap with getReqBtn*).
+    private int getCancelBtnX() { return getGuiX() + GUI_WIDTH - 17; }
+    private int getCancelBtnY() { return getGuiY() + 82; }
+    private int getCancelBtnW() { return 9; }
+    private int getCancelBtnH() { return 9; }
+
     private int getSwitchX() { return getGuiX() + GUI_WIDTH - 118; }
     private int getSwitchY() { return getWareCheckBtnY(); }
     private int getSwitchW() { return 110; }
@@ -1087,6 +1094,22 @@ public class ColonyLinkScreen extends Screen
             pendingTooltipOut.clear();
             for (Component line : builderRequest.tooltipLines())
                 pendingTooltipOut.add(line);
+        }
+
+        // v1.6.4 — Cancel Request button (only when a priority request exists).
+        // Drawn last so it sits on top; its tooltip wins over the line/button ones.
+        int cbX = getCancelBtnX(), cbY = getCancelBtnY(), cbW = getCancelBtnW(), cbH = getCancelBtnH();
+        boolean cHov = mx >= cbX && mx <= cbX + cbW && my >= cbY && my <= cbY + cbH;
+        g.fill(cbX, cbY, cbX + cbW, cbY + cbH, _cr.applyOpacity(cHov ? 0xFFCC4444 : 0xFF992222));
+        g.fill(cbX, cbY, cbX + cbW, cbY + 1, 0xFFFFFFFF);
+        g.fill(cbX, cbY, cbX + 1, cbY + cbH, 0xFFFFFFFF);
+        g.fill(cbX, cbY + cbH - 1, cbX + cbW, cbY + cbH, 0xFF373737);
+        g.fill(cbX + cbW - 1, cbY, cbX + cbW, cbY + cbH, 0xFF373737);
+        g.drawCenteredString(this.font, "×", cbX + cbW / 2, cbY + 1, 0xFFFFFFFF);
+        if (cHov)
+        {
+            pendingTooltipOut.clear();
+            pendingTooltipOut.add(Component.translatable("colonylink.priority.cancel_tooltip"));
         }
     }
 
@@ -1830,6 +1853,16 @@ public class ColonyLinkScreen extends Screen
         boolean hasReq = builderRequest != null && !builderRequest.stack().isEmpty() && builderRequest.count() > 0;
         if (hasReq)
         {
+            // v1.6.4 — Cancel Request button (checked before the main action button).
+            // Server re-derives and cancels the priority request; redirectorPos is
+            // validated against the player's wand server-side.
+            int cbX = getCancelBtnX(), cbY = getCancelBtnY(), cbW = getCancelBtnW(), cbH = getCancelBtnH();
+            if (mx >= cbX && mx <= cbX + cbW && my >= cbY && my <= cbY + cbH)
+            {
+                PacketDistributor.sendToServer(new CancelRequestPacket(builderRequest.redirectorPos()));
+                return true;
+            }
+
             // v1.6.0 — act on the DISPLAYED status: pending rows are never
             // clickable, and the mode routes Send to the right packet.
             ResourceStatus reqStatus = displayStatus(builderRequest.status(), builderRequest.stack());

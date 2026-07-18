@@ -65,6 +65,7 @@ public class ColonyLinkConfig
     public static final ModConfigSpec.BooleanValue ENABLE_TOOL_UPGRADE;
     public static final ModConfigSpec.BooleanValue TOOL_UPGRADE_SEND_AUTO;
     public static final ModConfigSpec.BooleanValue RESPECT_ENCHANT_LEVEL_CAP;
+    public static final ModConfigSpec.BooleanValue TOOL_SUBSTITUTION_IN_LIST;
 
     // ── [interface] ───────────────────────────────────────────────────────────
     public static final ModConfigSpec.BooleanValue SHOW_CRAFTING_STATUS;
@@ -222,6 +223,13 @@ public class ColonyLinkConfig
                         "If false, any enchantment level is accepted (ignores the MineColonies table).",
                         "Default: true")
                 .define("respect_enchant_level_cap", true);
+
+        TOOL_SUBSTITUTION_IN_LIST = builder
+                .comment("When false (default), tool substitution applies only to the Priority Request",
+                        "line, not to the resource list. Set true to also substitute in the list",
+                        "(pre-1.6.4 behavior).",
+                        "Default: false")
+                .define("tool_substitution_in_list", false);
 
         builder.pop();
 

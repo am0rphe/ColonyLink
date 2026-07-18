@@ -145,7 +145,12 @@ public class SendToBuilderHandler
         }
 
         // ── Substitution d'outils ─────────────────────────────────────────────
-        if (BuilderToolHelper.isTool(stack))
+        // v1.6.4 — send-time substitution is gated by tool_substitution_in_list
+        // (default false). Priority-line sends already carry the substituted stack
+        // (fetchBuilderRequest bakes it into the displayed item), so findBestTool
+        // returns NONE for them → gating here only affects list-originated sends,
+        // keeping the list's display and send consistent when the toggle is off.
+        if (ColonyLinkConfig.TOOL_SUBSTITUTION_IN_LIST.get() && BuilderToolHelper.isTool(stack))
         {
             IWirelessAccessPoint wap = getWap(wandStack, level);
             if (wap != null && wap.getGrid() != null)
@@ -454,6 +459,16 @@ public class SendToBuilderHandler
                 if (!(req.getRequest() instanceof com.minecolonies.api.colony.requestsystem.requestable.IDeliverable del))
                     continue;
                 if (del.matches(stack)) return true;
+                // v1.6.3 — parity with fetchBuilderRequest, which derives the Priority
+                // Request line from getDisplayStacks(), NOT del.matches(). Some deliverables
+                // (tools, food...) do not match their own display example, so the line was
+                // shown but the send rejected as "not needed". Accept the exact display
+                // stack we actually offered (components matched, count ignored).
+                var ds = req.getDisplayStacks();
+                if (ds != null)
+                    for (ItemStack disp : ds)
+                        if (!disp.isEmpty() && ItemStack.isSameItemSameComponents(disp, stack))
+                            return true;
             }
         }
         catch (Exception e)
@@ -548,7 +563,7 @@ public class SendToBuilderHandler
 
     /** True if the best tool substitute for {@code requested} equals {@code candidate}. */
     private static boolean toolSubstituteMatches(ItemStack requested, ItemStack candidate,
-            int level, BuilderToolHelper.ToolInventoryView inv, BuilderToolHelper.ToolCraftingView cs)
+                                                 int level, BuilderToolHelper.ToolInventoryView inv, BuilderToolHelper.ToolCraftingView cs)
     {
         BuilderToolHelper.SubstituteResult sub = BuilderToolHelper.findBestTool(requested, level, inv, cs);
         return sub.action() != BuilderToolHelper.SubstituteAction.NONE
@@ -557,7 +572,7 @@ public class SendToBuilderHandler
 
     /** True if the best armor substitute for {@code requested} equals {@code candidate}. */
     private static boolean armorSubstituteMatches(ItemStack requested, ItemStack candidate,
-            int level, BuilderToolHelper.ToolInventoryView inv, BuilderToolHelper.ToolCraftingView cs)
+                                                  int level, BuilderToolHelper.ToolInventoryView inv, BuilderToolHelper.ToolCraftingView cs)
     {
         BuilderToolHelper.SubstituteResult sub = BuilderToolHelper.findBestArmor(requested, level, inv, cs);
         return sub.action() != BuilderToolHelper.SubstituteAction.NONE

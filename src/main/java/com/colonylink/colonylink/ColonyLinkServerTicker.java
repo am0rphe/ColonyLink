@@ -377,7 +377,11 @@ public class ColonyLinkServerTicker
                 // fulfills the request, so ColonyLink sends exactly what was
                 // requested (a substituted tool may not match the request and
                 // would strand in the warehouse). Rows show the original tool.
-                if (!warehouseMode && toolUpgrade && BuilderToolHelper.isTool(st2))
+                // v1.6.4 — list substitution is now opt-in (tool_substitution_in_list,
+                // default false): only the Priority Request line substitutes by default.
+                if (!warehouseMode && toolUpgrade
+                        && ColonyLinkConfig.TOOL_SUBSTITUTION_IN_LIST.get()
+                        && BuilderToolHelper.isTool(st2))
                 {
                     BuilderToolHelper.SubstituteResult sub =
                             BuilderToolHelper.findBestTool(st2, buildingLevel, inv, cs);
@@ -539,7 +543,9 @@ public class ColonyLinkServerTicker
                             else if (cs.isRequesting(dk)) dStat = ResourceStatus.CRAFTING;
                             else if (cs.isCraftable(dk))  dStat = ResourceStatus.CRAFTABLE;
                             else                          dStat = ResourceStatus.NO_PATTERN;
-                            if (warehouseMode && dStat != ResourceStatus.CRAFTING
+                            // v1.6.2 — Priority Request line: BOTH modes. Do NOT re-gate on
+                            // warehouseMode (a re-fetch silently reverted this once).
+                            if (dStat != ResourceStatus.CRAFTING
                                     && ColonyLinkWandLinkableHandler.hasBuilderSentKey(sentKeys, builderPos, rs.getItem()))
                                 dStat = ResourceStatus.SENT_PENDING;
                             return new ColonyLinkPacket.BuilderRequest(
@@ -576,7 +582,9 @@ public class ColonyLinkServerTicker
                         else if (cs.isCraftable(k))  st = ResourceStatus.CRAFTABLE;
                         else                         st = ResourceStatus.NO_PATTERN;
 
-                        if (warehouseMode && st != ResourceStatus.CRAFTING
+                        // v1.6.2 — Priority Request line: BOTH modes. Do NOT re-gate on
+                        // warehouseMode (a re-fetch silently reverted this once).
+                        if (st != ResourceStatus.CRAFTING
                                 && ColonyLinkWandLinkableHandler.hasBuilderSentKey(sentKeys, builderPos, rs.getItem()))
                             st = ResourceStatus.SENT_PENDING;
 
