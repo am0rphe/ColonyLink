@@ -15,7 +15,7 @@ A NeoForge mod for Minecraft 1.21.1 that bridges MineColonies and Applied Energi
 - NeoForge 21.1.228+
 - MineColonies 1.1.1299+
 - Applied Energistics 2 19.2.17+
-- Domum Ornamentum 1.0.233+
+- Domum Ornamentum 1.0.230+
 
 ## Translations
 
@@ -39,4 +39,7 @@ Am0rPhe
 
 ## License
 
-MIT License — see LICENSE file for details
+ColonyLink is licensed under the **GNU General Public License v3.0 (GPL-3.0-only)**.
+
+As an add-on that builds on MineColonies (GPLv3), it is distributed under the same
+license. See the [LICENSE](LICENSE) file for the full text.
