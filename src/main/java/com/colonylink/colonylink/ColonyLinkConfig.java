@@ -84,6 +84,12 @@ public class ColonyLinkConfig
     // ── [network] ─────────────────────────────────────────────────────────────
     public static final ModConfigSpec.IntValue REDIRECTOR_CRAFT_QUEUE_MAX;
 
+    // ── [loot] ────────────────────────────────────────────────────────────────
+    public static final ModConfigSpec.BooleanValue PACKAGE_IN_CHESTS;
+    public static final ModConfigSpec.DoubleValue  PACKAGE_CHEST_CHANCE;
+    public static final ModConfigSpec.BooleanValue PACKAGE_FROM_RAIDERS;
+    public static final ModConfigSpec.DoubleValue  PACKAGE_RAIDER_CHANCE;
+
     // ─────────────────────────────────────────────────────────────────────────
 
     static
@@ -299,6 +305,41 @@ public class ColonyLinkConfig
                         "Higher = more Domum crafts buffered, but more state saved per Redirector.",
                         "Default: 64")
                 .defineInRange("redirector_craft_queue_max", 64, 1, 1024);
+
+        builder.pop();
+
+        // ── [loot] ─────────────────────────────────────────────────────────────
+        builder.comment(
+                "World loot for the Colony Link Package.",
+                "The Package stays craftable — this loot is a COMPLEMENT to crafting, never a",
+                "replacement. Nothing here removes or overrides any existing recipe or loot table;",
+                "the Package is only ADDED (never subtracted) to the targeted tables.",
+                "Applied server-side (loot resolves on the server). Defaults are deliberately low",
+                "so the Package stays a rare bonus and the craft remains the main source."
+        ).push("loot");
+
+        PACKAGE_IN_CHESTS = builder
+                .comment("If true, the Package can be added to village and pillager outpost chests.",
+                        "Default: true")
+                .define("package_in_chests", true);
+
+        PACKAGE_CHEST_CHANCE = builder
+                .comment("Chance to add one Package to each eligible chest (per chest, rolled once).",
+                        "Range: 0.0-1.0 (0.05 = 5%). Set 0.0 to disable without flipping the toggle.",
+                        "Default: 0.05")
+                .defineInRange("package_chest_chance", 0.10, 0.0, 1.0);
+
+        PACKAGE_FROM_RAIDERS = builder
+                .comment("If true, MineColonies raid raiders can drop the Package on death.",
+                        "Only raid raiders have loot tables; camp mobs (campbarbarian, ...) never drop it.",
+                        "Default: true")
+                .define("package_from_raiders", true);
+
+        PACKAGE_RAIDER_CHANCE = builder
+                .comment("Chance to drop one Package per raid raider killed (rolled once per raider).",
+                        "Range: 0.0-1.0 (0.03 = 3%). Set 0.0 to disable without flipping the toggle.",
+                        "Default: 0.03")
+                .defineInRange("package_raider_chance", 0.15, 0.0, 1.0);
 
         builder.pop();
 

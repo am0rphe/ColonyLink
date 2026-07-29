@@ -156,6 +156,11 @@ public record CancelRequestPacket(BlockPos redirectorPos) implements CustomPacke
 
                 if (target == null)
                 {
+                    // v1.6.6 — resync a stale GUI that may still show a priority line
+                    // which no longer exists server-side (root cause of the repeated
+                    // "No request to cancel" after an untracked refresh): force an
+                    // immediate resend so the client stops showing the dead line.
+                    ColonyLinkServerTicker.invalidateSignature(serverPlayer);
                     serverPlayer.sendSystemMessage(
                             Component.translatable("colonylink.priority.cancel_none"));
                     return;
@@ -165,6 +170,12 @@ public record CancelRequestPacket(BlockPos redirectorPos) implements CustomPacke
                 // Le IRequestManager gère la cascade (child-requests, resolver).
                 colony.getRequestManager().updateRequestState(target.getId(), RequestState.CANCELLED);
                 building.markDirty();
+
+                // v1.6.6 — force an immediate GUI resend. building.markDirty() only
+                // dirties MineColonies state; it does not invalidate ColonyLink's own
+                // content signature, so without this the throttled ticker would keep
+                // showing the just-cancelled priority line until the next natural change.
+                ColonyLinkServerTicker.invalidateSignature(serverPlayer);
 
                 serverPlayer.sendSystemMessage(
                         Component.translatable("colonylink.priority.cancelled"));

@@ -1,0 +1,29 @@
+{
+  "type": "colonylink:add_package",
+  "source": "raider",
+  "conditions": [
+    {
+      "condition": "minecraft:any_of",
+      "terms": [
+        { "condition": "neoforge:loot_table_id", "loot_table_id": "minecolonies:entities/barbarian" },
+        { "condition": "neoforge:loot_table_id", "loot_table_id": "minecolonies:entities/archerbarbarian" },
+        { "condition": "neoforge:loot_table_id", "loot_table_id": "minecolonies:entities/chiefbarbarian" },
+        { "condition": "neoforge:loot_table_id", "loot_table_id": "minecolonies:entities/pirate" },
+        { "condition": "neoforge:loot_table_id", "loot_table_id": "minecolonies:entities/archerpirate" },
+        { "condition": "neoforge:loot_table_id", "loot_table_id": "minecolonies:entities/chiefpirate" },
+        { "condition": "neoforge:loot_table_id", "loot_table_id": "minecolonies:entities/drownedpirate" },
+        { "condition": "neoforge:loot_table_id", "loot_table_id": "minecolonies:entities/drownedarcherpirate" },
+        { "condition": "neoforge:loot_table_id", "loot_table_id": "minecolonies:entities/drownedchiefpirate" },
+        { "condition": "neoforge:loot_table_id", "loot_table_id": "minecolonies:entities/mummy" },
+        { "condition": "neoforge:loot_table_id", "loot_table_id": "minecolonies:entities/archermummy" },
+        { "condition": "neoforge:loot_table_id", "loot_table_id": "minecolonies:entities/pharao" },
+        { "condition": "neoforge:loot_table_id", "loot_table_id": "minecolonies:entities/amazon" },
+        { "condition": "neoforge:loot_table_id", "loot_table_id": "minecolonies:entities/amazonspearman" },
+        { "condition": "neoforge:loot_table_id", "loot_table_id": "minecolonies:entities/amazonchief" },
+        { "condition": "neoforge:loot_table_id", "loot_table_id": "minecolonies:entities/norsemenarcher" },
+        { "condition": "neoforge:loot_table_id", "loot_table_id": "minecolonies:entities/norsemenchief" },
+        { "condition": "neoforge:loot_table_id", "loot_table_id": "minecolonies:entities/shieldmaiden" }
+      ]
+    }
+  ]
+}

@@ -263,12 +263,58 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
                 Math.max(0, domumQueue.size() - CUT_ROWS_VIS)));
     }
 
+    // =========================================================================
+    // RECHERCHE — filtre partagé WH + ME (client only). Syntaxe inspirée d'AE2 :
+    //   @mod  → l'id du mod contient le terme (ex. @ae2, @minecolonies)
+    //   #tag  → un tag de l'item contient le terme (ex. #logs, #ingots)
+    //   texte → le nom affiché contient le terme
+    // Plusieurs termes = ET (tous doivent matcher), comme AE2.
+    // =========================================================================
+    private static boolean matchesQuery(net.minecraft.world.item.ItemStack stack, String query)
+    {
+        if (query.isEmpty()) return true;
+        String name = stack.getDisplayName().getString().toLowerCase();
+        String modId = null; // calculé à la demande
+        for (String term : query.split("\\s+"))
+        {
+            if (term.isEmpty()) continue;
+            boolean ok;
+            if (term.charAt(0) == '@')
+            {
+                String needle = term.substring(1);
+                if (needle.isEmpty()) { ok = true; }
+                else
+                {
+                    if (modId == null)
+                        modId = net.minecraft.core.registries.BuiltInRegistries.ITEM
+                                .getKey(stack.getItem()).getNamespace().toLowerCase();
+                    ok = modId.contains(needle);
+                }
+            }
+            else if (term.charAt(0) == '#')
+            {
+                String needle = term.substring(1);
+                if (needle.isEmpty()) { ok = true; }
+                else
+                    ok = stack.getTags().anyMatch(t ->
+                            t.location().getPath().contains(needle)
+                                    || t.location().toString().contains(needle));
+            }
+            else
+            {
+                ok = name.contains(term);
+            }
+            if (!ok) return false; // ET : chaque terme doit matcher
+        }
+        return true;
+    }
+
     private void rebuildWh()
     {
         whFiltered.clear();
         String q = whSearch.toLowerCase();
         for (var e : whItems)
-            if (q.isEmpty() || e.stack().getDisplayName().getString().toLowerCase().contains(q))
+            if (matchesQuery(e.stack(), q))
                 whFiltered.add(e);
         whScroll = clamp(whScroll, whFiltered.size());
     }
@@ -278,7 +324,7 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
         meFiltered.clear();
         String q = meSearch.toLowerCase();
         for (var e : meItems)
-            if (q.isEmpty() || e.stack().getDisplayName().getString().toLowerCase().contains(q))
+            if (matchesQuery(e.stack(), q))
                 meFiltered.add(e);
         meScroll = clamp(meScroll, meFiltered.size());
     }

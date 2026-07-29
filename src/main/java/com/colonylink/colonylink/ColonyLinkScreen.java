@@ -212,7 +212,7 @@ public class ColonyLinkScreen extends Screen
         if (r == null || r.stack().isEmpty()) return r;
         ResourceStatus disp = smoothCraftStatus(r.stack(), r.status());
         return disp == r.status() ? r : new ColonyLinkPacket.BuilderRequest(
-                r.stack(), r.count(), disp, r.redirectorPos(), r.tooltipLines());
+                r.stack(), r.count(), disp, r.redirectorPos(), r.tooltipLines(), r.cancellable());
     }
 
     private void applyPacket(ColonyLinkPacket packet)
@@ -1098,14 +1098,18 @@ public class ColonyLinkScreen extends Screen
 
         // v1.6.4 — Cancel Request button (only when a priority request exists).
         // Drawn last so it sits on top; its tooltip wins over the line/button ones.
+        // v1.6.6 — greyed out (non-interactive, no hover, no tooltip) when the line
+        // is a pass-2 needed-resource with no formal request to cancel.
         int cbX = getCancelBtnX(), cbY = getCancelBtnY(), cbW = getCancelBtnW(), cbH = getCancelBtnH();
-        boolean cHov = mx >= cbX && mx <= cbX + cbW && my >= cbY && my <= cbY + cbH;
-        g.fill(cbX, cbY, cbX + cbW, cbY + cbH, _cr.applyOpacity(cHov ? 0xFFCC4444 : 0xFF992222));
+        boolean cCancellable = builderRequest.cancellable();
+        boolean cHov = cCancellable && mx >= cbX && mx <= cbX + cbW && my >= cbY && my <= cbY + cbH;
+        int cFill = cCancellable ? (cHov ? 0xFFCC4444 : 0xFF992222) : 0xFF555555;
+        g.fill(cbX, cbY, cbX + cbW, cbY + cbH, _cr.applyOpacity(cFill));
         g.fill(cbX, cbY, cbX + cbW, cbY + 1, 0xFFFFFFFF);
         g.fill(cbX, cbY, cbX + 1, cbY + cbH, 0xFFFFFFFF);
         g.fill(cbX, cbY + cbH - 1, cbX + cbW, cbY + cbH, 0xFF373737);
         g.fill(cbX + cbW - 1, cbY, cbX + cbW, cbY + cbH, 0xFF373737);
-        g.drawCenteredString(this.font, "×", cbX + cbW / 2, cbY + 1, 0xFFFFFFFF);
+        g.drawCenteredString(this.font, "×", cbX + cbW / 2, cbY + 1, cCancellable ? 0xFFFFFFFF : 0xFF999999);
         if (cHov)
         {
             pendingTooltipOut.clear();
@@ -1857,7 +1861,10 @@ public class ColonyLinkScreen extends Screen
             // Server re-derives and cancels the priority request; redirectorPos is
             // validated against the player's wand server-side.
             int cbX = getCancelBtnX(), cbY = getCancelBtnY(), cbW = getCancelBtnW(), cbH = getCancelBtnH();
-            if (mx >= cbX && mx <= cbX + cbW && my >= cbY && my <= cbY + cbH)
+            // v1.6.6 — ignore the click when the button is greyed out (pass-2 line
+            // with no formal request); the click falls through to the action button.
+            if (builderRequest.cancellable()
+                    && mx >= cbX && mx <= cbX + cbW && my >= cbY && my <= cbY + cbH)
             {
                 PacketDistributor.sendToServer(new CancelRequestPacket(builderRequest.redirectorPos()));
                 return true;

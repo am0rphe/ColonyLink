@@ -139,6 +139,24 @@ public class ColonyLinkServerTicker
         if (wand != null) sendFullUpdate(player, builderPos, activeTabIndex, wand);
     }
 
+    // ── Signature invalidation (external callers) ─────────────────────────────
+    // v1.6.6 — force an immediate GUI resend for a player whose wand GUI is open.
+    // ColonyLink's content signature (computeWandSig) is NOT tied to MineColonies'
+    // building.markDirty(), so an out-of-band state change (e.g. cancelling a
+    // request) would otherwise be swallowed by the throttle until the next natural
+    // content change. Resets the stored signature to Long.MIN_VALUE and resends now,
+    // using the viewer's own stored builderPos/activeTabIndex (never a client value).
+    // No-op if the player has no open GUI (nothing to refresh).
+    public static void invalidateSignature(ServerPlayer player)
+    {
+        ViewerState vs = activeViewers.get(player.getUUID());
+        if (vs == null) return;
+        activeViewers.put(player.getUUID(),
+                new ViewerState(vs.builderPos(), vs.activeTabIndex(), vs.colonyId(), Long.MIN_VALUE));
+        ItemStack wand = findWandInInventory(player);
+        if (wand != null) sendFullUpdate(player, vs.builderPos(), vs.activeTabIndex(), wand);
+    }
+
     // ── Server tick ───────────────────────────────────────────────────────────
 
     @SubscribeEvent
@@ -464,7 +482,7 @@ public class ColonyLinkServerTicker
         // Throttle : ne pas renvoyer si le contenu n'a pas changé
         // (RF exclu de la signature — change à chaque tick via drain passif)
         long newSig = computeWandSig(entries, builderName, buildingName, workerStatus,
-                cpus, rState, hasCard, whPrio, activeTabIndex);
+                cpus, rState, hasCard, whPrio, activeTabIndex, req.cancellable());
         ViewerState vs = activeViewers.get(player.getUUID());
         if (vs != null && vs.lastContentSig() == newSig) return; // rien de changé
         if (vs != null)
@@ -483,7 +501,8 @@ public class ColonyLinkServerTicker
     private static long computeWandSig(
             List<ColonyLinkPacket.ResourceEntry> entries,
             String builderName, String buildingName, String workerStatus,
-            int cpus, String rState, boolean hasCard, boolean whPrio, int activeTabIndex)
+            int cpus, String rState, boolean hasCard, boolean whPrio, int activeTabIndex,
+            boolean reqCancellable)
     {
         long sig = 0xcbf29ce484222325L;
         final long P = 0x100000001b3L;
@@ -502,6 +521,10 @@ public class ColonyLinkServerTicker
         sig = (sig ^ (hasCard ? 1L : 0L)) * P;
         sig = (sig ^ (whPrio ? 1L : 0L)) * P;
         sig = (sig ^ activeTabIndex) * P;
+        // v1.6.6 — fold the priority line's cancellable flag so a pass-1↔pass-2
+        // transition with an otherwise identical displayed item/count/status still
+        // forces a resend (else the button's clickability could stay stale).
+        sig = (sig ^ (reqCancellable ? 1L : 0L)) * P;
         return sig;
     }
 
@@ -550,7 +573,7 @@ public class ColonyLinkServerTicker
                                 dStat = ResourceStatus.SENT_PENDING;
                             return new ColonyLinkPacket.BuilderRequest(
                                     disp, cnt, dStat, rPos,
-                                    buildDomumTooltip(rs, dStat, cnt));
+                                    buildDomumTooltip(rs, dStat, cnt), true); // pass 1 → cancellable
                         }
 
                         // v1.6.0 — no tool substitution in WAREHOUSE mode (courier fidelity).
@@ -571,7 +594,7 @@ public class ColonyLinkServerTicker
                                 else if (substKey != null && cs.isRequesting(substKey)) substSt = ResourceStatus.CRAFTING;
                                 else substSt = ResourceStatus.AVAILABLE;
                                 return new ColonyLinkPacket.BuilderRequest(substDisp, cnt, substSt, rPos,
-                                        buildToolSubstituteTooltip(rs, sub.displayStack(), substSt, cnt, substInSt, buildingLevel));
+                                        buildToolSubstituteTooltip(rs, sub.displayStack(), substSt, cnt, substInSt, buildingLevel), true); // pass 1 → cancellable
                             }
                         }
 
@@ -589,7 +612,7 @@ public class ColonyLinkServerTicker
                             st = ResourceStatus.SENT_PENDING;
 
                         return new ColonyLinkPacket.BuilderRequest(disp, cnt, st, rPos,
-                                buildStandardTooltip(rs, st, cnt, inSt));
+                                buildStandardTooltip(rs, st, cnt, inSt), true); // pass 1 → cancellable
                     }
                 }
             }
@@ -633,7 +656,7 @@ public class ColonyLinkServerTicker
                         dStat = ResourceStatus.SENT_PENDING;
                     return new ColonyLinkPacket.BuilderRequest(
                             disp, miss, dStat, rPos,
-                            buildDomumTooltip(st2, dStat, miss));
+                            buildDomumTooltip(st2, dStat, miss), false); // pass 2 → not cancellable (no formal request)
                 }
 
                 // v1.6.0 — no tool substitution in WAREHOUSE mode (courier fidelity).
@@ -654,7 +677,7 @@ public class ColonyLinkServerTicker
                         else if (substKey != null && cs.isRequesting(substKey)) substSt = ResourceStatus.CRAFTING;
                         else substSt = ResourceStatus.AVAILABLE;
                         return new ColonyLinkPacket.BuilderRequest(substDisp, miss, substSt, rPos,
-                                buildToolSubstituteTooltip(st2, sub.displayStack(), substSt, miss, substInSt, buildingLevel));
+                                buildToolSubstituteTooltip(st2, sub.displayStack(), substSt, miss, substInSt, buildingLevel), false); // pass 2 → not cancellable (no formal request)
                     }
                 }
 
@@ -670,7 +693,7 @@ public class ColonyLinkServerTicker
                     st = ResourceStatus.SENT_PENDING;
 
                 return new ColonyLinkPacket.BuilderRequest(disp, miss, st, rPos,
-                        buildStandardTooltip(st2, st, miss, inSt));
+                        buildStandardTooltip(st2, st, miss, inSt), false); // pass 2 → not cancellable (no formal request)
             }
         }
 

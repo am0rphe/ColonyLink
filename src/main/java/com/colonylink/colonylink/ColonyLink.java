@@ -105,6 +105,8 @@ public class ColonyLink
 
         ColonyLinkRecipes.RECIPE_SERIALIZERS.register(modEventBus);
 
+        AddPackageLootModifier.LOOT_MODIFIERS.register(modEventBus);
+
         PartModels.registerModels(
                 PartModelsHelper.createModels(WarehouseLinkTerminalPart.class));
 

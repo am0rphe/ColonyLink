@@ -52,11 +52,16 @@ public record ColonyLinkPacket(
             int count,
             ResourceStatus status,
             BlockPos redirectorPos,
-            List<Component> tooltipLines
+            List<Component> tooltipLines,
+            boolean cancellable
     )
     {
+        // v1.6.6 — cancellable = true only when this priority line is backed by a
+        // real open request (fetchBuilderRequest pass 1); false for pass-2 needed-
+        // resource lines that have no formal request to cancel. Drives the client
+        // "×" button grey-out; the server ignores it (never client-authoritative).
         public static BuilderRequest NONE = new BuilderRequest(
-                ItemStack.EMPTY, 0, ResourceStatus.NO_PATTERN, BlockPos.ZERO, List.of());
+                ItemStack.EMPTY, 0, ResourceStatus.NO_PATTERN, BlockPos.ZERO, List.of(), false);
     }
 
     public static final ResourceLocation ID = ResourceLocation.fromNamespaceAndPath(
@@ -96,6 +101,7 @@ public record ColonyLinkPacket(
                     buf.writeBlockPos(req.redirectorPos());
                     buf.writeInt(req.tooltipLines().size());
                     for (Component line : req.tooltipLines()) ComponentSerialization.STREAM_CODEC.encode(buf, line);
+                    buf.writeBoolean(req.cancellable());
                 }
                 buf.writeBoolean(packet.hasWarehouseCard());
                 buf.writeBoolean(packet.warehousePriority());
@@ -145,7 +151,8 @@ public record ColonyLinkPacket(
                     int reqTtCount       = buf.readInt();
                     List<Component> reqTt = new ArrayList<>();
                     for (int t = 0; t < reqTtCount; t++) reqTt.add(ComponentSerialization.STREAM_CODEC.decode(buf));
-                    req = new BuilderRequest(reqStack, reqCount, reqSt, reqRPos, reqTt);
+                    boolean reqCancellable = buf.readBoolean();
+                    req = new BuilderRequest(reqStack, reqCount, reqSt, reqRPos, reqTt, reqCancellable);
                 }
                 else req = BuilderRequest.NONE;
 
