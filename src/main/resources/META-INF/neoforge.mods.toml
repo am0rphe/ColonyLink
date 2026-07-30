@@ -79,3 +79,13 @@ type="optional"
 versionRange="[9.0.0,)"
 ordering="AFTER"
 side="BOTH"
+
+# v1.6.6 — JEI recipe-viewer integration (hover show recipe/uses on the WH/ME
+# panels). Optional + CLIENT: the mod boots fine without JEI; the plugin
+# self-activates only if JEI is present.
+[[dependencies.${mod_id}]]
+modId="jei"
+type="optional"
+versionRange="[19.39.0,)"
+ordering="AFTER"
+side="CLIENT"

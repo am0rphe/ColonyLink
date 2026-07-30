@@ -2,6 +2,7 @@ package com.colonylink.colonylink;
 
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.client.renderer.Rect2i;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.player.Inventory;
@@ -934,44 +935,106 @@ public class WarehouseLinkTerminalScreen extends AbstractContainerScreen<Warehou
         pose.popPose();
     }
 
-    // ── Tooltips items ────────────────────────────────────────────────────────
-    private void renderTooltipForPanel(GuiGraphics g, int mx, int my, int rawMx, int rawMy)
+    // ── Hit-test panneau (source unique de vérité) ────────────────────────────
+    // v1.6.6 — un seul endroit résout curseur→item pour les panneaux WH/ME, en
+    // COORDONNÉES ÉCRAN brutes (aucune transfo d'échelle : mx = rawMx dans render()).
+    // Consommé par renderTooltipForPanel, getPanelStackAt ET getPanelSlotArea
+    // (intégration JEI). WH d'abord puis ME (les panneaux ne se chevauchent pas).
+    // Mêmes gardes que l'affichage : carte warehouse présente + pas d'erreur pour
+    // le WH, AE2 actif pour le ME.
+
+    /**
+     * Item sous le curseur dans un panneau, avec ses infos d'affichage et la
+     * géométrie ÉCRAN du slot survolé ({@code slotX}/{@code slotY} = coin
+     * haut-gauche de l'icône 16×16). stack et area sortent du même hit → jamais
+     * de divergence.
+     */
+    private record PanelHit(boolean isWh, ItemStack stack, long count, boolean craftable,
+                            int slotX, int slotY) {}
+
+    /** Hit-test WH puis ME en coords ÉCRAN. {@code null} si rien sous le curseur. */
+    private PanelHit panelHitAt(int mx, int my)
     {
         // WH
-        int s = itemSlot(mx, my, leftPos + X_ITEMS_WH);
+        int panelX = leftPos + X_ITEMS_WH;
+        int s = itemSlot(mx, my, panelX);
         if (s >= 0 && hasWarehouseCard && whErrorMsg.isEmpty())
         {
             int i = whScroll * PANEL_COLS + s;
             if (i < whFiltered.size())
             {
                 var e = whFiltered.get(i);
-                g.renderComponentTooltip(font, List.of(
-                                e.stack().getDisplayName(),
-                                Component.translatable("colonylink.term.in_warehouse", e.count()),
-                                Component.translatable("colonylink.term.controls_wh")),
-                        rawMx, rawMy);
-                return;
+                int sx = panelX + (s % PANEL_COLS) * SLOT_PITCH;
+                int sy = topPos + Y_ITEMS + (s / PANEL_COLS) * SLOT_PITCH;
+                return new PanelHit(true, e.stack(), e.count(), false, sx, sy);
             }
         }
-        // AE
-        s = itemSlot(mx, my, leftPos + X_ITEMS_AE);
+        // ME
+        panelX = leftPos + X_ITEMS_AE;
+        s = itemSlot(mx, my, panelX);
         if (s >= 0 && menu.getPart().isAe2Active())
         {
             int i = meScroll * PANEL_COLS + s;
             if (i < meFiltered.size())
             {
                 var e = meFiltered.get(i);
-                List<Component> lines = new ArrayList<>();
-                lines.add(e.stack().getDisplayName());
-                if (e.craftable() && e.count() <= 0)
-                    lines.add(Component.translatable("colonylink.term.craftable_only"));
-                else if (e.craftable())
-                    lines.add(Component.translatable("colonylink.term.in_me_craftable", e.count()));
-                else
-                    lines.add(Component.translatable("colonylink.term.in_me", e.count()));
-                lines.add(Component.translatable("colonylink.term.controls_me"));
-                g.renderComponentTooltip(font, lines, rawMx, rawMy);
+                int sx = panelX + (s % PANEL_COLS) * SLOT_PITCH;
+                int sy = topPos + Y_ITEMS + (s / PANEL_COLS) * SLOT_PITCH;
+                return new PanelHit(false, e.stack(), e.count(), e.craftable(), sx, sy);
             }
+        }
+        return null;
+    }
+
+    /**
+     * ItemStack du panneau (WH ou ME) sous le curseur, ou {@link ItemStack#EMPTY}.
+     * Coordonnées ÉCRAN (comme reçues de Minecraft, sans transfo d'échelle).
+     * Point d'entrée public pour l'intégration JEI (survol → show recipe/uses).
+     */
+    public ItemStack getPanelStackAt(double mouseX, double mouseY)
+    {
+        PanelHit hit = panelHitAt((int) mouseX, (int) mouseY);
+        return hit != null ? hit.stack() : ItemStack.EMPTY;
+    }
+
+    /**
+     * Zone ÉCRAN (16×16, {@code SLOT_SZ}) du slot de panneau sous le curseur, pour
+     * ancrer le surlignage JEI sur l'icône. {@code null} si aucun slot survolé.
+     * Délègue au même {@link #panelHitAt} que {@link #getPanelStackAt} → stack et
+     * area toujours cohérents (une seule source de hit-test).
+     */
+    public Rect2i getPanelSlotArea(double mouseX, double mouseY)
+    {
+        PanelHit hit = panelHitAt((int) mouseX, (int) mouseY);
+        return hit != null ? new Rect2i(hit.slotX(), hit.slotY(), SLOT_SZ, SLOT_SZ) : null;
+    }
+
+    // ── Tooltips items ────────────────────────────────────────────────────────
+    private void renderTooltipForPanel(GuiGraphics g, int mx, int my, int rawMx, int rawMy)
+    {
+        PanelHit hit = panelHitAt(mx, my);
+        if (hit == null) return;
+
+        if (hit.isWh())
+        {
+            g.renderComponentTooltip(font, List.of(
+                            hit.stack().getDisplayName(),
+                            Component.translatable("colonylink.term.in_warehouse", hit.count()),
+                            Component.translatable("colonylink.term.controls_wh")),
+                    rawMx, rawMy);
+        }
+        else
+        {
+            List<Component> lines = new ArrayList<>();
+            lines.add(hit.stack().getDisplayName());
+            if (hit.craftable() && hit.count() <= 0)
+                lines.add(Component.translatable("colonylink.term.craftable_only"));
+            else if (hit.craftable())
+                lines.add(Component.translatable("colonylink.term.in_me_craftable", hit.count()));
+            else
+                lines.add(Component.translatable("colonylink.term.in_me", hit.count()));
+            lines.add(Component.translatable("colonylink.term.controls_me"));
+            g.renderComponentTooltip(font, lines, rawMx, rawMy);
         }
     }
 
