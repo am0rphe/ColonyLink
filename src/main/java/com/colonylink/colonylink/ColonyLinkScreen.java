@@ -781,25 +781,25 @@ public class ColonyLinkScreen extends Screen
 
             if (active)
             {
-                // Tab active : couleur fond config légèrement éclaircie
-                bg = lighten(_tabCfg.bgColor, 1.1f) | 0xFF000000;
+                // Tab active : chrome thémé (Défaut = fond config éclairci, AE = palette)
+                bg = _tabCfg.tabActiveBg();
                 bl = _tabCfg.border();
                 bd = _tabCfg.borderShadow();
             }
             else if (!meta.hasRedirector())
             {
-                // Pas de redirecteur → brun
+                // Pas de redirecteur → brun (SÉMANTIQUE : encode l'état "non lié")
                 bg = 0xFF5A3A10; bl = 0xFF886633; bd = 0xFF221500;
             }
             else if (hasUnread)
             {
-                // #6 : tab inactive avec nouvelles requêtes non lues → pastel orange
+                // #6 : tab inactive avec requêtes non lues → orange (SÉMANTIQUE : notification)
                 bg = 0xFF7A4A1A; bl = 0xFFCC8833; bd = 0xFF3A2008;
             }
             else
             {
-                // Tab inactive normale → gris
-                bg = 0xFF4A4A4A; bl = 0xFF6B6B6B; bd = 0xFF222222;
+                // Tab inactive normale → chrome neutre thémé
+                bg = _tabCfg.tabInactiveBg(); bl = _tabCfg.tabInactiveLight(); bd = _tabCfg.tabInactiveDark();
             }
 
             g.fill(tx, ty, tx + tw, ty + th, bg);
@@ -854,16 +854,16 @@ public class ColonyLinkScreen extends Screen
             int bg, bl, bd;
             if (active)
             {
-                bg = lighten(_tabCfg.bgColor, 1.1f) | 0xFF000000;
+                bg = _tabCfg.tabActiveBg();
                 bl = _tabCfg.border();
                 bd = _tabCfg.borderShadow();
             }
             else
             {
-                // Même couleur que les tabs builders inactives normales
-                bg = hov ? 0xFF555555 : 0xFF4A4A4A;
-                bl = 0xFF6B6B6B;
-                bd = 0xFF222222;
+                // Même chrome neutre thémé que les tabs builders inactives (avec hover)
+                bg = _tabCfg.tabInactiveBg(hov);
+                bl = _tabCfg.tabInactiveLight();
+                bd = _tabCfg.tabInactiveDark();
             }
 
             g.fill(drawTx, ty, drawTx + tw, ty + th, bg);
@@ -872,9 +872,11 @@ public class ColonyLinkScreen extends Screen
             g.fill(drawTx, ty + th - 1, drawTx + tw, ty + th, bd);
             if (!active) g.fill(drawTx + tw - 1, ty, drawTx + tw, ty + th, bd);
 
-            // Icône bonhomme pixel-art centrée
+            // Icône bonhomme pixel-art centrée — neutre, thémée
             int cx = drawTx + tw / 2, cy = ty + th / 2 - 1;
-            int col = active ? 0xFFEEEEEE : (hov ? 0xFFCCCCCC : 0xFFAAAAAA);
+            int col = _tabCfg.isAe()
+                    ? (active ? 0xFFF2F2F2 : (hov ? 0xFFCBCCD4 : 0xFF9A9FB4))
+                    : (active ? 0xFFEEEEEE : (hov ? 0xFFCCCCCC : 0xFFAAAAAA));
             g.fill(cx - 2, cy - 5, cx + 3, cy - 1, col); // tête
             g.fill(cx - 3, cy - 1, cx + 4, cy + 3, col); // corps
             g.fill(cx - 3, cy + 3, cx - 1, cy + 6, col); // jambe gauche
@@ -922,21 +924,25 @@ public class ColonyLinkScreen extends Screen
     /** Dessine le bouton config — intégré dans la barre de titre, fond cohérent. */
     private void drawCfgButton(GuiGraphics g, int mx, int my, List<Component> tip)
     {
+        ColonyLinkGuiConfig _c = ColonyLinkGuiConfig.get();
+        boolean ae = _c.isAe();
         int bx = getCfgBtnX(), by = getCfgBtnY();
         int bw = CFG_BTN_W, bh = CFG_BTN_H;
         boolean hov = mx >= bx && mx <= bx + bw && my >= by && my <= by + bh;
 
         // Fond — légèrement différent de la barre de titre pour être visible
-        int bg = hov ? 0xFF505070 : 0xFF404060;
+        int bg = ae ? _c.neutralBtnBg(hov) : (hov ? 0xFF505070 : 0xFF404060);
         g.fill(bx, by, bx + bw, by + bh, bg);
         // Bordure fine cohérente avec le reste du GUI
-        g.fill(bx, by, bx + bw, by + 1, 0xFF8888AA);
-        g.fill(bx, by, bx + 1, by + bh, 0xFF8888AA);
-        g.fill(bx, by + bh - 1, bx + bw, by + bh, 0xFF222244);
-        g.fill(bx + bw - 1, by, bx + bw, by + bh, 0xFF222244);
+        int _bl = ae ? _c.btnBevelLight() : 0xFF8888AA;
+        int _bd = ae ? _c.btnBevelDark()  : 0xFF222244;
+        g.fill(bx, by, bx + bw, by + 1, _bl);
+        g.fill(bx, by, bx + 1, by + bh, _bl);
+        g.fill(bx, by + bh - 1, bx + bw, by + bh, _bd);
+        g.fill(bx + bw - 1, by, bx + bw, by + bh, _bd);
 
         // Icône "settings" : 3 lignes horizontales avec un carré (≠ engrenage des tabs)
-        int ic = hov ? 0xFFDDDDFF : 0xFF9999CC;
+        int ic = ae ? _c.iconNeutral(!hov) : (hov ? 0xFFDDDDFF : 0xFF9999CC);
         int ox = bx + 3, oy = by + 3;
         // Ligne 1 : ─ ■ ─
         g.fill(ox,     oy,     ox + 4, oy + 1, ic);
@@ -959,8 +965,12 @@ public class ColonyLinkScreen extends Screen
 
     private void drawGearIcon(GuiGraphics g, int ox, int oy, boolean active, boolean hasRedir)
     {
-        int col  = active ? 0xFFE0E0E0 : (hasRedir ? 0xFF888888 : 0xFFBB7722);
-        int hole = active ? 0xFF8B8B8B : (hasRedir ? 0xFF4A4A4A : 0xFF5A3A10);
+        ColonyLinkGuiConfig _c = ColonyLinkGuiConfig.get();
+        boolean ae = _c.isAe();
+        // Neutre (actif / lié) thémé ; "sans redirecteur" reste orange (SÉMANTIQUE)
+        int col  = active ? _c.iconNeutral(false) : (hasRedir ? _c.iconNeutral(true) : 0xFFBB7722);
+        int hole = active ? (ae ? 0xFF413F54 : 0xFF8B8B8B)
+                          : (hasRedir ? (ae ? 0xFF2B2A38 : 0xFF4A4A4A) : 0xFF5A3A10);
         g.fill(ox + 3, oy + 1, ox + 7, oy + 9, col);
         g.fill(ox + 1, oy + 3, ox + 9, oy + 7, col);
         g.fill(ox + 4, oy,     ox + 6, oy + 2,  col);
@@ -975,11 +985,11 @@ public class ColonyLinkScreen extends Screen
     {
         ColonyLinkGuiConfig _c = ColonyLinkGuiConfig.get();
         int panelH = 58;
-        g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 22 + panelH, _c.applyOpacity(0xFF3A3A3A));
-        g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 23, _c.applyOpacity(0xFF8B8B8B));
-        g.fill(x + 6, y + 22, x + 7, y + 22 + panelH, _c.applyOpacity(0xFF8B8B8B));
-        g.fill(x + 6, y + 22 + panelH - 1, x + GUI_WIDTH - 6, y + 22 + panelH, _c.applyOpacity(0xFF373737));
-        g.fill(x + GUI_WIDTH - 7, y + 22, x + GUI_WIDTH - 6, y + 22 + panelH, _c.applyOpacity(0xFF373737));
+        g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 22 + panelH, _c.applyOpacity(_c.wellBg()));
+        g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 23, _c.applyOpacity(_c.wellLight()));
+        g.fill(x + 6, y + 22, x + 7, y + 22 + panelH, _c.applyOpacity(_c.wellLight()));
+        g.fill(x + 6, y + 22 + panelH - 1, x + GUI_WIDTH - 6, y + 22 + panelH, _c.applyOpacity(_c.wellDark()));
+        g.fill(x + GUI_WIDTH - 7, y + 22, x + GUI_WIDTH - 6, y + 22 + panelH, _c.applyOpacity(_c.wellDark()));
 
         if (!isOutOfPower())
         {
@@ -1047,12 +1057,12 @@ public class ColonyLinkScreen extends Screen
     {
         ColonyLinkGuiConfig _cr = ColonyLinkGuiConfig.get();
         int pY = y + 80, pH = 30;
-        g.fill(x + 6, pY, x + GUI_WIDTH - 6, pY + pH, _cr.applyOpacity(0xFF2E2E4A));
-        g.fill(x + 6, pY, x + GUI_WIDTH - 6, pY + 1, _cr.applyOpacity(0xFF6666AA));
-        g.fill(x + 6, pY, x + 7, pY + pH, _cr.applyOpacity(0xFF6666AA));
-        g.fill(x + 6, pY + pH - 1, x + GUI_WIDTH - 6, pY + pH, _cr.applyOpacity(0xFF1A1A3A));
-        g.fill(x + GUI_WIDTH - 7, pY, x + GUI_WIDTH - 6, pY + pH, _cr.applyOpacity(0xFF1A1A3A));
-        g.fill(x + 7, pY + 11, x + GUI_WIDTH - 7, pY + 12, _cr.applyOpacity(0xFF3A3A6A));
+        g.fill(x + 6, pY, x + GUI_WIDTH - 6, pY + pH, _cr.applyOpacity(_cr.reqBg()));
+        g.fill(x + 6, pY, x + GUI_WIDTH - 6, pY + 1, _cr.applyOpacity(_cr.reqLight()));
+        g.fill(x + 6, pY, x + 7, pY + pH, _cr.applyOpacity(_cr.reqLight()));
+        g.fill(x + 6, pY + pH - 1, x + GUI_WIDTH - 6, pY + pH, _cr.applyOpacity(_cr.reqDark()));
+        g.fill(x + GUI_WIDTH - 7, pY, x + GUI_WIDTH - 6, pY + pH, _cr.applyOpacity(_cr.reqDark()));
+        g.fill(x + 7, pY + 11, x + GUI_WIDTH - 7, pY + 12, _cr.applyOpacity(_cr.isAe() ? 0xFF878FA5 : 0xFF3A3A6A));
         g.drawString(this.font, Component.translatable("colonylink.screen.req.title").getString(), x + 10, pY + 3, 0xAAAAFF, false);
 
         boolean hasReq = builderRequest != null && !builderRequest.stack().isEmpty()
@@ -1074,10 +1084,10 @@ public class ColonyLinkScreen extends Screen
         boolean hov = mx >= rbX && mx <= rbX + rbW && my >= rbY && my <= rbY + rbH;
         int bg = _cr.applyOpacity(hov && isButtonClickable(rs) ? getButtonHoverColor(rs) : getButtonColor(rs));
         g.fill(rbX, rbY, rbX + rbW, rbY + rbH, bg);
-        g.fill(rbX, rbY, rbX + rbW, rbY + 1, 0xFFFFFFFF);
-        g.fill(rbX, rbY, rbX + 1, rbY + rbH, 0xFFFFFFFF);
-        g.fill(rbX, rbY + rbH - 1, rbX + rbW, rbY + rbH, 0xFF373737);
-        g.fill(rbX + rbW - 1, rbY, rbX + rbW, rbY + rbH, 0xFF373737);
+        g.fill(rbX, rbY, rbX + rbW, rbY + 1, _cr.btnBevelLight());
+        g.fill(rbX, rbY, rbX + 1, rbY + rbH, _cr.btnBevelLight());
+        g.fill(rbX, rbY + rbH - 1, rbX + rbW, rbY + rbH, _cr.btnBevelDark());
+        g.fill(rbX + rbW - 1, rbY, rbX + rbW, rbY + rbH, _cr.btnBevelDark());
         g.drawCenteredString(this.font, getRequestButtonText(rs), rbX + rbW / 2, rbY + 4, getButtonTextColor(rs));
 
         // Tooltip survol bouton ou ligne item — affiche les infos de substitution si présentes
@@ -1105,10 +1115,10 @@ public class ColonyLinkScreen extends Screen
         boolean cHov = cCancellable && mx >= cbX && mx <= cbX + cbW && my >= cbY && my <= cbY + cbH;
         int cFill = cCancellable ? (cHov ? 0xFFCC4444 : 0xFF992222) : 0xFF555555;
         g.fill(cbX, cbY, cbX + cbW, cbY + cbH, _cr.applyOpacity(cFill));
-        g.fill(cbX, cbY, cbX + cbW, cbY + 1, 0xFFFFFFFF);
-        g.fill(cbX, cbY, cbX + 1, cbY + cbH, 0xFFFFFFFF);
-        g.fill(cbX, cbY + cbH - 1, cbX + cbW, cbY + cbH, 0xFF373737);
-        g.fill(cbX + cbW - 1, cbY, cbX + cbW, cbY + cbH, 0xFF373737);
+        g.fill(cbX, cbY, cbX + cbW, cbY + 1, _cr.btnBevelLight());
+        g.fill(cbX, cbY, cbX + 1, cbY + cbH, _cr.btnBevelLight());
+        g.fill(cbX, cbY + cbH - 1, cbX + cbW, cbY + cbH, _cr.btnBevelDark());
+        g.fill(cbX + cbW - 1, cbY, cbX + cbW, cbY + cbH, _cr.btnBevelDark());
         g.drawCenteredString(this.font, "×", cbX + cbW / 2, cbY + 1, cCancellable ? 0xFFFFFFFF : 0xFF999999);
         if (cHov)
         {
@@ -1120,11 +1130,14 @@ public class ColonyLinkScreen extends Screen
     private void drawButton(GuiGraphics g, int bx, int by, int bw, int bh,
                             int bg, String label, int tc)
     {
+        // La face (bg) porte le sens (rouge/orange/…) et reste telle quelle ;
+        // seul le bevel (chrome) suit le thème.
+        ColonyLinkGuiConfig _c = ColonyLinkGuiConfig.get();
         g.fill(bx, by, bx + bw, by + bh, bg);
-        g.fill(bx, by, bx + bw, by + 1, 0xFFFFFFFF);
-        g.fill(bx, by, bx + 1, by + bh, 0xFFFFFFFF);
-        g.fill(bx, by + bh - 1, bx + bw, by + bh, 0xFF373737);
-        g.fill(bx + bw - 1, by, bx + bw, by + bh, 0xFF373737);
+        g.fill(bx, by, bx + bw, by + 1, _c.btnBevelLight());
+        g.fill(bx, by, bx + 1, by + bh, _c.btnBevelLight());
+        g.fill(bx, by + bh - 1, bx + bw, by + bh, _c.btnBevelDark());
+        g.fill(bx + bw - 1, by, bx + bw, by + bh, _c.btnBevelDark());
         g.drawCenteredString(this.font, label, bx + bw / 2, by + 3, tc);
     }
 
@@ -1173,16 +1186,53 @@ public class ColonyLinkScreen extends Screen
             }
             default -> { label = Component.translatable("colonylink.screen.btn.check_warehouse").getString(); bg = hov ? 0xFF336633 : 0xFF224422; tc = 0x88FF88; }
         }
+        ColonyLinkGuiConfig _cw = ColonyLinkGuiConfig.get();
         g.fill(bx, by, bx + bw, by + bh, bg);
-        g.fill(bx, by, bx + bw, by + 1, 0xFFFFFFFF);
-        g.fill(bx, by, bx + 1, by + bh, 0xFFFFFFFF);
-        g.fill(bx, by + bh - 1, bx + bw, by + bh, 0xFF373737);
-        g.fill(bx + bw - 1, by, bx + bw, by + bh, 0xFF373737);
+        g.fill(bx, by, bx + bw, by + 1, _cw.btnBevelLight());
+        g.fill(bx, by, bx + 1, by + bh, _cw.btnBevelLight());
+        g.fill(bx, by + bh - 1, bx + bw, by + bh, _cw.btnBevelDark());
+        g.fill(bx + bw - 1, by, bx + bw, by + bh, _cw.btnBevelDark());
         g.drawCenteredString(this.font, label, bx + bw / 2, by + 3, tc);
     }
 
     @Override
     public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {}
+
+    /**
+     * Cadre AE fin — réplique pixel-perfect de la bordure extérieure du Warehouse
+     * Link Terminal (séquences extraites de TerminalSkin.BG, extérieur → intérieur).
+     * Épaisseurs : haut/gauche/droit = 2px, bas = 4px. Chaque palier = un liseré
+     * g.fill d'1px, avec l'opacité globale appliquée. Les bords verticaux (gauche/
+     * droite) sont tracés en dernier → pixel de coin extérieur = 0xFF413F54 (foncé),
+     * coins nets (pas l'anti-aliasing alpha de la skin — limite connue).
+     * Mode AE uniquement ; DEFAULT continue via {@link ColonyLinkGuiConfig#drawBorders}.
+     */
+    private void drawAeFrame(GuiGraphics g, ColonyLinkGuiConfig cfg, int x, int y, int w, int h)
+    {
+        int[] top = cfg.aeFrameTop(), bot = cfg.aeFrameBottom();
+        int[] left = cfg.aeFrameLeft(), right = cfg.aeFrameRight();
+
+        // Haut (extérieur = ligne du dessus)
+        for (int k = 0; k < top.length; k++)
+            g.fill(x, y + k, x + w, y + k + 1, cfg.applyOpacity(top[k]));
+        // Bas — extérieur = ligne TOUT en bas. bot[0] va sur y+h-1 (dernière ligne),
+        // puis on remonte vers l'intérieur : k=0→413F54(bas), 1→878FA5, 2→878FA5,
+        // 3→F2F2F2(haut du bandeau). Rangée du bas = foncé, conforme au Terminal.
+        for (int k = 0; k < bot.length; k++)
+        {
+            int ry = y + h - 1 - k;
+            g.fill(x, ry, x + w, ry + 1, cfg.applyOpacity(bot[k]));
+        }
+        // Gauche (extérieur = colonne de gauche) — tracé après le haut/bas
+        for (int k = 0; k < left.length; k++)
+            g.fill(x + k, y, x + k + 1, y + h, cfg.applyOpacity(left[k]));
+        // Droite (extérieur = colonne de droite)
+        for (int k = 0; k < right.length; k++)
+        {
+            int rx = x + w - 1 - k;
+            g.fill(rx, y, rx + 1, y + h, cfg.applyOpacity(right[k]));
+        }
+    }
 
     // ── render() ──────────────────────────────────────────────────────────────
     @Override
@@ -1208,17 +1258,21 @@ public class ColonyLinkScreen extends Screen
         // Fond
         g.fill(x, y, x + GUI_WIDTH, y + GUI_HEIGHT, _cfg.bg());
 
-        // Bordures via config (épaisseur variable)
-        _cfg.drawBorders(g, x, y, GUI_WIDTH, GUI_HEIGHT);
+        // Bordures : cadre AE fin pixel-perfect en mode AE, sinon bordures config
+        if (_cfg.isAe())
+            drawAeFrame(g, _cfg, x, y, GUI_WIDTH, GUI_HEIGHT);
+        else
+            _cfg.drawBorders(g, x, y, GUI_WIDTH, GUI_HEIGHT);
 
         // Barre de titre
-        g.fill(x + _cfg.borderWidth, y + _cfg.borderWidth,
-                x + GUI_WIDTH - _cfg.borderWidth, y + 22, _cfg.title());
-        // Liseré haut de titre
-        int _tc2 = _cfg.applyOpacity(lighten(_cfg.titleColor, 1.3f));
-        g.fill(x + _cfg.borderWidth, y + _cfg.borderWidth,
-                x + GUI_WIDTH - _cfg.borderWidth, y + _cfg.borderWidth + 2, _tc2);
-        g.drawString(this.font, this.title, x + 58, y + 7, 0x404040, false);
+        int _bw = _cfg.frameBorderWidth();
+        g.fill(x + _bw, y + _bw,
+                x + GUI_WIDTH - _bw, y + 22, _cfg.title());
+        // Liseré haut de titre (thémé)
+        int _tc2 = _cfg.applyOpacity(_cfg.titleHi());
+        g.fill(x + _bw, y + _bw,
+                x + GUI_WIDTH - _bw, y + _bw + 2, _tc2);
+        g.drawString(this.font, this.title, x + 58, y + 7, _cfg.titleText(), false);
 
         // ── Curseur handle drag ✥ — centré entre Unlink et Restart ──────────
         {
@@ -1227,7 +1281,7 @@ public class ColonyLinkScreen extends Screen
             int handleCX = (handleX1 + handleX2) / 2;
             int handleCY = y + 11;
             boolean hoverHandle = isInDragHandle(mx, my);
-            int dotColor = hoverHandle ? 0xFFCCCCCC : 0xFF888888;
+            int dotColor = _cfg.handleDot(hoverHandle);
             // Motif ⠿ : 3 colonnes × 2 lignes de points espacés
             int[] dotsX = { -4, 0, 4, -4, 0, 4 };
             int[] dotsY = { -3, -3, -3,  3,  3,  3 };
@@ -1253,11 +1307,11 @@ public class ColonyLinkScreen extends Screen
         if (activeTabIndex == CITIZENS_TAB_INDEX)
         {
             ColonyLinkGuiConfig _c = ColonyLinkGuiConfig.get();
-            g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 80, _c.applyOpacity(0xFF3A3A3A));
-            g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 23, _c.applyOpacity(0xFF8B8B8B));
-            g.fill(x + 6, y + 22, x + 7, y + 80, _c.applyOpacity(0xFF8B8B8B));
-            g.fill(x + 6, y + 79, x + GUI_WIDTH - 6, y + 80, _c.applyOpacity(0xFF373737));
-            g.fill(x + GUI_WIDTH - 7, y + 22, x + GUI_WIDTH - 6, y + 80, _c.applyOpacity(0xFF373737));
+            g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 80, _c.applyOpacity(_c.wellBg()));
+            g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 23, _c.applyOpacity(_c.wellLight()));
+            g.fill(x + 6, y + 22, x + 7, y + 80, _c.applyOpacity(_c.wellLight()));
+            g.fill(x + 6, y + 79, x + GUI_WIDTH - 6, y + 80, _c.applyOpacity(_c.wellDark()));
+            g.fill(x + GUI_WIDTH - 7, y + 22, x + GUI_WIDTH - 6, y + 80, _c.applyOpacity(_c.wellDark()));
             g.drawCenteredString(this.font, Component.translatable("colonylink.screen.cit.header").getString(), x + GUI_WIDTH / 2 - 12, y + 30, 0xFFFFFF);
             String countStr = citizensLoading ? Component.translatable("colonylink.screen.cit.loading").getString()
                     : citizenEntries.isEmpty() ? Component.translatable("colonylink.screen.cit.no_requests").getString()
@@ -1316,9 +1370,9 @@ public class ColonyLinkScreen extends Screen
         // Liste
         ColonyLinkGuiConfig _cl = ColonyLinkGuiConfig.get();
         int listW = GUI_WIDTH - 26, listY = getListStartY();
-        g.fill(x + 6, listY - 1, x + GUI_WIDTH - 18, listY - 1 + MAX_VISIBLE * ENTRY_HEIGHT + 1, _cl.applyOpacity(0xFF373737));
-        g.fill(x + 6, listY - 1, x + GUI_WIDTH - 18, listY, _cl.applyOpacity(0xFF8B8B8B));
-        g.fill(x + 6, listY - 1, x + 7, listY - 1 + MAX_VISIBLE * ENTRY_HEIGHT + 1, _cl.applyOpacity(0xFF8B8B8B));
+        g.fill(x + 6, listY - 1, x + GUI_WIDTH - 18, listY - 1 + MAX_VISIBLE * ENTRY_HEIGHT + 1, _cl.applyOpacity(_cl.listBg()));
+        g.fill(x + 6, listY - 1, x + GUI_WIDTH - 18, listY, _cl.applyOpacity(_cl.wellLight()));
+        g.fill(x + 6, listY - 1, x + 7, listY - 1 + MAX_VISIBLE * ENTRY_HEIGHT + 1, _cl.applyOpacity(_cl.wellLight()));
 
         // #12 : tab Citizens active → liste lecture seule des requêtes citoyens non-builders
         if (activeTabIndex == CITIZENS_TAB_INDEX)
@@ -1340,7 +1394,7 @@ public class ColonyLinkScreen extends Screen
                 {
                     var ce  = citizenEntries.get(i + scrollOffset);
                     int ey  = listY + i * ENTRY_HEIGHT;
-                    int rowBg = _cl.applyOpacity((i % 2 == 0) ? 0xFF4A4A4A : 0xFF424242);
+                    int rowBg = _cl.applyOpacity((i % 2 == 0) ? _cl.rowA() : _cl.rowB());
                     g.fill(x + 7, ey, x + 7 + listW, ey + ENTRY_HEIGHT, rowBg);
                     g.renderItem(ce.stack(), x + 9, ey + 2);
 
@@ -1423,11 +1477,11 @@ public class ColonyLinkScreen extends Screen
                 if (citizenEntries.size() > MAX_VISIBLE)
                 {
                     int sbX = getScrollbarX(), sbH = MAX_VISIBLE * ENTRY_HEIGHT;
-                    g.fill(sbX, listY, sbX + SCROLLBAR_WIDTH, listY + sbH, _cl.applyOpacity(0xFF2A2A2A));
+                    g.fill(sbX, listY, sbX + SCROLLBAR_WIDTH, listY + sbH, _cl.applyOpacity(_cl.isAe() ? 0xFF413F54 : 0xFF2A2A2A));
                     int thumbH = Math.max(16, sbH * MAX_VISIBLE / citizenEntries.size());
                     int thumbY = listY + (sbH - thumbH) * scrollOffset
                             / Math.max(1, citizenEntries.size() - MAX_VISIBLE);
-                    g.fill(sbX + 1, thumbY, sbX + SCROLLBAR_WIDTH - 1, thumbY + thumbH, _cl.applyOpacity(0xFF8B8B8B));
+                    g.fill(sbX + 1, thumbY, sbX + SCROLLBAR_WIDTH - 1, thumbY + thumbH, _cl.applyOpacity(_cl.scrollThumb()));
                 }
             }
         }
@@ -1449,7 +1503,7 @@ public class ColonyLinkScreen extends Screen
                 int rc = entry.realCount();
                 int ey = listY + i * ENTRY_HEIGHT;
 
-                int _rowBg = _cl.applyOpacity((i % 2 == 0) ? 0xFF4A4A4A : 0xFF424242);
+                int _rowBg = _cl.applyOpacity((i % 2 == 0) ? _cl.rowA() : _cl.rowB());
                 g.fill(x + 7, ey, x + 7 + listW, ey + ENTRY_HEIGHT, _rowBg);
                 g.renderItem(stack, x + 9, ey + 2);
 
@@ -1540,10 +1594,10 @@ public class ColonyLinkScreen extends Screen
 
                 int bg2 = _cl.applyOpacity(getButtonColorWithWarehouse(status, stack, hov && isButtonClickable(status, stack)));
                 g.fill(bx2, by2, bx2 + bw2, by2 + bh2, bg2);
-                g.fill(bx2, by2, bx2 + bw2, by2 + 1, 0xFFFFFFFF);
-                g.fill(bx2, by2, bx2 + 1, by2 + bh2, 0xFFFFFFFF);
-                g.fill(bx2, by2 + bh2 - 1, bx2 + bw2, by2 + bh2, 0xFF373737);
-                g.fill(bx2 + bw2 - 1, by2, bx2 + bw2, by2 + bh2, 0xFF373737);
+                g.fill(bx2, by2, bx2 + bw2, by2 + 1, _cl.btnBevelLight());
+                g.fill(bx2, by2, bx2 + 1, by2 + bh2, _cl.btnBevelLight());
+                g.fill(bx2, by2 + bh2 - 1, bx2 + bw2, by2 + bh2, _cl.btnBevelDark());
+                g.fill(bx2 + bw2 - 1, by2, bx2 + bw2, by2 + bh2, _cl.btnBevelDark());
                 g.drawCenteredString(this.font, getButtonTextWithWarehouse(status, stack),
                         bx2 + bw2 / 2, by2 + 4, getButtonTextColor(status));
             }
@@ -1551,26 +1605,26 @@ public class ColonyLinkScreen extends Screen
             if (entries.size() > MAX_VISIBLE)
             {
                 int sbX = getScrollbarX(), sbT = getScrollbarTop(), sbB = getScrollbarBottom();
-                g.fill(sbX, sbT, sbX + SCROLLBAR_WIDTH, sbB, 0xFF373737);
-                g.fill(sbX, sbT, sbX + 1, sbB, 0xFF8B8B8B);
-                g.fill(sbX, sbT, sbX + SCROLLBAR_WIDTH, sbT + 1, 0xFF8B8B8B);
+                g.fill(sbX, sbT, sbX + SCROLLBAR_WIDTH, sbB, _cl.scrollTrack());
+                g.fill(sbX, sbT, sbX + 1, sbB, _cl.wellLight());
+                g.fill(sbX, sbT, sbX + SCROLLBAR_WIDTH, sbT + 1, _cl.wellLight());
                 int ty2 = getThumbY(), th2 = getThumbHeight();
-                g.fill(sbX + 1, ty2, sbX + SCROLLBAR_WIDTH, ty2 + th2, 0xFF8B8B8B);
-                g.fill(sbX + 1, ty2, sbX + SCROLLBAR_WIDTH, ty2 + 1, 0xFFFFFFFF);
-                g.fill(sbX + 1, ty2, sbX + 2, ty2 + th2, 0xFFFFFFFF);
-                g.fill(sbX + 1, ty2 + th2 - 1, sbX + SCROLLBAR_WIDTH, ty2 + th2, 0xFF373737);
-                g.fill(sbX + SCROLLBAR_WIDTH - 1, ty2, sbX + SCROLLBAR_WIDTH, ty2 + th2, 0xFF373737);
+                g.fill(sbX + 1, ty2, sbX + SCROLLBAR_WIDTH, ty2 + th2, _cl.scrollThumb());
+                g.fill(sbX + 1, ty2, sbX + SCROLLBAR_WIDTH, ty2 + 1, _cl.btnBevelLight());
+                g.fill(sbX + 1, ty2, sbX + 2, ty2 + th2, _cl.btnBevelLight());
+                g.fill(sbX + 1, ty2 + th2 - 1, sbX + SCROLLBAR_WIDTH, ty2 + th2, _cl.btnBevelDark());
+                g.fill(sbX + SCROLLBAR_WIDTH - 1, ty2, sbX + SCROLLBAR_WIDTH, ty2 + th2, _cl.btnBevelDark());
             }
         }
 
-        g.fill(x + 6, y + GUI_HEIGHT - 44, x + GUI_WIDTH - 6, y + GUI_HEIGHT - 43, ColonyLinkGuiConfig.get().applyOpacity(0xFF555555));
+        g.fill(x + 6, y + GUI_HEIGHT - 44, x + GUI_WIDTH - 6, y + GUI_HEIGHT - 43, ColonyLinkGuiConfig.get().applyOpacity(ColonyLinkGuiConfig.get().separator()));
         // #12 : WareCheck, Priority et boutons masqués sur tab Citizens
         if (activeTabIndex != CITIZENS_TAB_INDEX)
         {
             drawWareCheckButton(g, mx, my);
             drawPrioritySwitch(g, mx, my);
         }
-        g.fill(x + 6, y + GUI_HEIGHT - 26, x + GUI_WIDTH - 6, y + GUI_HEIGHT - 25, ColonyLinkGuiConfig.get().applyOpacity(0xFF555555));
+        g.fill(x + 6, y + GUI_HEIGHT - 26, x + GUI_WIDTH - 6, y + GUI_HEIGHT - 25, ColonyLinkGuiConfig.get().applyOpacity(ColonyLinkGuiConfig.get().separator()));
 
         if (activeTabIndex != CITIZENS_TAB_INDEX)
         {
@@ -1605,8 +1659,8 @@ public class ColonyLinkScreen extends Screen
             }
 
             g.fill(caX, caY, caX + caW, caY + caH, caBg);
-            g.fill(caX, caY, caX + caW, caY + 1, 0xFFFFFFFF); g.fill(caX, caY, caX + 1, caY + caH, 0xFFFFFFFF);
-            g.fill(caX, caY + caH - 1, caX + caW, caY + caH, 0xFF373737); g.fill(caX + caW - 1, caY, caX + caW, caY + caH, 0xFF373737);
+            g.fill(caX, caY, caX + caW, caY + 1, _cBtn.btnBevelLight()); g.fill(caX, caY, caX + 1, caY + caH, _cBtn.btnBevelLight());
+            g.fill(caX, caY + caH - 1, caX + caW, caY + caH, _cBtn.btnBevelDark()); g.fill(caX + caW - 1, caY, caX + caW, caY + caH, _cBtn.btnBevelDark());
             g.drawCenteredString(this.font, caLabel, caX + caW / 2, caY + 4, caTextColor);
 
             if (caHov)
@@ -1637,8 +1691,8 @@ public class ColonyLinkScreen extends Screen
             boolean saHov = mx >= saX && mx <= saX + saW && my >= saY && my <= saY + saH;
             boolean hasAvail = hasSendableItems();
             g.fill(saX, saY, saX + saW, saY + saH, _cBtn.applyOpacity(hasAvail ? (saHov ? 0xFF0066CC : 0xFF004488) : 0xFF333333));
-            g.fill(saX, saY, saX + saW, saY + 1, 0xFFFFFFFF); g.fill(saX, saY, saX + 1, saY + saH, 0xFFFFFFFF);
-            g.fill(saX, saY + saH - 1, saX + saW, saY + saH, 0xFF373737); g.fill(saX + saW - 1, saY, saX + saW, saY + saH, 0xFF373737);
+            g.fill(saX, saY, saX + saW, saY + 1, _cBtn.btnBevelLight()); g.fill(saX, saY, saX + 1, saY + saH, _cBtn.btnBevelLight());
+            g.fill(saX, saY + saH - 1, saX + saW, saY + saH, _cBtn.btnBevelDark()); g.fill(saX + saW - 1, saY, saX + saW, saY + saH, _cBtn.btnBevelDark());
             g.drawCenteredString(this.font, Component.translatable("colonylink.screen.btn.send_all").getString(), saX + saW / 2, saY + 4, hasAvail ? 0x4488FF : 0x888888);
 
         } // fin du bloc non-Citizens

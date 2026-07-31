@@ -39,6 +39,7 @@ public class ColonyLinkConfigScreen extends Screen
     private int   wBorderWidth;
     private float wOpacity;
     private float wScale;
+    private ColonyLinkGuiConfig.Theme wTheme;
 
     // Slider drag
     private int   draggingSlider = -1; // index du slider en cours de drag
@@ -59,7 +60,11 @@ public class ColonyLinkConfigScreen extends Screen
         wBorderWidth = cfg.borderWidth;
         wOpacity     = cfg.opacity;
         wScale       = cfg.scale;
+        wTheme       = cfg.theme;
     }
+
+    /** Les contrôles de couleur (bg/title/border + épaisseur) sont verrouillés en thème AE. */
+    private boolean colorsLocked() { return wTheme == ColonyLinkGuiConfig.Theme.AE; }
 
     // ── Coordonnées ───────────────────────────────────────────────────────────
 
@@ -99,7 +104,10 @@ public class ColonyLinkConfigScreen extends Screen
 
         // Barre de titre
         g.fill(x + 2, y + 2, x + W - 2, y + 20, 0xFF3A3A3A);
-        g.drawCenteredString(this.font, Component.translatable("colonylink.cfg.header").getString(), x + W / 2, y + 6, 0xFFFFAA);
+        g.drawCenteredString(this.font, Component.translatable("colonylink.cfg.header").getString(), x + W / 2 - 50, y + 6, 0xFFFFAA);
+
+        // Sélecteur de thème (toujours actif, dans le bandeau, à droite)
+        drawThemeSelector(g, mx, my);
 
         // Tabs
         drawTabs(g, mx, my);
@@ -114,6 +122,32 @@ public class ColonyLinkConfigScreen extends Screen
         drawBottomButtons(g, mx, my);
 
         super.render(g, mx, my, pt);
+    }
+
+    // ── Sélecteur de thème ─────────────────────────────────────────────────────
+    private int themeBtnX() { return gx() + W - 104; }
+    private int themeBtnY() { return gy() + 3; }
+    private int themeBtnW() { return 98; }
+    private int themeBtnH() { return 14; }
+
+    private void drawThemeSelector(GuiGraphics g, int mx, int my)
+    {
+        int bx = themeBtnX(), by = themeBtnY(), bw = themeBtnW(), bh = themeBtnH();
+        boolean hov = mx >= bx && mx <= bx + bw && my >= by && my <= by + bh;
+        boolean ae = wTheme == ColonyLinkGuiConfig.Theme.AE;
+
+        // Fond : teinte AE (lavande) quand AE actif, gris neutre sinon
+        int bg = ae ? (hov ? 0xFF878FA5 : 0xFF696D88) : (hov ? 0xFF505050 : 0xFF404040);
+        g.fill(bx, by, bx + bw, by + bh, bg);
+        g.fill(bx, by, bx + bw, by + 1, ae ? 0xFFF2F2F2 : 0xFF888888);
+        g.fill(bx, by, bx + 1, by + bh, ae ? 0xFFF2F2F2 : 0xFF888888);
+        g.fill(bx, by + bh - 1, bx + bw, by + bh, ae ? 0xFF413F54 : 0xFF222222);
+        g.fill(bx + bw - 1, by, bx + bw, by + bh, ae ? 0xFF413F54 : 0xFF222222);
+
+        String name = ae ? Component.translatable("colonylink.cfg.theme_ae").getString()
+                         : Component.translatable("colonylink.cfg.theme_default").getString();
+        String label = Component.translatable("colonylink.cfg.theme", name).getString();
+        g.drawCenteredString(this.font, label, bx + bw / 2, by + 3, ae ? 0xFFEFEFFF : 0xFFDDDDDD);
     }
 
     private void drawTabs(GuiGraphics g, int mx, int my)
@@ -162,11 +196,20 @@ public class ColonyLinkConfigScreen extends Screen
         String[] names = {"§cR", "§aG", "§9B"};
         int[] colors = {0xFF4444, 0x44FF44, 0x4488FF};
 
+        boolean enabled = !colorsLocked();
         for (int i = 0; i < 3; i++)
         {
             int slotY = sy + i * 36;
             drawSlider(g, mx, my, sx, slotY, sliderW(), 0, 255, vals[i],
-                    names[i] + " §f" + vals[i], colors[i], sliderBase + i);
+                    names[i] + " §f" + vals[i], colors[i], sliderBase + i, enabled);
+        }
+
+        // Bandeau de verrouillage en thème AE
+        if (!enabled)
+        {
+            int oy = sy + 3 * 36 + 2;
+            g.drawString(this.font, Component.translatable("colonylink.cfg.locked_ae").getString(), sx, oy, 0xFF9A9FB4, false);
+            g.drawString(this.font, Component.translatable("colonylink.cfg.locked_ae_hint").getString(), sx, oy + 11, 0x888888, false);
         }
     }
 
@@ -174,21 +217,21 @@ public class ColonyLinkConfigScreen extends Screen
     {
         g.drawString(this.font, Component.translatable("colonylink.cfg.section_layout").getString(), sx, sy - 8, 0xCCCCCC, false);
 
-        // Opacity : slot 9
+        // Opacity : slot 9 — toujours actif (géométrique)
         int opPct = Math.round(wOpacity * 100);
         drawSlider(g, mx, my, sx, sy, sliderW(), 10, 100, opPct,
                 Component.translatable("colonylink.cfg.opacity", opPct, (opPct <= 10 ? Component.translatable("colonylink.cfg.opacity_min").getString() : opPct < 30 ? Component.translatable("colonylink.cfg.opacity_verylow").getString() : "")).getString(),
-                0xFFCC44, 9);
+                0xFFCC44, 9, true);
 
-        // Scale : slot 10 (50–150 = 0.5–1.5 stocké ×100)
+        // Scale : slot 10 (50–150 = 0.5–1.5 stocké ×100) — toujours actif
         int scalePct = Math.round(wScale * 100);
         drawSlider(g, mx, my, sx, sy + 36, sliderW(), 50, 150, scalePct,
                 Component.translatable("colonylink.cfg.scale", (scalePct / 100), String.format("%02d", scalePct % 100)).getString(),
-                0xFFCC44, 10);
+                0xFFCC44, 10, true);
 
-        // Border width : slot 11
+        // Border width : slot 11 — verrouillé en AE (le cadre AE a sa propre géométrie)
         drawSlider(g, mx, my, sx, sy + 72, sliderW(), 1, 4, wBorderWidth,
-                Component.translatable("colonylink.cfg.border_width", wBorderWidth).getString(), 0xFFCC44, 11);
+                Component.translatable("colonylink.cfg.border_width", wBorderWidth).getString(), 0xFFCC44, 11, !colorsLocked());
     }
 
     /**
@@ -198,32 +241,39 @@ public class ColonyLinkConfigScreen extends Screen
     private void drawSlider(GuiGraphics g, int mx, int my,
                             int sx, int sy, int sw,
                             int min, int max, int value,
-                            String label, int trackColor, int slotId)
+                            String label, int trackColor, int slotId, boolean enabled)
     {
         int trackY = sy + 16;
         int trackH = 6;
 
-        // Label
-        g.drawString(this.font, label, sx, sy + 2, 0xDDDDDD, false);
+        // Label (grisé si désactivé)
+        g.drawString(this.font, label, sx, sy + 2, enabled ? 0xDDDDDD : 0xFF666666, false);
 
         // Track fond
         g.fill(sx, trackY, sx + sw, trackY + trackH, 0xFF1A1A1A);
         g.fill(sx, trackY, sx + sw, trackY + 1, 0xFF555555);
 
-        // Track rempli
+        // Track rempli (grisé si désactivé)
         int filled = (value - min) * sw / Math.max(1, max - min);
-        g.fill(sx, trackY, sx + filled, trackY + trackH, trackColor & 0xBBFFFFFF | 0x88000000);
-        g.fill(sx, trackY, sx + filled, trackY + trackH, trackColor);
+        if (enabled)
+        {
+            g.fill(sx, trackY, sx + filled, trackY + trackH, trackColor & 0xBBFFFFFF | 0x88000000);
+            g.fill(sx, trackY, sx + filled, trackY + trackH, trackColor);
+        }
+        else
+        {
+            g.fill(sx, trackY, sx + filled, trackY + trackH, 0xFF444444);
+        }
 
         // Thumb
         int thumbX = sx + filled;
-        boolean hov = mx >= thumbX - 4 && mx <= thumbX + 4
+        boolean hov = enabled && mx >= thumbX - 4 && mx <= thumbX + 4
                 && my >= trackY - 2 && my <= trackY + trackH + 2;
-        g.fill(thumbX - 3, trackY - 2, thumbX + 3, trackY + trackH + 2,
-                hov || draggingSlider == slotId ? 0xFFFFFFFF : 0xFFCCCCCC);
+        int thumbCol = !enabled ? 0xFF555555 : (hov || draggingSlider == slotId ? 0xFFFFFFFF : 0xFFCCCCCC);
+        g.fill(thumbX - 3, trackY - 2, thumbX + 3, trackY + trackH + 2, thumbCol);
 
-        // Si en drag sur ce slot, update la valeur
-        if (draggingSlider == slotId)
+        // Si en drag sur ce slot (et actif), update la valeur
+        if (enabled && draggingSlider == slotId)
         {
             int newVal = min + (mx - sx) * (max - min) / sw;
             newVal = Math.max(min, Math.min(max, newVal));
@@ -262,12 +312,15 @@ public class ColonyLinkConfigScreen extends Screen
         // Label
         g.drawString(this.font, Component.translatable("colonylink.cfg.preview").getString(), px, py - 10, 0x888888, false);
 
-        // Calcul couleurs avec opacité de travail
-        int bgC     = applyOpacity(wBgColor, wOpacity);
-        int titleC  = applyOpacity(wTitleColor, wOpacity);
-        int borderC = applyOpacity(wBorderColor, wOpacity);
-        int shadowC = darken(borderC, 0.5f);
-        int bw      = wBorderWidth;
+        // Calcul couleurs avec opacité de travail — en AE, aperçu de la palette
+        boolean ae = wTheme == ColonyLinkGuiConfig.Theme.AE;
+        int srcBg     = ae ? 0xFFADB0C4 : wBgColor;
+        int srcTitle  = ae ? 0xFF878FA5 : wTitleColor;
+        int bgC     = applyOpacity(srcBg, wOpacity);
+        int titleC  = applyOpacity(srcTitle, wOpacity);
+        int borderC = applyOpacity(ae ? 0xFFF2F2F2 : wBorderColor, wOpacity);
+        int shadowC = ae ? applyOpacity(0xFF413F54, wOpacity) : darken(borderC, 0.5f);
+        int bw      = ae ? 2 : wBorderWidth;
 
         // Fond
         g.fill(px + bw, py + bw, px + pw - bw, py + ph - bw, bgC);
@@ -330,6 +383,17 @@ public class ColonyLinkConfigScreen extends Screen
     public boolean mouseClicked(double mx, double my, int btn)
     {
         int x = gx(), y = gy();
+
+        // Sélecteur de thème (toujours actif)
+        {
+            int bx = themeBtnX(), by = themeBtnY(), bw = themeBtnW(), bh = themeBtnH();
+            if (mx >= bx && mx <= bx + bw && my >= by && my <= by + bh)
+            {
+                wTheme = (wTheme == ColonyLinkGuiConfig.Theme.AE)
+                        ? ColonyLinkGuiConfig.Theme.DEFAULT : ColonyLinkGuiConfig.Theme.AE;
+                return true;
+            }
+        }
 
         // Tabs
         int tw = (W - 20) / TABS.length - 2, th = 16, sp = 2, tx0 = x + 10, ty = y + 22;
@@ -405,6 +469,8 @@ public class ColonyLinkConfigScreen extends Screen
         for (int[] slot : slots)
         {
             int slotId = slot[0], trackY = slot[1];
+            // Slots verrouillés en AE (couleurs 0-8 + épaisseur 11) : non cliquables
+            if (colorsLocked() && (slotId <= 8 || slotId == 11)) continue;
             if (mx >= sx && mx <= sx + sw && my >= trackY - 2 && my <= trackY + trackH + 2)
                 return slotId;
         }
@@ -442,6 +508,7 @@ public class ColonyLinkConfigScreen extends Screen
         cfg.borderWidth = wBorderWidth;
         cfg.opacity     = wOpacity;
         cfg.scale       = wScale;
+        cfg.theme       = wTheme;
         cfg.clamp();
         cfg.save();
     }
