@@ -144,19 +144,19 @@ public class ColonyLinkGuiConfig
     private static final int AE_BORDER_LIGHT  = 0xFFF2F2F2; // PAL_BG[3]
     private static final int AE_BORDER_DARK   = 0xFF413F54; // PAL_BG[4] — signature AE
     private static final int AE_TITLE_TEXT    = 0xFF2A2838; // eye-tune (sombre sur lavande)
-    private static final int AE_WELL_BG       = 0xFF2B2A38; // eye-tune (puits sombre AE)
-    private static final int AE_WELL_LIGHT    = 0xFFADB0C4; // PAL_BG[0]
-    private static final int AE_WELL_DARK     = 0xFF413F54; // PAL_BG[4]
-    private static final int AE_ROW_A         = 0xFF5A5F74; // eye-tune
-    private static final int AE_ROW_B         = 0xFF525668; // eye-tune
+    private static final int AE_WELL_BG       = 0xFFDDDEE3; // light well, slightly below the body (marks the recess)
+    private static final int AE_WELL_LIGHT    = 0xFFF2F2F2; // PAL_BG[3] — subtle light bevel on the light body
+    private static final int AE_WELL_DARK     = 0xFF878FA5; // PAL_BG[6] — subtle dark bevel on the light body
+    private static final int AE_ROW_A         = 0xFFE8E9ED; // light row (near the body), subtle zebra
+    private static final int AE_ROW_B         = 0xFFDDDEE3; // light row, slightly marked (= well tint)
     private static final int AE_SCROLL_TRACK  = 0xFF413F54; // PAL_BG[4]
     private static final int AE_SCROLL_THUMB  = 0xFFADB0C4; // PAL_BG[0]
     private static final int AE_SEPARATOR     = 0xFF696D88; // PAL_BG[5]
     private static final int AE_HANDLE        = 0xFF696D88; // PAL_BG[5]
     private static final int AE_HANDLE_HI     = 0xFF9A9FB4; // PAL_BG[2]
-    private static final int AE_REQ_BG        = 0xFF413F54; // PAL_BG[4]
-    private static final int AE_REQ_LIGHT     = 0xFF878FA5; // PAL_BG[6]
-    private static final int AE_REQ_DARK      = 0xFF2A2838; // eye-tune
+    private static final int AE_REQ_BG        = 0xFFDDDEE3; // light request well (matches AE_WELL_BG)
+    private static final int AE_REQ_LIGHT     = 0xFFF2F2F2; // PAL_BG[3] — subtle light bevel on the light body
+    private static final int AE_REQ_DARK      = 0xFF878FA5; // PAL_BG[6] — subtle dark bevel on the light body
     private static final int AE_BTN_LIGHT     = 0xFFF2F2F2; // PAL_BG[3]
     private static final int AE_BTN_DARK      = 0xFF413F54; // PAL_BG[4]
     private static final int AE_NEUTRAL_BG    = 0xFF696D88; // PAL_BG[5]
@@ -207,6 +207,23 @@ public class ColonyLinkGuiConfig
     private static final int DEF_TAB_INACT_DARK  = 0xFF222222;
     private static final int DEF_ICON_NEUTRAL    = 0xFFE0E0E0;
     private static final int DEF_ICON_DIM        = 0xFF888888;
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // AE SEMANTIC TINTS — status/label colors calibrated for the AE light body.
+    // Named by MEANING (not usage) so they can be reused for colored button labels
+    // (layer 4). These REPLACE the bright, dark-background-calibrated colors ONLY in
+    // theme AE: the vivid greens/reds/yellows are unreadable on the light AE terminal
+    // body, so each maps to a darker, still-recognizable tint (green stays green…).
+    // In theme DEFAULT nothing uses these — the original bright colors are kept.
+    private static final int AE_SEM_GREEN  = 0xFF0F7A26; // forest green, readable on light (Working, Craft, Linked)
+    private static final int AE_SEM_RED    = 0xFFC01818; // dark red (Sick, Raided, Unlink, Unlinked)
+    private static final int AE_SEM_BLUE   = 0xFF1E5AC8; // deep clear blue (Sleeping, accented info)
+    private static final int AE_SEM_AMBER  = 0xFFB8860B; // dark amber, replaces unreadable yellow (Idle, No home)
+    private static final int AE_SEM_ORANGE = 0xFFC85000; // dark orange (Hungry)
+    private static final int AE_SEM_SLATE  = 0xFF4A6A99; // dark blue-grey (Bad weather)
+    private static final int AE_SEM_GRAY   = 0xFF555555; // dark grey (Mourning, null, disabled)
+    private static final int AE_BODY_TEXT  = 0xFF413F54; // normal text on the AE light body (= AE2 palette DEFAULT_TEXT)
+    private static final int AE_MUTED_TEXT = 0xFF878FA5; // secondary / muted text (= AE2 palette MUTED)
 
     private boolean ae() { return theme == Theme.AE; }
 
@@ -329,6 +346,21 @@ public class ColonyLinkGuiConfig
     /** Icônes neutres (engrenage/bonhomme/config). {@code dim} → variante atténuée. */
     public int iconNeutral(boolean dim)
     { return dim ? (ae() ? AE_ICON_DIM : DEF_ICON_DIM) : (ae() ? AE_ICON_NEUTRAL : DEF_ICON_NEUTRAL); }
+
+    // ── AE semantic text tints (raw AE constants; callers guard with isAe() and
+    //    supply the DEFAULT-theme color themselves, so the DEFAULT rendering is
+    //    untouched). bodyText() is fully theme-aware (its DEFAULT is always white).
+    public int semGreen()  { return AE_SEM_GREEN; }
+    public int semRed()    { return AE_SEM_RED; }
+    public int semBlue()   { return AE_SEM_BLUE; }
+    public int semAmber()  { return AE_SEM_AMBER; }
+    public int semOrange() { return AE_SEM_ORANGE; }
+    public int semSlate()  { return AE_SEM_SLATE; }
+    public int semGray()   { return AE_SEM_GRAY; }
+    /** Normal body text: dark on the AE light body, white in DEFAULT. */
+    public int bodyText()  { return ae() ? AE_BODY_TEXT : 0xFFFFFFFF; }
+    /** Muted/secondary text tint for the AE light body (raw; guard with isAe()). */
+    public int mutedText() { return AE_MUTED_TEXT; }
 
     /** Éclaircit une couleur ARGB par un facteur (helper local, cf. ColonyLinkScreen). */
     private static int lighten(int argb, float f)

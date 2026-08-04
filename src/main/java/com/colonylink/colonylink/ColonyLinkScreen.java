@@ -53,6 +53,19 @@ public class ColonyLinkScreen extends Screen
     private static final int AE_BG_TILE   = 248;  // source edge/center band = 256 - 2*4
     private boolean aeBackgroundPresent = false;  // probed once in init(), not per frame
 
+    // ── AE theme — button + toggle sprites (layer 4) ──────────────────────────
+    // Buttons: AE2's nine-slice button atlas sprites (button.png 200x20, 3px border),
+    // blitted via g.blitSprite (honours the .mcmeta nine-slice) → any width/height
+    // stretches cleanly. Toggle halves: the tab sprites inside states.png, blitted
+    // (stretched) via our own tinted blit. AE2 assets (CC BY-NC-SA) are referenced by
+    // ResourceLocation at runtime only, never copied. Presence probed once at init()
+    // on the underlying PNG files (a clean proxy for the atlas sprites).
+    private static final ResourceLocation AE_BTN_NORMAL   = ResourceLocation.fromNamespaceAndPath("ae2", "button");
+    private static final ResourceLocation AE_BTN_HOVER    = ResourceLocation.fromNamespaceAndPath("ae2", "button_highlighted");
+    private static final ResourceLocation AE_BTN_DISABLED = ResourceLocation.fromNamespaceAndPath("ae2", "button_disabled");
+    private static final ResourceLocation AE_BTN_PROBE    = ResourceLocation.fromNamespaceAndPath("ae2", "textures/gui/sprites/button.png");
+    private boolean aeButtonPresent = false;  // probed once in init(), not per frame
+
     // ── #12 : index spécial de la tab Citizens ───────────────────────────────
     private static final int CITIZENS_TAB_INDEX = Integer.MAX_VALUE;
 
@@ -492,6 +505,9 @@ public class ColonyLinkScreen extends Screen
         // Silent procedural fallback (drawAeFrame) if the asset path is absent.
         this.aeBackgroundPresent = this.minecraft != null
                 && this.minecraft.getResourceManager().getResource(AE_BACKGROUND).isPresent();
+        // Layer 4: probe the button-sprite PNG once (proxy for the atlas sprites).
+        this.aeButtonPresent = this.minecraft != null
+                && this.minecraft.getResourceManager().getResource(AE_BTN_PROBE).isPresent();
     }
 
     /**
@@ -737,23 +753,29 @@ public class ColonyLinkScreen extends Screen
 
     private int getWorkerStatusColor()
     {
-        if (workerStatus == null) return 0x888888;
-        if (workerStatus.equals("Working"))                                    return 0x00FF00;
-        if (workerStatus.equals("Idle"))                                       return 0xFFFF00;
-        if (workerStatus.equals("Hungry"))                                     return 0xFFAA00;
-        if (workerStatus.equals("Sleeping"))                                   return 0x4488FF;
-        if (workerStatus.equals("Bad weather"))                                return 0x88AACC;
-        if (workerStatus.equals("Sick"))                                       return 0xFF4444;
-        if (workerStatus.equals("Mourning"))                                   return 0x888888;
-        if (workerStatus.equals("Raided!"))                                    return 0xFF0000;
-        if (workerStatus.equals("No home"))                                    return 0xFFCC44;
+        // Theme-aware: in AE the status colors map to the light-body semantic tints
+        // (green stays green, etc.); in DEFAULT the original bright colors are kept
+        // unchanged. The vivid dark-background colors are unreadable on the AE body.
+        ColonyLinkGuiConfig c = ColonyLinkGuiConfig.get();
+        boolean ae = c.isAe();
+        if (workerStatus == null) return ae ? c.semGray() : 0x888888;
+        if (workerStatus.equals("Working"))                                    return ae ? c.semGreen()  : 0x00FF00;
+        if (workerStatus.equals("Idle"))                                       return ae ? c.semAmber()  : 0xFFFF00;
+        if (workerStatus.equals("Hungry"))                                     return ae ? c.semOrange() : 0xFFAA00;
+        if (workerStatus.equals("Sleeping"))                                   return ae ? c.semBlue()   : 0x4488FF;
+        if (workerStatus.equals("Bad weather"))                                return ae ? c.semSlate()  : 0x88AACC;
+        if (workerStatus.equals("Sick"))                                       return ae ? c.semRed()    : 0xFF4444;
+        if (workerStatus.equals("Mourning"))                                   return ae ? c.semGray()   : 0x888888;
+        if (workerStatus.equals("Raided!"))                                    return ae ? c.semRed()    : 0xFF0000;
+        if (workerStatus.equals("No home"))                                    return ae ? c.semAmber()  : 0xFFCC44;
         // Fallback pour statuts traduits inconnus
-        if (workerStatus.toLowerCase().contains("work"))                       return 0x00FF00;
-        if (workerStatus.toLowerCase().contains("sleep"))                      return 0x4488FF;
-        if (workerStatus.toLowerCase().contains("eat") || workerStatus.toLowerCase().contains("food")) return 0xFFAA00;
-        if (workerStatus.toLowerCase().contains("sick"))                       return 0xFF4444;
-        if (workerStatus.toLowerCase().contains("idle"))                       return 0xFFFF00;
-        return 0xCCCCCC;
+        String low = workerStatus.toLowerCase();
+        if (low.contains("work"))                                              return ae ? c.semGreen()  : 0x00FF00;
+        if (low.contains("sleep"))                                             return ae ? c.semBlue()   : 0x4488FF;
+        if (low.contains("eat") || low.contains("food"))                       return ae ? c.semOrange() : 0xFFAA00;
+        if (low.contains("sick"))                                              return ae ? c.semRed()    : 0xFF4444;
+        if (low.contains("idle"))                                              return ae ? c.semAmber()  : 0xFFFF00;
+        return ae ? c.semGray() : 0xCCCCCC;
     }
 
     /** Traduit l'identifiant de statut anglais (cote wire) vers la langue du client a l'affichage. */
@@ -813,8 +835,21 @@ public class ColonyLinkScreen extends Screen
             }
             else if (hasUnread)
             {
-                // #6 : tab inactive avec requêtes non lues → orange (SÉMANTIQUE : notification)
-                bg = 0xFF7A4A1A; bl = 0xFFCC8833; bd = 0xFF3A2008;
+                if (_tabCfg.isAe())
+                {
+                    // AE: unread notification accent in blue (semBlue, standing in for
+                    // AE2's focus-blue — our tabs are procedural, not the sprite) instead
+                    // of amber. Colour only — the unread trigger, hover and geometry are
+                    // unchanged; the bevels are lightened/darkened from the same blue.
+                    bg = _tabCfg.semBlue();
+                    bl = lighten(_tabCfg.semBlue(), 1.5f);
+                    bd = darken(_tabCfg.semBlue(), 0.45f);
+                }
+                else
+                {
+                    // #6 : tab inactive avec requêtes non lues → orange (SÉMANTIQUE : notification)
+                    bg = 0xFF7A4A1A; bl = 0xFFCC8833; bd = 0xFF3A2008;
+                }
             }
             else
             {
@@ -956,20 +991,30 @@ public class ColonyLinkScreen extends Screen
         int bw = CFG_BTN_W, bh = CFG_BTN_H;
         boolean hov = mx >= bx && mx <= bx + bw && my >= by && my <= by + bh;
 
-        // Fond — légèrement différent de la barre de titre pour être visible
+        // Fond — AE + sprite présent : fond nine-slice AE2 sous l'icône ; sinon rendu
+        // actuel (face neutre + biseaux). L'icône est dessinée par-dessus dans les deux cas.
         // Control category: face, bevels and icon follow the floored control alpha.
-        int bg = _c.applyControl(ae ? _c.neutralBtnBg(hov) : (hov ? 0xFF505070 : 0xFF404060));
-        g.fill(bx, by, bx + bw, by + bh, bg);
-        // Bordure fine cohérente avec le reste du GUI
-        int _bl = _c.applyControl(ae ? _c.btnBevelLight() : 0xFF8888AA);
-        int _bd = _c.applyControl(ae ? _c.btnBevelDark()  : 0xFF222244);
-        g.fill(bx, by, bx + bw, by + 1, _bl);
-        g.fill(bx, by, bx + 1, by + bh, _bl);
-        g.fill(bx, by + bh - 1, bx + bw, by + bh, _bd);
-        g.fill(bx + bw - 1, by, bx + bw, by + bh, _bd);
+        if (ae && aeButtonPresent)
+        {
+            drawAeButtonBg(g, bx, by, bw, bh, hov ? AeBtnVis.HOVER : AeBtnVis.NORMAL, _c.alphaControl());
+        }
+        else
+        {
+            int bg = _c.applyControl(ae ? _c.neutralBtnBg(hov) : (hov ? 0xFF505070 : 0xFF404060));
+            g.fill(bx, by, bx + bw, by + bh, bg);
+            // Bordure fine cohérente avec le reste du GUI
+            int _bl = _c.applyControl(ae ? _c.btnBevelLight() : 0xFF8888AA);
+            int _bd = _c.applyControl(ae ? _c.btnBevelDark()  : 0xFF222244);
+            g.fill(bx, by, bx + bw, by + 1, _bl);
+            g.fill(bx, by, bx + 1, by + bh, _bl);
+            g.fill(bx, by + bh - 1, bx + bw, by + bh, _bd);
+            g.fill(bx + bw - 1, by, bx + bw, by + bh, _bd);
+        }
 
         // Icône "settings" : 3 lignes horizontales avec un carré (≠ engrenage des tabs)
-        int ic = _c.applyControl(ae ? _c.iconNeutral(!hov) : (hov ? 0xFFDDDDFF : 0xFF9999CC));
+        // AE: dark glyph (AE_BODY_TEXT) so it reads on the light nine-slice button bg;
+        // DEFAULT colour unchanged. Icon glyph only — the button background is untouched.
+        int ic = _c.applyControl(ae ? _c.bodyText() : (hov ? 0xFFDDDDFF : 0xFF9999CC));
         int ox = bx + 3, oy = by + 3;
         // Ligne 1 : ─ ■ ─
         g.fill(ox,     oy,     ox + 4, oy + 1, ic);
@@ -1022,7 +1067,7 @@ public class ColonyLinkScreen extends Screen
 
         if (!isOutOfPower())
         {
-            g.drawString(this.font, Component.translatable("colonylink.screen.info.builder", builderName).getString(),   x + 10, y + 26, 0xFFFFFF, false);
+            g.drawString(this.font, Component.translatable("colonylink.screen.info.builder", builderName).getString(),   x + 10, y + 26, _c.bodyText(), false);
 
             // Bouton Locate — à droite sur la ligne Builder, masqué sur l'onglet Citizens
             if (activeTabIndex != CITIZENS_TAB_INDEX)
@@ -1032,12 +1077,13 @@ public class ColonyLinkScreen extends Screen
                 boolean lHov = mx >= lbX && mx <= lbX + LOCATE_BTN_W
                         && my >= lbY && my <= lbY + LOCATE_BTN_H;
                 drawButton(g, lbX, lbY, LOCATE_BTN_W, LOCATE_BTN_H,
-                        lHov ? 0xFF1A5C2E : 0xFF0F3A1E, Component.translatable("colonylink.screen.btn.locate").getString(), 0xFF44DD88);
+                        lHov ? 0xFF1A5C2E : 0xFF0F3A1E, Component.translatable("colonylink.screen.btn.locate").getString(), 0xFF44DD88,
+                        lHov, true, _c.semGreen());
             }
-            g.drawString(this.font, Component.translatable("colonylink.screen.info.building", buildingName).getString(), x + 10, y + 36, 0xFFFFFF, false);
+            g.drawString(this.font, Component.translatable("colonylink.screen.info.building", buildingName).getString(), x + 10, y + 36, _c.bodyText(), false);
 
             String sl = Component.translatable("colonylink.screen.info.status").getString();
-            g.drawString(this.font, sl, x + 10, y + 46, 0xFFFFFF, false);
+            g.drawString(this.font, sl, x + 10, y + 46, _c.bodyText(), false);
             g.drawString(this.font, translateStatus(workerStatus),
                     x + 10 + this.font.width(sl), y + 46, getWorkerStatusColor(), false);
 
@@ -1048,17 +1094,18 @@ public class ColonyLinkScreen extends Screen
                 String reasonDisplay = workerIdleReason.length() > 40
                         ? workerIdleReason.substring(0, 38) + "…"
                         : workerIdleReason;
-                g.drawString(this.font, reasonDisplay, x + 10, y + 56, 0xFFFFFF, false);
+                g.drawString(this.font, reasonDisplay, x + 10, y + 56, _c.bodyText(), false);
             }
 
             int cpuY = workerIdleReason.isEmpty() ? 58 : 66;
-            g.drawString(this.font, Component.translatable("colonylink.screen.info.cpus", availableCpus).getString(), x + 10, y + cpuY, 0xFFFFFF, false);
+            g.drawString(this.font, Component.translatable("colonylink.screen.info.cpus", availableCpus).getString(), x + 10, y + cpuY, _c.bodyText(), false);
 
+            boolean _ae = _c.isAe();
             int rColor = switch (redirectorState) {
-                case "LINKED"     -> 0x00FF00;
-                case "STANDBY"    -> 0xFF8800;
-                case "NOT_LINKED" -> 0xAAAAAA;
-                default           -> 0x888888;
+                case "LINKED"     -> _ae ? _c.semGreen() : 0x00FF00;
+                case "STANDBY"    -> _ae ? _c.semAmber() : 0xFF8800;
+                case "NOT_LINKED" -> _ae ? _c.semGray()  : 0xAAAAAA;
+                default           -> _ae ? _c.semGray()  : 0x888888;
             };
             String rDisplay = switch (redirectorState) {
                 case "LINKED"     -> Component.translatable("colonylink.screen.redir.linked").getString();
@@ -1067,16 +1114,17 @@ public class ColonyLinkScreen extends Screen
                 default           -> redirectorState;
             };
             String rl = Component.translatable("colonylink.screen.info.redirector").getString();
-            g.drawString(this.font, rl, x + 100, y + cpuY, 0xFFFFFF, false);
+            g.drawString(this.font, rl, x + 100, y + cpuY, _c.bodyText(), false);
             g.drawString(this.font, rDisplay, x + 100 + this.font.width(rl), y + cpuY, rColor, false);
         }
         else
         {
             // Out of Power
             int cx = x + GUI_WIDTH / 2;
-            g.drawCenteredString(this.font, Component.translatable("colonylink.screen.power.title").getString(),          cx, y + 30, 0xFF4444);
-            g.drawCenteredString(this.font, Component.translatable("colonylink.screen.power.charge").getString(), cx, y + 42, 0xAAAAAA);
-            g.drawCenteredString(this.font, Component.translatable("colonylink.screen.power.mods").getString(),  cx, y + 52, 0xAAAAAA);
+            boolean _aeP = _c.isAe();
+            g.drawCenteredString(this.font, Component.translatable("colonylink.screen.power.title").getString(),          cx, y + 30, _aeP ? _c.semRed() : 0xFF4444);
+            g.drawCenteredString(this.font, Component.translatable("colonylink.screen.power.charge").getString(), cx, y + 42, _aeP ? _c.mutedText() : 0xAAAAAA);
+            g.drawCenteredString(this.font, Component.translatable("colonylink.screen.power.mods").getString(),  cx, y + 52, _aeP ? _c.mutedText() : 0xAAAAAA);
         }
     }
 
@@ -1092,7 +1140,7 @@ public class ColonyLinkScreen extends Screen
         g.fill(x + 6, pY + pH - 1, x + GUI_WIDTH - 6, pY + pH, _cr.applyOpacity(_cr.reqDark()));
         g.fill(x + GUI_WIDTH - 7, pY, x + GUI_WIDTH - 6, pY + pH, _cr.applyOpacity(_cr.reqDark()));
         g.fill(x + 7, pY + 11, x + GUI_WIDTH - 7, pY + 12, _cr.applyOpacity(_cr.isAe() ? 0xFF878FA5 : 0xFF3A3A6A));
-        g.drawString(this.font, Component.translatable("colonylink.screen.req.title").getString(), x + 10, pY + 3, 0xAAAAFF, false);
+        g.drawString(this.font, Component.translatable("colonylink.screen.req.title").getString(), x + 10, pY + 3, _cr.isAe() ? _cr.semBlue() : 0xAAAAFF, false);
 
         boolean hasReq = builderRequest != null && !builderRequest.stack().isEmpty()
                 && builderRequest.count() > 0;
@@ -1100,24 +1148,31 @@ public class ColonyLinkScreen extends Screen
         if (!hasReq || isOutOfPower())
         {
             g.drawString(this.font, isOutOfPower() ? Component.translatable("colonylink.screen.req.no_power").getString() : Component.translatable("colonylink.screen.req.none").getString(),
-                    x + 10, pY + 14, 0x666666, false);
+                    x + 10, pY + 14, _cr.isAe() ? _cr.mutedText() : 0x666666, false);
             return;
         }
 
         g.renderItem(builderRequest.stack(), x + 10, pY + 12);
         g.drawString(this.font, builderRequest.count() + "x "
-                + builderRequest.stack().getDisplayName().getString(), x + 28, pY + 17, 0xFFFFFF, false);
+                + builderRequest.stack().getDisplayName().getString(), x + 28, pY + 17, _cr.bodyText(), false);
 
         int rbX = getReqBtnX(), rbY = getReqBtnY(), rbW = getReqBtnW(), rbH = getReqBtnH();
         ResourceStatus rs = displayStatus(builderRequest.status(), builderRequest.stack());
         boolean hov = mx >= rbX && mx <= rbX + rbW && my >= rbY && my <= rbY + rbH;
-        int bg = _cr.applyControl(hov && isButtonClickable(rs) ? getButtonHoverColor(rs) : getButtonColor(rs));
-        g.fill(rbX, rbY, rbX + rbW, rbY + rbH, bg);
-        g.fill(rbX, rbY, rbX + rbW, rbY + 1, _cr.applyControl(_cr.btnBevelLight()));
-        g.fill(rbX, rbY, rbX + 1, rbY + rbH, _cr.applyControl(_cr.btnBevelLight()));
-        g.fill(rbX, rbY + rbH - 1, rbX + rbW, rbY + rbH, _cr.applyControl(_cr.btnBevelDark()));
-        g.fill(rbX + rbW - 1, rbY, rbX + rbW, rbY + rbH, _cr.applyControl(_cr.btnBevelDark()));
-        g.drawCenteredString(this.font, getRequestButtonText(rs), rbX + rbW / 2, rbY + 4, getButtonTextColor(rs));
+        if (_cr.isAe() && aeButtonPresent)
+        {
+            drawAeButton(g, rbX, rbY, rbW, rbH, hov, isButtonClickable(rs), getRequestButtonText(rs), aeStatusTextColor(rs));
+        }
+        else
+        {
+            int bg = _cr.applyControl(hov && isButtonClickable(rs) ? getButtonHoverColor(rs) : getButtonColor(rs));
+            g.fill(rbX, rbY, rbX + rbW, rbY + rbH, bg);
+            g.fill(rbX, rbY, rbX + rbW, rbY + 1, _cr.applyControl(_cr.btnBevelLight()));
+            g.fill(rbX, rbY, rbX + 1, rbY + rbH, _cr.applyControl(_cr.btnBevelLight()));
+            g.fill(rbX, rbY + rbH - 1, rbX + rbW, rbY + rbH, _cr.applyControl(_cr.btnBevelDark()));
+            g.fill(rbX + rbW - 1, rbY, rbX + rbW, rbY + rbH, _cr.applyControl(_cr.btnBevelDark()));
+            g.drawCenteredString(this.font, getRequestButtonText(rs), rbX + rbW / 2, rbY + 4, getButtonTextColor(rs));
+        }
 
         // Tooltip survol bouton ou ligne item — affiche les infos de substitution si présentes
         boolean lineHov = mx >= x + 10 && mx <= rbX - 2 && my >= pY + 10 && my <= pY + 30;
@@ -1142,13 +1197,22 @@ public class ColonyLinkScreen extends Screen
         int cbX = getCancelBtnX(), cbY = getCancelBtnY(), cbW = getCancelBtnW(), cbH = getCancelBtnH();
         boolean cCancellable = builderRequest.cancellable();
         boolean cHov = cCancellable && mx >= cbX && mx <= cbX + cbW && my >= cbY && my <= cbY + cbH;
-        int cFill = cCancellable ? (cHov ? 0xFFCC4444 : 0xFF992222) : 0xFF555555;
-        g.fill(cbX, cbY, cbX + cbW, cbY + cbH, _cr.applyControl(cFill));
-        g.fill(cbX, cbY, cbX + cbW, cbY + 1, _cr.btnBevelLight());
-        g.fill(cbX, cbY, cbX + 1, cbY + cbH, _cr.btnBevelLight());
-        g.fill(cbX, cbY + cbH - 1, cbX + cbW, cbY + cbH, _cr.btnBevelDark());
-        g.fill(cbX + cbW - 1, cbY, cbX + cbW, cbY + cbH, _cr.btnBevelDark());
-        g.drawCenteredString(this.font, "×", cbX + cbW / 2, cbY + 1, cCancellable ? 0xFFFFFFFF : 0xFF999999);
+        if (_cr.isAe() && aeButtonPresent)
+        {
+            drawAeButtonBg(g, cbX, cbY, cbW, cbH,
+                    cCancellable ? aeBtnVis(true, cHov) : AeBtnVis.DISABLED, _cr.alphaControl());
+            drawCenteredNoShadow(g, "×", cbX + cbW / 2, cbY + 1, cCancellable ? _cr.semRed() : _cr.bodyText());
+        }
+        else
+        {
+            int cFill = cCancellable ? (cHov ? 0xFFCC4444 : 0xFF992222) : 0xFF555555;
+            g.fill(cbX, cbY, cbX + cbW, cbY + cbH, _cr.applyControl(cFill));
+            g.fill(cbX, cbY, cbX + cbW, cbY + 1, _cr.btnBevelLight());
+            g.fill(cbX, cbY, cbX + 1, cbY + cbH, _cr.btnBevelLight());
+            g.fill(cbX, cbY + cbH - 1, cbX + cbW, cbY + cbH, _cr.btnBevelDark());
+            g.fill(cbX + cbW - 1, cbY, cbX + cbW, cbY + cbH, _cr.btnBevelDark());
+            g.drawCenteredString(this.font, "×", cbX + cbW / 2, cbY + 1, cCancellable ? 0xFFFFFFFF : 0xFF999999);
+        }
         if (cHov)
         {
             pendingTooltipOut.clear();
@@ -1156,12 +1220,88 @@ public class ColonyLinkScreen extends Screen
         }
     }
 
-    private void drawButton(GuiGraphics g, int bx, int by, int bw, int bh,
-                            int bg, String label, int tc)
+    // ── AE button rendering (layer 4) ─────────────────────────────────────────
+    private enum AeBtnVis { NORMAL, HOVER, DISABLED }
+
+    private static AeBtnVis aeBtnVis(boolean enabled, boolean hovered)
+    { return !enabled ? AeBtnVis.DISABLED : (hovered ? AeBtnVis.HOVER : AeBtnVis.NORMAL); }
+
+    /**
+     * AE button background — neutral nine-slice sprite (button / _highlighted /
+     * _disabled) stretched to any w/h via g.blitSprite (honours the .mcmeta nine-slice).
+     * Honours the control alpha; blend + tint are reset on exit so nothing later is
+     * tinted. Background only — the caller draws the label on top.
+     */
+    private void drawAeButtonBg(GuiGraphics g, int x, int y, int w, int h, AeBtnVis vis, float alpha)
     {
-        // La face (bg) porte le sens (rouge/orange/…) et reste telle quelle ;
-        // seul le bevel (chrome) suit le thème.
+        ResourceLocation sprite = switch (vis) {
+            case HOVER    -> AE_BTN_HOVER;
+            case DISABLED -> AE_BTN_DISABLED;
+            case NORMAL   -> AE_BTN_NORMAL;
+        };
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        g.setColor(1f, 1f, 1f, alpha);
+        g.blitSprite(sprite, x, y, w, h);
+        g.setColor(1f, 1f, 1f, 1f);
+        RenderSystem.disableBlend();
+    }
+
+    /**
+     * AE full button: neutral nine-slice background + centered label. The label keeps
+     * the semantic sense color (AE_SEM_*); a disabled button uses AE_BODY_TEXT — the
+     * same dark text AE2Button itself pairs with button_disabled, so it stays legible.
+     * Layer-4 control → alphaControl() (floored); the label stays opaque.
+     * Label y = (h-8)/2 reproduces the legacy by+3 (h=14) / by+4 (h=16) baseline.
+     */
+    /**
+     * Centered label WITHOUT the drop shadow — AE buttons/toggle draw flat labels
+     * (AE2 does the same; the shadow looks wrong on the light body). Reproduces
+     * drawCenteredString's placement exactly: same center x (cx - width/2, same integer
+     * division) and same y baseline, only the shadow flag flips to false. AE only —
+     * DEFAULT keeps drawCenteredString (shadow) untouched.
+     */
+    private void drawCenteredNoShadow(GuiGraphics g, String text, int cx, int y, int color)
+    {
+        g.drawString(this.font, text, cx - this.font.width(text) / 2, y, color, false);
+    }
+
+    private void drawAeButton(GuiGraphics g, int x, int y, int w, int h,
+                              boolean hovered, boolean enabled, String label, int aeLabelColor)
+    {
+        ColonyLinkGuiConfig c = ColonyLinkGuiConfig.get();
+        drawAeButtonBg(g, x, y, w, h, aeBtnVis(enabled, hovered), c.alphaControl());
+        int col = enabled ? aeLabelColor : c.bodyText(); // disabled = AE_BODY_TEXT (matches AE2Button)
+        drawCenteredNoShadow(g, label, x + w / 2, y + (h - 8) / 2, col);
+    }
+
+    /** AE-mode label color for a resource-request status (semantic tints). */
+    private int aeStatusTextColor(ResourceStatus s)
+    {
+        ColonyLinkGuiConfig c = ColonyLinkGuiConfig.get();
+        return switch (s) {
+            case AVAILABLE    -> c.semBlue();
+            case CRAFTABLE    -> c.semGreen();
+            case NO_PATTERN   -> c.semRed();
+            case CRAFTING     -> c.semAmber();
+            case MISSING      -> c.semAmber();
+            case SENT_PENDING -> c.semGray();
+        };
+    }
+
+    private void drawButton(GuiGraphics g, int bx, int by, int bw, int bh,
+                            int bg, String label, int tc,
+                            boolean hovered, boolean enabled, int aeLabel)
+    {
         ColonyLinkGuiConfig _c = ColonyLinkGuiConfig.get();
+        // AE theme + sprite present: neutral nine-slice bg, sense carried by the label.
+        if (_c.isAe() && aeButtonPresent)
+        {
+            drawAeButton(g, bx, by, bw, bh, hovered, enabled, label, aeLabel);
+            return;
+        }
+        // DEFAULT / sprite absent — unchanged: la face (bg) porte le sens ;
+        // seul le bevel (chrome) suit le thème.
         // Control category: face + bevels follow the floored control alpha; label stays opaque.
         g.fill(bx, by, bx + bw, by + bh, _c.applyControl(bg));
         g.fill(bx, by, bx + bw, by + 1, _c.applyControl(_c.btnBevelLight()));
@@ -1177,12 +1317,44 @@ public class ColonyLinkScreen extends Screen
         int sw = 110, sh = 14, sx = getGuiX() + GUI_WIDTH - sw - 8, sy = getWareCheckBtnY();
         // Control category: the whole toggle follows the floored control alpha; labels stay opaque.
         ColonyLinkGuiConfig _cSw = ColonyLinkGuiConfig.get();
+        int half = sw / 2;
+
+        // AE theme: same procedural two-half toggle, recoloured for the light body.
+        // The active half is bright (raised), the inactive half a recessed grey, plus a
+        // semantic accent bar (green WH / blue AE2) so the active side reads at a glance.
+        // Labels dark, no shadow. (The stretched tab-sprite approach was dropped: at
+        // 22x22 → 55x14 it was unreadable.) DEFAULT falls through to the legacy toggle.
+        if (_cSw.isAe())
+        {
+            g.fill(sx, sy, sx + sw, sy + sh, _cSw.applyControl(0xFFDDDEE3));
+            g.fill(sx, sy, sx + sw, sy + 1, _cSw.applyControl(0xFFF2F2F2));
+            g.fill(sx, sy, sx + 1, sy + sh, _cSw.applyControl(0xFFF2F2F2));
+            g.fill(sx, sy + sh - 1, sx + sw, sy + sh, _cSw.applyControl(0xFF878FA5));
+            g.fill(sx + sw - 1, sy, sx + sw, sy + sh, _cSw.applyControl(0xFF878FA5));
+            if (warehousePriority)
+            {
+                g.fill(sx + 1,    sy + 1, sx + half,   sy + sh - 1, _cSw.applyControl(0xFFF2F2F2)); // WH active (raised)
+                g.fill(sx + half, sy + 1, sx + sw - 1, sy + sh - 1, _cSw.applyControl(0xFFC5C7D0)); // AE2 inactive (recessed)
+                g.fill(sx + 3, sy + 3, sx + 9, sy + sh - 3, _cSw.applyControl(_cSw.semGreen()));    // WH accent
+            }
+            else
+            {
+                g.fill(sx + 1,    sy + 1, sx + half,   sy + sh - 1, _cSw.applyControl(0xFFC5C7D0)); // WH inactive (recessed)
+                g.fill(sx + half, sy + 1, sx + sw - 1, sy + sh - 1, _cSw.applyControl(0xFFF2F2F2)); // AE2 active (raised)
+                g.fill(sx + sw - 9, sy + 3, sx + sw - 3, sy + sh - 3, _cSw.applyControl(_cSw.semBlue())); // AE2 accent
+            }
+            g.fill(sx + half, sy + 2, sx + half + 1, sy + sh - 2, _cSw.applyControl(0xFF878FA5)); // divider
+            drawCenteredNoShadow(g, Component.translatable("colonylink.screen.toggle.wh").getString(), sx + half / 2,        sy + 3, _cSw.bodyText());
+            drawCenteredNoShadow(g, "AE2",                                                             sx + half + half / 2, sy + 3, _cSw.bodyText());
+            return;
+        }
+
+        // DEFAULT — legacy toggle, strictly unchanged.
         g.fill(sx, sy, sx + sw, sy + sh, _cSw.applyControl(0xFF2A2A2A));
         g.fill(sx, sy, sx + sw, sy + 1, _cSw.applyControl(0xFF555555));
         g.fill(sx, sy, sx + 1, sy + sh, _cSw.applyControl(0xFF555555));
         g.fill(sx, sy + sh - 1, sx + sw, sy + sh, _cSw.applyControl(0xFF111111));
         g.fill(sx + sw - 1, sy, sx + sw, sy + sh, _cSw.applyControl(0xFF111111));
-        int half = sw / 2;
         if (warehousePriority)
         {
             g.fill(sx + 1, sy + 1, sx + half, sy + sh - 1, _cSw.applyControl(0xFF224422));
@@ -1204,10 +1376,11 @@ public class ColonyLinkScreen extends Screen
         if (!hasWarehouseCard || isOutOfPower()) return;
         int bx = getWareCheckBtnX(), by = getWareCheckBtnY(), bw = getWareCheckBtnW(), bh = getWareCheckBtnH();
         boolean hov = mx >= bx && mx <= bx + bw && my >= by && my <= by + bh;
-        String label; int bg, tc;
+        ColonyLinkGuiConfig _cw = ColonyLinkGuiConfig.get();
+        String label; int bg, tc, aeLabel;
         switch (wareCheckState)
         {
-            case LOADING -> { label = Component.translatable("colonylink.screen.btn.scanning").getString(); bg = 0xFF554400; tc = 0xFFAA44; }
+            case LOADING -> { label = Component.translatable("colonylink.screen.btn.scanning").getString(); bg = 0xFF554400; tc = 0xFFAA44; aeLabel = _cw.semAmber(); }
             case DONE ->
             {
                 boolean exp = System.currentTimeMillis() - warehouseSnapshotReceivedMs > getSnapshotValidityMs();
@@ -1215,17 +1388,24 @@ public class ColonyLinkScreen extends Screen
                 label = exp ? Component.translatable("colonylink.screen.btn.check_warehouse").getString() : Component.translatable("colonylink.screen.btn.warehouse_ok").getString();
                 bg = exp ? (hov ? 0xFF336633 : 0xFF224422) : (hov ? 0xFF447744 : 0xFF335533);
                 tc = exp ? 0x88FF88 : 0x00FF88;
+                aeLabel = _cw.semGreen();
             }
-            default -> { label = Component.translatable("colonylink.screen.btn.check_warehouse").getString(); bg = hov ? 0xFF336633 : 0xFF224422; tc = 0x88FF88; }
+            default -> { label = Component.translatable("colonylink.screen.btn.check_warehouse").getString(); bg = hov ? 0xFF336633 : 0xFF224422; tc = 0x88FF88; aeLabel = _cw.semGreen(); }
         }
-        ColonyLinkGuiConfig _cw = ColonyLinkGuiConfig.get();
         // Control category: face + bevels follow the floored control alpha; label stays opaque.
-        g.fill(bx, by, bx + bw, by + bh, _cw.applyControl(bg));
-        g.fill(bx, by, bx + bw, by + 1, _cw.applyControl(_cw.btnBevelLight()));
-        g.fill(bx, by, bx + 1, by + bh, _cw.applyControl(_cw.btnBevelLight()));
-        g.fill(bx, by + bh - 1, bx + bw, by + bh, _cw.applyControl(_cw.btnBevelDark()));
-        g.fill(bx + bw - 1, by, bx + bw, by + bh, _cw.applyControl(_cw.btnBevelDark()));
-        g.drawCenteredString(this.font, label, bx + bw / 2, by + 3, tc);
+        if (_cw.isAe() && aeButtonPresent)
+        {
+            drawAeButton(g, bx, by, bw, bh, hov, true, label, aeLabel);
+        }
+        else
+        {
+            g.fill(bx, by, bx + bw, by + bh, _cw.applyControl(bg));
+            g.fill(bx, by, bx + bw, by + 1, _cw.applyControl(_cw.btnBevelLight()));
+            g.fill(bx, by, bx + 1, by + bh, _cw.applyControl(_cw.btnBevelLight()));
+            g.fill(bx, by + bh - 1, bx + bw, by + bh, _cw.applyControl(_cw.btnBevelDark()));
+            g.fill(bx + bw - 1, by, bx + bw, by + bh, _cw.applyControl(_cw.btnBevelDark()));
+            g.drawCenteredString(this.font, label, bx + bw / 2, by + 3, tc);
+        }
     }
 
     @Override
@@ -1274,14 +1454,16 @@ public class ColonyLinkScreen extends Screen
      * size; edges tiled 1:1 in {@code AE_BG_TILE}-wide chunks (no scaling, so a
      * non-integer GUI scale magnifies with nearest-neighbour, not blur).
      *
-     * NOTE — this draws the border RING only, NOT the centre: drawing the centre would
-     * repaint the body, which layer 1 must leave untouched (the body stays dark until
-     * layer 2). It is a drop-in replacement for the border-only drawAeFrame.
+     * When {@code withCenter} is true (layer 2) the tiled texture CENTRE is also
+     * painted, filling the inner region with AE2's light terminal body — a drop-in
+     * replacement for the dark {@code g.fill(bg())}, drawn here (before any content)
+     * so the light body sits underneath the panels/text/buttons. When false, only
+     * the border RING is drawn (layer 1), leaving the body untouched.
      *
      * {@code alpha} is the effective opacity (config opacity multiplied over the
      * texture's own alpha). The tint is reset to opaque on every exit path.
      */
-    private static void drawAeNineSlice(GuiGraphics g, int x, int y, int w, int h, float alpha)
+    private static void drawAeNineSlice(GuiGraphics g, int x, int y, int w, int h, float alpha, boolean withCenter)
     {
         // Degenerate: no room for a border ring on both sides — draw nothing.
         if (w < AE_BG_BORDER * 2 || h < AE_BG_BORDER * 2) return;
@@ -1289,6 +1471,21 @@ public class ColonyLinkScreen extends Screen
         final int b = AE_BG_BORDER;
         final int innerW = w - b * 2;
         final int innerH = h - b * 2;
+
+        // Layer 2 — light body: tile the texture centre (src 4,4,248,248) across the
+        // inner region, drawn first so the border ring below stays crisp at the seam.
+        if (withCenter)
+        {
+            for (int cy = 0; cy < innerH; cy += AE_BG_TILE)
+            {
+                int th = Math.min(AE_BG_TILE, innerH - cy);
+                for (int cx = 0; cx < innerW; cx += AE_BG_TILE)
+                {
+                    int tw = Math.min(AE_BG_TILE, innerW - cx);
+                    blitTinted(g, AE_BACKGROUND, x + b + cx, y + b + cy, b, b, tw, th, AE_BG_TEX, AE_BG_TEX, alpha);
+                }
+            }
+        }
 
         // 4 corners, native 4x4.
         blitTinted(g, AE_BACKGROUND, x,         y,         0,           0,           b, b, AE_BG_TEX, AE_BG_TEX, alpha);
@@ -1353,13 +1550,17 @@ public class ColonyLinkScreen extends Screen
         // ── Couleurs depuis ColonyLinkGuiConfig ──────────────────────────────
         ColonyLinkGuiConfig _cfg = ColonyLinkGuiConfig.get();
 
-        // Fond
-        g.fill(x, y, x + GUI_WIDTH, y + GUI_HEIGHT, _cfg.bg());
+        // Fond — en AE + texture, le corps clair vient du centre tuilé (layer 2),
+        // dessiné avec le cadre dans drawAeNineSlice ; mêmes x/y/w/h que le fill.
+        // Sinon : fill (sombre config en DEFAULT, ou repli AE procédural drawAeFrame).
+        boolean _aeTex = _cfg.isAe() && aeBackgroundPresent;
+        if (!_aeTex)
+            g.fill(x, y, x + GUI_WIDTH, y + GUI_HEIGHT, _cfg.bg());
 
-        // Bordures : en mode AE, cadre AE2 blitté (texture presente) ; sinon repli
-        // procedural drawAeFrame ; mode DEFAULT = bordures config. Memes x/y/w/h.
-        if (_cfg.isAe() && aeBackgroundPresent)
-            drawAeNineSlice(g, x, y, GUI_WIDTH, GUI_HEIGHT, _cfg.alphaBackground());
+        // Bordures : en mode AE, cadre AE2 blitté (texture presente, + centre clair) ;
+        // sinon repli procedural drawAeFrame ; mode DEFAULT = bordures config.
+        if (_aeTex)
+            drawAeNineSlice(g, x, y, GUI_WIDTH, GUI_HEIGHT, _cfg.alphaBackground(), true);
         else if (_cfg.isAe())
             drawAeFrame(g, _cfg, x, y, GUI_WIDTH, GUI_HEIGHT);
         else
@@ -1396,11 +1597,13 @@ public class ColonyLinkScreen extends Screen
         boolean canDel = !tabMetas.isEmpty();
         drawButton(g, dbX, dbY, dbW, dbH,
                 canDel ? (delHov ? 0xFF880000 : 0xFF550000) : 0xFF333333,
-                Component.translatable("colonylink.screen.btn.unlink").getString(), canDel ? 0xFF4444 : 0x888888);
+                Component.translatable("colonylink.screen.btn.unlink").getString(), canDel ? 0xFF4444 : 0x888888,
+                delHov, canDel, _cfg.semRed());
 
         int rbX = getRestartBtnX(), rbY = getRestartBtnY(), rbW = getRestartBtnW(), rbH = getRestartBtnH();
         boolean restHov = mx >= rbX && mx <= rbX + rbW && my >= rbY && my <= rbY + rbH;
-        drawButton(g, rbX, rbY, rbW, rbH, restHov ? 0xFF885500 : 0xFF553300, Component.translatable("colonylink.screen.btn.restart").getString(), 0xFFAA44);
+        drawButton(g, rbX, rbY, rbW, rbH, restHov ? 0xFF885500 : 0xFF553300, Component.translatable("colonylink.screen.btn.restart").getString(), 0xFFAA44,
+                restHov, true, _cfg.semAmber());
 
         List<Component> tip = new ArrayList<>();
 
@@ -1413,15 +1616,16 @@ public class ColonyLinkScreen extends Screen
             g.fill(x + 6, y + 22, x + 7, y + 80, _c.applyOpacity(_c.wellLight()));
             g.fill(x + 6, y + 79, x + GUI_WIDTH - 6, y + 80, _c.applyOpacity(_c.wellDark()));
             g.fill(x + GUI_WIDTH - 7, y + 22, x + GUI_WIDTH - 6, y + 80, _c.applyOpacity(_c.wellDark()));
-            g.drawCenteredString(this.font, Component.translatable("colonylink.screen.cit.header").getString(), x + GUI_WIDTH / 2 - 12, y + 30, 0xFFFFFF);
+            boolean _aeC = _c.isAe();
+            g.drawCenteredString(this.font, Component.translatable("colonylink.screen.cit.header").getString(), x + GUI_WIDTH / 2 - 12, y + 30, _c.bodyText());
             String countStr = citizensLoading ? Component.translatable("colonylink.screen.cit.loading").getString()
                     : citizenEntries.isEmpty() ? Component.translatable("colonylink.screen.cit.no_requests").getString()
                       : Component.translatable("colonylink.screen.cit.open_requests", citizenEntries.size()).getString();
-            g.drawCenteredString(this.font, countStr, x + GUI_WIDTH / 2 - 12, y + 44, 0xAAAAAA);
+            g.drawCenteredString(this.font, countStr, x + GUI_WIDTH / 2 - 12, y + 44, _aeC ? _c.mutedText() : 0xAAAAAA);
             String pkgDesc = citizenPackageCount > 0
                     ? Component.translatable("colonylink.screen.cit.packages_loaded", citizenPackageCount).getString()
                     : Component.translatable("colonylink.screen.cit.no_packages").getString();
-            g.drawCenteredString(this.font, pkgDesc, x + GUI_WIDTH / 2 - 12, y + 57, 0x888888);
+            g.drawCenteredString(this.font, pkgDesc, x + GUI_WIDTH / 2 - 12, y + 57, _aeC ? _c.mutedText() : 0x888888);
 
             // ── Slot Package (haut droite du header) ─────────────────────────
             int pkgSlotX = x + GUI_WIDTH - 26, pkgSlotY = y + 26;
@@ -1519,41 +1723,65 @@ public class ColonyLinkScreen extends Screen
                     while (truncName.length() > 2 && this.font.width("§f" + truncName) > maxTextW)
                         truncName = truncName.substring(0, truncName.length() - 1);
 
-                    g.drawString(this.font, "§f" + truncName, x + 29, ey + 3, 0xFFFFFF, false);
+                    // Drop the §f prefix (it would force white and override bodyText).
+                    g.drawString(this.font, truncName, x + 29, ey + 3, _cl.bodyText(), false);
                     g.drawString(this.font, "§7" + ce.citizenName() + " §8· §7" + ce.jobName(),
                             x + 29, ey + 12, 0xAAAAAA, false);
 
                     boolean alreadySent = isCitizenSentDisplayed(sentKey(ce));
+                    boolean aeBtn = _cl.isAe() && aeButtonPresent;
                     if (alreadySent && hasBtn)
                     {
                         // Grisé — déjà envoyé, mais recliquable pour renvoyer
-                        int btnBg = btnHov ? 0xFF3A3A3A : 0xFF2A2A2A;
-                        g.fill(btnX, btnY, btnX + btnW, btnY + btnH, btnBg);
-                        g.fill(btnX, btnY, btnX + btnW, btnY + 1, 0xFF555555);
-                        g.fill(btnX, btnY, btnX + 1, btnY + btnH, 0xFF555555);
-                        g.fill(btnX, btnY + btnH - 1, btnX + btnW, btnY + btnH, 0xFF1A1A1A);
-                        g.fill(btnX + btnW - 1, btnY, btnX + btnW, btnY + btnH, 0xFF1A1A1A);
-                        g.drawCenteredString(this.font, Component.translatable("colonylink.screen.cit.sent").getString(), btnX + btnW / 2, btnY + 3, 0x888888);
+                        if (aeBtn)
+                        {
+                            drawAeButtonBg(g, btnX, btnY, btnW, btnH, AeBtnVis.DISABLED, _cl.alphaControl());
+                            drawCenteredNoShadow(g, Component.translatable("colonylink.screen.cit.sent").getString(), btnX + btnW / 2, btnY + 3, _cl.semGray());
+                        }
+                        else
+                        {
+                            int btnBg = btnHov ? 0xFF3A3A3A : 0xFF2A2A2A;
+                            g.fill(btnX, btnY, btnX + btnW, btnY + btnH, btnBg);
+                            g.fill(btnX, btnY, btnX + btnW, btnY + 1, 0xFF555555);
+                            g.fill(btnX, btnY, btnX + 1, btnY + btnH, 0xFF555555);
+                            g.fill(btnX, btnY + btnH - 1, btnX + btnW, btnY + btnH, 0xFF1A1A1A);
+                            g.fill(btnX + btnW - 1, btnY, btnX + btnW, btnY + btnH, 0xFF1A1A1A);
+                            g.drawCenteredString(this.font, Component.translatable("colonylink.screen.cit.sent").getString(), btnX + btnW / 2, btnY + 3, 0x888888);
+                        }
                     }
                     else if (ceCanSend)
                     {
-                        int btnBg = btnHov ? 0xFF0066CC : 0xFF004488;
-                        g.fill(btnX, btnY, btnX + btnW, btnY + btnH, btnBg);
-                        g.fill(btnX, btnY, btnX + btnW, btnY + 1, 0xFFFFFFFF);
-                        g.fill(btnX, btnY, btnX + 1, btnY + btnH, 0xFFFFFFFF);
-                        g.fill(btnX, btnY + btnH - 1, btnX + btnW, btnY + btnH, 0xFF222222);
-                        g.fill(btnX + btnW - 1, btnY, btnX + btnW, btnY + btnH, 0xFF222222);
-                        g.drawCenteredString(this.font, Component.translatable("colonylink.screen.btn.send").getString(), btnX + btnW / 2, btnY + 3, 0x4488FF);
+                        if (aeBtn)
+                        {
+                            drawAeButton(g, btnX, btnY, btnW, btnH, btnHov, true, Component.translatable("colonylink.screen.btn.send").getString(), _cl.semBlue());
+                        }
+                        else
+                        {
+                            int btnBg = btnHov ? 0xFF0066CC : 0xFF004488;
+                            g.fill(btnX, btnY, btnX + btnW, btnY + btnH, btnBg);
+                            g.fill(btnX, btnY, btnX + btnW, btnY + 1, 0xFFFFFFFF);
+                            g.fill(btnX, btnY, btnX + 1, btnY + btnH, 0xFFFFFFFF);
+                            g.fill(btnX, btnY + btnH - 1, btnX + btnW, btnY + btnH, 0xFF222222);
+                            g.fill(btnX + btnW - 1, btnY, btnX + btnW, btnY + btnH, 0xFF222222);
+                            g.drawCenteredString(this.font, Component.translatable("colonylink.screen.btn.send").getString(), btnX + btnW / 2, btnY + 3, 0x4488FF);
+                        }
                     }
                     else if (ceCanCraft)
                     {
-                        int btnBg = btnHov ? 0xFF007700 : 0xFF005500;
-                        g.fill(btnX, btnY, btnX + btnW, btnY + btnH, btnBg);
-                        g.fill(btnX, btnY, btnX + btnW, btnY + 1, 0xFFFFFFFF);
-                        g.fill(btnX, btnY, btnX + 1, btnY + btnH, 0xFFFFFFFF);
-                        g.fill(btnX, btnY + btnH - 1, btnX + btnW, btnY + btnH, 0xFF222222);
-                        g.fill(btnX + btnW - 1, btnY, btnX + btnW, btnY + btnH, 0xFF222222);
-                        g.drawCenteredString(this.font, Component.translatable("colonylink.screen.btn.craft").getString(), btnX + btnW / 2, btnY + 3, 0x00FF00);
+                        if (aeBtn)
+                        {
+                            drawAeButton(g, btnX, btnY, btnW, btnH, btnHov, true, Component.translatable("colonylink.screen.btn.craft").getString(), _cl.semGreen());
+                        }
+                        else
+                        {
+                            int btnBg = btnHov ? 0xFF007700 : 0xFF005500;
+                            g.fill(btnX, btnY, btnX + btnW, btnY + btnH, btnBg);
+                            g.fill(btnX, btnY, btnX + btnW, btnY + 1, 0xFFFFFFFF);
+                            g.fill(btnX, btnY, btnX + 1, btnY + btnH, 0xFFFFFFFF);
+                            g.fill(btnX, btnY + btnH - 1, btnX + btnW, btnY + btnH, 0xFF222222);
+                            g.fill(btnX + btnW - 1, btnY, btnX + btnW, btnY + btnH, 0xFF222222);
+                            g.drawCenteredString(this.font, Component.translatable("colonylink.screen.btn.craft").getString(), btnX + btnW / 2, btnY + 3, 0x00FF00);
+                        }
                     }
 
                     if (mx >= x + 7 && mx <= x + 7 + listW && my >= ey && my <= ey + ENTRY_HEIGHT)
@@ -1589,7 +1817,7 @@ public class ColonyLinkScreen extends Screen
         else if (isOutOfPower())
         {
             g.drawCenteredString(this.font, Component.translatable("colonylink.screen.power.list").getString(),
-                    x + GUI_WIDTH / 2, listY + MAX_VISIBLE * ENTRY_HEIGHT / 2 - 4, 0xFF4444);
+                    x + GUI_WIDTH / 2, listY + MAX_VISIBLE * ENTRY_HEIGHT / 2 - 4, _cl.isAe() ? _cl.semRed() : 0xFF4444);
         }
         else
         {
@@ -1610,7 +1838,11 @@ public class ColonyLinkScreen extends Screen
 
                 // ── Nom avec défilement si trop long ──────────────────────────────
                 String rawName = stack.getDisplayName().getString();
-                String prefix  = entry.isDomum() ? "§b[DO] §r" : "";
+                // AE: plain "[DO] " (same width — the § codes are zero-width, so line
+                // measurement/truncation below is unchanged), then the tag is over-drawn
+                // in semBlue on top. DEFAULT keeps the cyan §b tag.
+                boolean domumTag = entry.isDomum();
+                String prefix  = domumTag ? (_cl.isAe() ? "[DO] " : "§b[DO] §r") : "";
                 String fullText = rc + "x " + rawName;
                 int nameAreaW = listW - 65 - 20; // largeur dispo pour le texte
                 int fullW = this.font.width(prefix + fullText);
@@ -1634,12 +1866,16 @@ public class ColonyLinkScreen extends Screen
                     // tombe pile sur la ligne, quel que soit le scale GUI configuré.
                     g.enableScissor(toScreenX(x + 29), toScreenY(ey),
                             toScreenX(x + 29 + nameAreaW), toScreenY(ey + ENTRY_HEIGHT));
-                    g.drawString(this.font, prefix + fullText, x + 29 - offset, ey + 6, 0xFFFFFF, false);
+                    g.drawString(this.font, prefix + fullText, x + 29 - offset, ey + 6, _cl.bodyText(), false);
+                    if (domumTag && _cl.isAe())
+                        g.drawString(this.font, "[DO]", x + 29 - offset, ey + 6, _cl.semBlue(), false);
                     g.disableScissor();
                 }
                 else
                 {
-                    g.drawString(this.font, prefix + fullText, x + 29, ey + 6, 0xFFFFFF, false);
+                    g.drawString(this.font, prefix + fullText, x + 29, ey + 6, _cl.bodyText(), false);
+                    if (domumTag && _cl.isAe())
+                        g.drawString(this.font, "[DO]", x + 29, ey + 6, _cl.semBlue(), false);
                 }
 
                 // ── Zone hover de la ligne (hors bouton) ──────────────────────────
@@ -1693,14 +1929,22 @@ public class ColonyLinkScreen extends Screen
                     for (Component ln : entry.tooltipLines()) tip.add(ln);
                 }
 
-                int bg2 = _cl.applyControl(getButtonColorWithWarehouse(status, stack, hov && isButtonClickable(status, stack)));
-                g.fill(bx2, by2, bx2 + bw2, by2 + bh2, bg2);
-                g.fill(bx2, by2, bx2 + bw2, by2 + 1, _cl.applyControl(_cl.btnBevelLight()));
-                g.fill(bx2, by2, bx2 + 1, by2 + bh2, _cl.applyControl(_cl.btnBevelLight()));
-                g.fill(bx2, by2 + bh2 - 1, bx2 + bw2, by2 + bh2, _cl.applyControl(_cl.btnBevelDark()));
-                g.fill(bx2 + bw2 - 1, by2, bx2 + bw2, by2 + bh2, _cl.applyControl(_cl.btnBevelDark()));
-                g.drawCenteredString(this.font, getButtonTextWithWarehouse(status, stack),
-                        bx2 + bw2 / 2, by2 + 4, getButtonTextColor(status));
+                if (_cl.isAe() && aeButtonPresent)
+                {
+                    drawAeButton(g, bx2, by2, bw2, bh2, hov, isButtonClickable(status, stack),
+                            getButtonTextWithWarehouse(status, stack), aeStatusTextColor(status));
+                }
+                else
+                {
+                    int bg2 = _cl.applyControl(getButtonColorWithWarehouse(status, stack, hov && isButtonClickable(status, stack)));
+                    g.fill(bx2, by2, bx2 + bw2, by2 + bh2, bg2);
+                    g.fill(bx2, by2, bx2 + bw2, by2 + 1, _cl.applyControl(_cl.btnBevelLight()));
+                    g.fill(bx2, by2, bx2 + 1, by2 + bh2, _cl.applyControl(_cl.btnBevelLight()));
+                    g.fill(bx2, by2 + bh2 - 1, bx2 + bw2, by2 + bh2, _cl.applyControl(_cl.btnBevelDark()));
+                    g.fill(bx2 + bw2 - 1, by2, bx2 + bw2, by2 + bh2, _cl.applyControl(_cl.btnBevelDark()));
+                    g.drawCenteredString(this.font, getButtonTextWithWarehouse(status, stack),
+                            bx2 + bw2 / 2, by2 + 4, getButtonTextColor(status));
+                }
             }
 
             if (entries.size() > MAX_VISIBLE)
@@ -1759,10 +2003,19 @@ public class ColonyLinkScreen extends Screen
                 caTextColor = 0x888888;
             }
 
-            g.fill(caX, caY, caX + caW, caY + caH, caBg);
-            g.fill(caX, caY, caX + caW, caY + 1, _cBtn.applyControl(_cBtn.btnBevelLight())); g.fill(caX, caY, caX + 1, caY + caH, _cBtn.applyControl(_cBtn.btnBevelLight()));
-            g.fill(caX, caY + caH - 1, caX + caW, caY + caH, _cBtn.applyControl(_cBtn.btnBevelDark())); g.fill(caX + caW - 1, caY, caX + caW, caY + caH, _cBtn.applyControl(_cBtn.btnBevelDark()));
-            g.drawCenteredString(this.font, caLabel, caX + caW / 2, caY + 4, caTextColor);
+            boolean caEnabled = craftInProgress || hasCraft;
+            int caAeLabel = craftInProgress ? _cBtn.semBlue() : _cBtn.semGreen();
+            if (_cBtn.isAe() && aeButtonPresent)
+            {
+                drawAeButton(g, caX, caY, caW, caH, caHov, caEnabled, caLabel, caAeLabel);
+            }
+            else
+            {
+                g.fill(caX, caY, caX + caW, caY + caH, caBg);
+                g.fill(caX, caY, caX + caW, caY + 1, _cBtn.applyControl(_cBtn.btnBevelLight())); g.fill(caX, caY, caX + 1, caY + caH, _cBtn.applyControl(_cBtn.btnBevelLight()));
+                g.fill(caX, caY + caH - 1, caX + caW, caY + caH, _cBtn.applyControl(_cBtn.btnBevelDark())); g.fill(caX + caW - 1, caY, caX + caW, caY + caH, _cBtn.applyControl(_cBtn.btnBevelDark()));
+                g.drawCenteredString(this.font, caLabel, caX + caW / 2, caY + 4, caTextColor);
+            }
 
             if (caHov)
             {
@@ -1791,10 +2044,17 @@ public class ColonyLinkScreen extends Screen
             int saX = getSendAllBtnX(), saY = getSendAllBtnY(), saW = getSendAllBtnW(), saH = getSendAllBtnH();
             boolean saHov = mx >= saX && mx <= saX + saW && my >= saY && my <= saY + saH;
             boolean hasAvail = hasSendableItems();
-            g.fill(saX, saY, saX + saW, saY + saH, _cBtn.applyControl(hasAvail ? (saHov ? 0xFF0066CC : 0xFF004488) : 0xFF333333));
-            g.fill(saX, saY, saX + saW, saY + 1, _cBtn.applyControl(_cBtn.btnBevelLight())); g.fill(saX, saY, saX + 1, saY + saH, _cBtn.applyControl(_cBtn.btnBevelLight()));
-            g.fill(saX, saY + saH - 1, saX + saW, saY + saH, _cBtn.applyControl(_cBtn.btnBevelDark())); g.fill(saX + saW - 1, saY, saX + saW, saY + saH, _cBtn.applyControl(_cBtn.btnBevelDark()));
-            g.drawCenteredString(this.font, Component.translatable("colonylink.screen.btn.send_all").getString(), saX + saW / 2, saY + 4, hasAvail ? 0x4488FF : 0x888888);
+            if (_cBtn.isAe() && aeButtonPresent)
+            {
+                drawAeButton(g, saX, saY, saW, saH, saHov, hasAvail, Component.translatable("colonylink.screen.btn.send_all").getString(), _cBtn.semBlue());
+            }
+            else
+            {
+                g.fill(saX, saY, saX + saW, saY + saH, _cBtn.applyControl(hasAvail ? (saHov ? 0xFF0066CC : 0xFF004488) : 0xFF333333));
+                g.fill(saX, saY, saX + saW, saY + 1, _cBtn.applyControl(_cBtn.btnBevelLight())); g.fill(saX, saY, saX + 1, saY + saH, _cBtn.applyControl(_cBtn.btnBevelLight()));
+                g.fill(saX, saY + saH - 1, saX + saW, saY + saH, _cBtn.applyControl(_cBtn.btnBevelDark())); g.fill(saX + saW - 1, saY, saX + saW, saY + saH, _cBtn.applyControl(_cBtn.btnBevelDark()));
+                g.drawCenteredString(this.font, Component.translatable("colonylink.screen.btn.send_all").getString(), saX + saW / 2, saY + 4, hasAvail ? 0x4488FF : 0x888888);
+            }
 
         } // fin du bloc non-Citizens
 
