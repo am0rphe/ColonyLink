@@ -7,7 +7,9 @@ import com.minecolonies.api.colony.buildings.IBuilding;
 import com.minecolonies.api.colony.requestsystem.request.IRequest;
 import com.minecolonies.api.colony.requestsystem.request.RequestState;
 import com.minecolonies.api.colony.requestsystem.requestable.IDeliverable;
+import com.minecolonies.api.colony.permissions.Action;
 import com.minecolonies.core.colony.buildings.AbstractBuildingStructureBuilder;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
@@ -81,10 +83,29 @@ public class CitizensScanHandler
         IColony colony = null;
         for (BuilderEntry e : entries)
         {
+            // A2 dimension guard: never resolve a colony from a builder position stored
+            // for another dimension — getClosestColony would return null or the wrong
+            // colony, and the permission check below would then apply to the wrong
+            // colony. Legacy entries (dimension == null) keep the prior behaviour.
+            // Same semantics as CancelRequestPacket's cross-dimension guard.
+            if (e.dimension() != null && !e.dimension().equals(level.dimension())) continue;
             colony = IColonyManager.getInstance().getClosestColony(level, e.builderPos());
             if (colony != null) break;
         }
         if (colony == null) return;
+
+        // A2 — deny reading citizen requests without colony access. Covers BOTH call
+        // paths (manual packet + periodic ticker), and placed before the citizen loop
+        // it doubles as a free CPU skip on the periodic path. Removing the viewer stops
+        // the ticker from re-running this, so the refusal message stays a single
+        // occurrence per GUI session instead of ~2/second.
+        if (!colony.getPermissions().hasPermission(player, Action.ACCESS_HUTS))
+        {
+            ColonyLinkServerTicker.removeViewer(player.getUUID());
+            player.sendSystemMessage(
+                    Component.translatable("colonylink.wand.msg.no_permission"));
+            return;
+        }
 
         java.util.Set<net.minecraft.core.BlockPos> builderPositions = new java.util.HashSet<>();
         for (BuilderEntry e : entries)
@@ -233,10 +254,55 @@ public class CitizensScanHandler
     private static final java.util.Map<java.util.UUID, Long> LAST_SIG =
             new java.util.concurrent.ConcurrentHashMap<>();
 
-    /** Drops a player's throttle signature (called on logout by the server ticker). */
+    // ── A2 — per-player cooldown for MANUAL requests only ──────────────────────
+    // Guards CitizensRequestPacket (the client entering the Citizens tab). It must
+    // NOT cover the periodic ticker refresh, which calls sendCitizensPacket(..., false)
+    // directly and has to keep pushing live updates every ticker interval.
+    private static final long REQUEST_COOLDOWN_MS = 500L;
+    private static final java.util.Map<java.util.UUID, Long> LAST_REQUEST_MS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Gate for MANUAL Citizens requests (the packet path). Returns {@code false} when
+     * this player fired one less than {@link #REQUEST_COOLDOWN_MS} ago, {@code true}
+     * otherwise (arming the window). Silent on rejection — no chat message is sent.
+     */
+    public static boolean allowManualRequest(ServerPlayer player)
+    {
+        long now = System.currentTimeMillis();
+        java.util.UUID uuid = player.getUUID();
+        Long last = LAST_REQUEST_MS.get(uuid);
+        if (last != null && now - last < REQUEST_COOLDOWN_MS)
+        {
+            // Rejected: do NOT refresh the timestamp — otherwise a spammer would keep
+            // pushing their own window forward and could never clear the cooldown.
+            //
+            // Invalidate this player's content signature so the next ticker pass
+            // (<= 0.5s) is forced to rescan and resend. On entering the tab the client
+            // cleared its list and shows a spinner; the handler sends nothing on a
+            // rejected request, so the ticker is what unblocks the GUI.
+            invalidateSignature(uuid);
+            return false;
+        }
+        LAST_REQUEST_MS.put(uuid, now);
+        return true;
+    }
+
+    /**
+     * Drops only the throttle signature (LAST_SIG), forcing the next ticker pass to
+     * resend. Must NOT touch LAST_REQUEST_MS — clearing the cooldown on a rejection
+     * would defeat the cooldown entirely.
+     */
+    public static void invalidateSignature(java.util.UUID uuid)
+    {
+        LAST_SIG.remove(uuid);
+    }
+
+    /** Drops a player's throttle + cooldown state (called on logout by the server ticker). */
     public static void forget(java.util.UUID uuid)
     {
         LAST_SIG.remove(uuid);
+        LAST_REQUEST_MS.remove(uuid);
     }
 
     /** FNV-1a fold over the visible Citizens content — same idea as computeWandSig. */

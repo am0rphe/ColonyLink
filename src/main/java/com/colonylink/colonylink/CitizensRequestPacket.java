@@ -28,7 +28,12 @@ public record CitizensRequestPacket() implements CustomPacketPayload
     {
         context.enqueueWork(() -> {
             if (context.player() instanceof ServerPlayer sp)
+            {
+                // A2 — per-player cooldown, MANUAL path only. Silent reject on spam;
+                // the ticker resends within one interval (see allowManualRequest).
+                if (!CitizensScanHandler.allowManualRequest(sp)) return;
                 CitizensScanHandler.sendCitizensPacket(sp);
+            }
         });
     }
 }
