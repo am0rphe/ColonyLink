@@ -325,8 +325,8 @@ public class ColonyLinkConfig
 
         PACKAGE_CHEST_CHANCE = builder
                 .comment("Chance to add one Package to each eligible chest (per chest, rolled once).",
-                        "Range: 0.0-1.0 (0.05 = 5%). Set 0.0 to disable without flipping the toggle.",
-                        "Default: 0.05")
+                        "Range: 0.0-1.0 (0.10 = 10%). Set 0.0 to disable without flipping the toggle.",
+                        "Default: 0.10")
                 .defineInRange("package_chest_chance", 0.10, 0.0, 1.0);
 
         PACKAGE_FROM_RAIDERS = builder
@@ -337,8 +337,8 @@ public class ColonyLinkConfig
 
         PACKAGE_RAIDER_CHANCE = builder
                 .comment("Chance to drop one Package per raid raider killed (rolled once per raider).",
-                        "Range: 0.0-1.0 (0.03 = 3%). Set 0.0 to disable without flipping the toggle.",
-                        "Default: 0.03")
+                        "Range: 0.0-1.0 (0.15 = 15%). Set 0.0 to disable without flipping the toggle.",
+                        "Default: 0.15")
                 .defineInRange("package_raider_chance", 0.15, 0.0, 1.0);
 
         builder.pop();
