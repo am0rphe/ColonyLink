@@ -9,6 +9,7 @@ import appeng.api.storage.MEStorage;
 import appeng.api.config.Actionable;
 import com.minecolonies.api.colony.IColony;
 import com.minecolonies.api.colony.IColonyManager;
+import com.minecolonies.api.colony.permissions.Action;
 import com.minecolonies.api.colony.buildings.IBuilding;
 import com.minecolonies.core.colony.buildings.workerbuildings.BuildingWareHouse;
 import net.minecraft.core.BlockPos;
@@ -108,10 +109,36 @@ public record PackageTokenPacket(
             return;
         }
 
+        // A4 — redirector↔wand validation (client is NOT authoritative on redirectorPos).
+        // The client sends a raw BlockPos; a modified client could point at ANY colony's
+        // redirector. Only accept a redirectorPos actually linked to THIS player's wand.
+        // Same predicate/dimension guard as CancelRequestPacket. Done at the earliest
+        // point the wand is available, before anything else is checked or consumed.
+        boolean redirectorLinked = false;
+        for (BuilderEntry e : ColonyLinkWandLinkableHandler.getBuilderEntries(wand))
+        {
+            if (e.hasRedirector() && e.redirectorPos().equals(redirectorPos))
+            {
+                // Dimension guard: refuse a cross-dimension redirector. Legacy entries
+                // (dimension == null) are not filtered — historical behaviour preserved.
+                if (e.dimension() != null && !e.dimension().equals(player.serverLevel().dimension()))
+                    break;
+                redirectorLinked = true;
+                break;
+            }
+        }
+        if (!redirectorLinked)
+        {
+            resyncPackages(player, wand);
+            player.sendSystemMessage(Component.translatable("colonylink.stw.invalid_request"));
+            return;
+        }
+
         // 2. Vérifier le stock de packages
         int stored = ColonyLinkWandLinkableHandler.getCitizenPackages(wand);
         if (stored <= 0)
         {
+            resyncPackages(player, wand);
             player.sendSystemMessage(Component.translatable("colonylink.pkg_token.no_packages"));
             return;
         }
@@ -121,11 +148,13 @@ public record PackageTokenPacket(
         var be = level.getBlockEntity(redirectorPos);
         if (!(be instanceof ColonyLinkRedirectorBlockEntity redirector))
         {
+            resyncPackages(player, wand);
             player.sendSystemMessage(Component.translatable("colonylink.pkg_token.redir_not_found"));
             return;
         }
         if (!redirector.hasWarehouseCard())
         {
+            resyncPackages(player, wand);
             player.sendSystemMessage(Component.translatable("colonylink.pkg_token.no_card"));
             return;
         }
@@ -134,22 +163,47 @@ public record PackageTokenPacket(
         GlobalPos linkedPos = ColonyLinkWandLinkableHandler.getLinkedPos(wand);
         if (linkedPos == null)
         {
+            resyncPackages(player, wand);
             player.sendSystemMessage(Component.translatable("colonylink.pkg_token.not_linked"));
             return;
         }
         ServerLevel targetLevel = level.getServer().getLevel(linkedPos.dimension());
-        if (targetLevel == null) return;
+        if (targetLevel == null)
+        {
+            resyncPackages(player, wand);
+            return;
+        }
         var wapBe = targetLevel.getBlockEntity(linkedPos.pos());
         if (!(wapBe instanceof IWirelessAccessPoint wap))
         {
+            resyncPackages(player, wand);
             player.sendSystemMessage(Component.translatable("colonylink.pkg_token.no_wap"));
             return;
         }
         IGrid grid = wap.getGrid();
         if (grid == null)
         {
+            resyncPackages(player, wand);
             player.sendSystemMessage(Component.translatable("colonylink.pkg_token.network_offline"));
             return;
+        }
+
+        // A4 — colony permission (ACCESS_HUTS), non-craft path only. doCraft touches no
+        // colony (it launches a craft on the player's own grid), so permission is moot
+        // there. This resolves the colony a second time (doSend resolves it again from
+        // the same redirectorPos): intentional, to avoid changing doSend's signature or
+        // body — the cost is negligible. Do NOT "deduplicate" this getClosestColony call.
+        // colony == null stays permissive: doSend already returns false in that case,
+        // which triggers the refund path.
+        if (!isCraft)
+        {
+            IColony colony = IColonyManager.getInstance().getClosestColony(level, redirectorPos);
+            if (colony != null && !colony.getPermissions().hasPermission(player, Action.ACCESS_HUTS))
+            {
+                resyncPackages(player, wand);
+                player.sendSystemMessage(Component.translatable("colonylink.wand.msg.no_permission"));
+                return;
+            }
         }
 
         // 5. Consommer 1 package AVANT l'action (point de non-retour)
@@ -269,6 +323,17 @@ public record PackageTokenPacket(
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /**
+     * Pushes the authoritative package count back to the client. The client decrements
+     * its counter optimistically before the server replies, so any early return that
+     * skips step 8 would leave the displayed count wrong until the next tab resync.
+     */
+    private static void resyncPackages(ServerPlayer player, ItemStack wand)
+    {
+        net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player,
+                new PackageTokenSyncPacket(ColonyLinkWandLinkableHandler.getCitizenPackages(wand)));
+    }
 
     private static ItemStack insertIntoHandler(IItemHandler handler, ItemStack stack)
     {
