@@ -1957,9 +1957,20 @@ public class ColonyLinkScreen extends Screen
                     }
                     case CRAFTABLE ->
                     {
-                        PacketDistributor.sendToServer(new CraftRequestPacket(
-                                builderRequest.stack(), builderRequest.count(),
-                                false, BlockPos.ZERO, ResourceStatus.CRAFTABLE));
+                        // Route exactly like the normal request row: use the warehouse craft
+                        // path when the components are available in the warehouse snapshot,
+                        // otherwise the ME path. The priority row only ever sent
+                        // CraftRequestPacket (ME path), so a warehouse-only craft failed with
+                        // "missing primary ingredients". isDomum is derived the same way the
+                        // normal row's stored flag is (DomumCraftHandler.isDomumItem).
+                        boolean craftDomum = DomumCraftHandler.isDomumItem(builderRequest.stack());
+                        if (hasWarehouseCraft(builderRequest.stack()))
+                            PacketDistributor.sendToServer(new WarehouseCraftPacket(
+                                    builderRequest.stack(), builderRequest.count(), craftDomum, builderRequest.redirectorPos()));
+                        else
+                            PacketDistributor.sendToServer(new CraftRequestPacket(
+                                    builderRequest.stack(), builderRequest.count(), craftDomum,
+                                    craftDomum ? builderRequest.redirectorPos() : BlockPos.ZERO, ResourceStatus.CRAFTABLE));
                     }
                     case MISSING ->
                     {

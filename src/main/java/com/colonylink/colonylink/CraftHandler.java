@@ -40,7 +40,7 @@ public class CraftHandler
      * and the pathological Integer.MAX_VALUE (which would make AE2 attempt a giant
      * crafting calculation). 1,000,000 is far above any legitimate single job.
      */
-    private static final int MAX_CRAFT_COUNT = 1_000_000;
+    static final int MAX_CRAFT_COUNT = 1_000_000;
 
     public static void handleCraftRequest(ServerPlayer player, ItemStack stack, int realCount)
     {

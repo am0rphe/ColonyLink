@@ -66,6 +66,10 @@ public class WarehouseCraftHandler
             boolean isDomum,
             BlockPos redirectorPos)
     {
+        // realCount comes from the client and is not trusted. Clamp to the same bounds
+        // as the normal craft path (CraftHandler) before any validation or use.
+        realCount = net.minecraft.util.Mth.clamp(realCount, 1, CraftHandler.MAX_CRAFT_COUNT);
+
         ServerLevel level = player.serverLevel();
 
         // ── Détection wand ────────────────────────────────────────────────────
@@ -235,8 +239,6 @@ public class WarehouseCraftHandler
         long batchesNeeded = (long) Math.ceil((double) realCount / batchOutput);
         long totalToCraft = batchesNeeded * batchOutput;
 
-        List<ItemStack> injected = new ArrayList<>();
-
         if (patterns != null && !patterns.isEmpty())
         {
             var pattern = patterns.iterator().next();
@@ -250,7 +252,12 @@ public class WarehouseCraftHandler
                     if (possible.what() instanceof AEItemKey inputKey)
                     {
                         inputStack = inputKey.toStack(1);
-                        inputNeeded = possible.amount() * batchesNeeded;
+                        // AE2 condenses identical ingredients into a single IInput whose
+                        // getPossibleInputs()[].amount() is always forced to 1; the real
+                        // per-craft count is carried by IInput.getMultiplier() (long). Keep
+                        // the amount() factor too, so the code stays correct if a future AE2
+                        // version stops forcing it to 1.
+                        inputNeeded = possible.amount() * input.getMultiplier() * batchesNeeded;
                         break;
                     }
                 }
@@ -267,16 +274,17 @@ public class WarehouseCraftHandler
                         storageService, actionSource, inputStack,
                         (int) Math.min(stillNeeded, Integer.MAX_VALUE));
                 if (inserted > 0)
-                {
-                    injected.add(inputStack.copyWithCount((int) inserted));
                     player.sendSystemMessage(Component.translatable("colonylink.wh2me.transfer",
                             inserted, inputStack.getDisplayName()));
-                }
             }
         }
 
         ICraftingSimulationRequester simulationRequester = () -> actionSource;
-        final List<ItemStack> injectedFinal = injected;
+
+        // No refund on craft failure: the transferred ingredients are already in the
+        // player's ME network (moveWarehouseToMe inserted them). Re-inserting them as a
+        // "refund" created items out of thin air. They stay in the ME — nothing is lost,
+        // and the craft can be retried without a fresh transfer (same policy as the Domum path).
 
         java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "ColonyLink-WarehouseCraft");
@@ -294,7 +302,6 @@ public class WarehouseCraftHandler
                 {
                     level.getServer().execute(() -> {
                         player.sendSystemMessage(Component.translatable("colonylink.whc.craft_plan_failed"));
-                        refundInjected(storageService, actionSource, injectedFinal);
                     });
                     return;
                 }
@@ -305,7 +312,6 @@ public class WarehouseCraftHandler
                     else
                     {
                         player.sendSystemMessage(Component.translatable("colonylink.whc.craft_submission_failed"));
-                        refundInjected(storageService, actionSource, injectedFinal);
                     }
                 });
             }
@@ -314,7 +320,6 @@ public class WarehouseCraftHandler
                 ColonyLink.LOGGER.error("[ColonyLink] Warehouse craft error", e);
                 level.getServer().execute(() -> {
                     player.sendSystemMessage(Component.translatable("colonylink.whc.craft_error", e.getMessage()));
-                    refundInjected(storageService, actionSource, injectedFinal);
                 });
             }
         });
@@ -361,7 +366,6 @@ public class WarehouseCraftHandler
         if (!(block instanceof IMateriallyTexturedBlock texturedBlock)) return;
 
         MaterialTextureData textureData = MaterialTextureData.readFromItemStack(domumStack);
-        List<ItemStack> injected = new ArrayList<>();
 
         for (IMateriallyTexturedBlockComponent component : texturedBlock.getComponents())
         {
@@ -370,8 +374,9 @@ public class WarehouseCraftHandler
             {
                 if (!component.isOptional())
                 {
+                    // No refund: any components already transferred sit in the player's ME
+                    // network (nothing is lost); refunding re-inserted them and duplicated items.
                     player.sendSystemMessage(Component.translatable("colonylink.whc.missing_material", component.getId()));
-                    refundInjected(storageService, actionSource, injected);
                     return;
                 }
                 continue;
@@ -389,11 +394,8 @@ public class WarehouseCraftHandler
                     storageService, actionSource, materialStack,
                     (int) Math.min(stillNeeded, Integer.MAX_VALUE));
             if (inserted > 0)
-            {
-                injected.add(materialStack.copyWithCount((int) inserted));
                 player.sendSystemMessage(Component.translatable("colonylink.wh2me.transfer",
                         inserted, materialStack.getDisplayName()));
-            }
         }
         // The raw components are now pushed into the ME network. AE2 never starts a
         // job just because ingredients were inserted — a craft must be explicitly
@@ -576,18 +578,6 @@ public class WarehouseCraftHandler
         catch (Exception e)
         { ColonyLink.LOGGER.debug("[ColonyLink] Warehouse rack extraction error: {}", e.getMessage()); }
         return totalExtracted;
-    }
-
-    private static void refundInjected(
-            IStorageService storageService,
-            IActionSource actionSource,
-            List<ItemStack> injected)
-    {
-        for (ItemStack stack : injected)
-        {
-            AEItemKey key = AEItemKey.of(stack);
-            storageService.getInventory().insert(key, stack.getCount(), Actionable.MODULATE, actionSource);
-        }
     }
 
     private static BuildingWareHouse findWarehouse(IColony colony)
