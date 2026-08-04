@@ -137,11 +137,19 @@ public class WarehouseCraftHandler
 
         // v1.6.2 — RF cost, aligned with the normal Craft button (CraftRequestPacket).
         // Charged once per click, after every validation passed, before any extraction.
-        long craftCost = ColonyLinkConfig.CRAFT_COST_RF.get();
-        if (craftCost > 0 && !ColonyLinkServerTicker.tryConsumeRF(player, craftCost))
+        // Non-Domum path only: the Domum branch delegates to CraftHandler.handleCraftRequest,
+        // which charges the RF itself — charging here too would double-bill it. Consequence
+        // (accepted): the Domum branch has no RF pre-check before the Warehouse -> ME transfer;
+        // a player with no RF sees the components moved, then the craft refused by
+        // handleCraftRequest. The components stay in the ME network, nothing is lost.
+        if (!isDomum)
         {
-            player.sendSystemMessage(Component.translatable("colonylink.ch.not_enough_power", craftCost));
-            return;
+            long craftCost = ColonyLinkConfig.CRAFT_COST_RF.get();
+            if (craftCost > 0 && !ColonyLinkServerTicker.tryConsumeRF(player, craftCost))
+            {
+                player.sendSystemMessage(Component.translatable("colonylink.ch.not_enough_power", craftCost));
+                return;
+            }
         }
 
         // ── Route vers AE2 ──────────────────────────────────────────────────────
@@ -327,18 +335,23 @@ public class WarehouseCraftHandler
             BuildingWareHouse warehouse,
             ItemStack wandStack)
     {
-        // v1.4.9 — Un bloc Domum FINI déjà présent dans le warehouse ne doit JAMAIS
-        // être routé vers le buffer du Redirector (qui n'accepte que DomumPatternItem)
-        // ni re-crafté via AE2 : l'ancien code l'insérait dans le buffer, où il était
-        // systématiquement rejeté puis perdu (voiding 100 %). Les blocs finis sont
-        // livrés Warehouse → Builder par le bouton Send (SendToBuilderHandler).
-        // On ne prélève rien ici → rien ne peut être détruit.
+        // The Warehouse may cover the request fully, partially, or not at all. Finished
+        // Domum blocks already in the Warehouse must NEVER be re-crafted nor routed to the
+        // Redirector buffer (v1.4.9 reason: the buffer only accepts DomumPatternItem and
+        // would void a finished block); they are delivered Warehouse -> Builder by the Send
+        // button. But any SHORTFALL still has to be produced. So we announce the finished
+        // blocks already present, then craft only the deficit (realCount - directFound) —
+        // never re-crafting what exists, and not wasting materials or filling the ME with
+        // duplicates.
         long directFound = countDomumInWarehouse(level, warehouse, domumStack);
         if (directFound > 0)
-        {
             player.sendSystemMessage(Component.translatable("colonylink.whc.domum_already", directFound, domumStack.getDisplayName()));
-            return;
-        }
+        // Case A (directFound >= realCount): fully covered -> toCraft <= 0, return, no craft.
+        // Case B (0 < directFound < realCount): craft only the missing amount.
+        // Case C (directFound == 0): craft the full realCount.
+        // Compared as long first so a huge directFound cannot overflow the int cast.
+        int toCraft = directFound >= realCount ? 0 : realCount - (int) directFound;
+        if (toCraft <= 0) return;
 
         // Pas de bloc fini en warehouse → on tente d'injecter les COMPOSANTS bruts
         // dans le ME pour qu'AE2 autocrafte via le DomumPattern (ICraftingProvider).
@@ -364,11 +377,11 @@ public class WarehouseCraftHandler
                 continue;
             }
 
-            ItemStack materialStack = new ItemStack(materialBlock, realCount);
+            ItemStack materialStack = new ItemStack(materialBlock, toCraft);
             AEItemKey aeKey = AEItemKey.of(materialStack);
             long inMe = storageService.getInventory().extract(
-                    aeKey, realCount, Actionable.SIMULATE, actionSource);
-            long stillNeeded = realCount - inMe;
+                    aeKey, toCraft, Actionable.SIMULATE, actionSource);
+            long stillNeeded = toCraft - inMe;
             if (stillNeeded <= 0) continue;
 
             // v1.4.9 — simulate-first + réinsertion racks : aucun composant voidé.
@@ -382,9 +395,13 @@ public class WarehouseCraftHandler
                         inserted, materialStack.getDisplayName()));
             }
         }
-        // v1.4.3 — handleDomumCraft() supprimé : les items Domum passent désormais
-        // par ICraftingProvider (DomumPatternDetails). Les composants injectés dans le
-        // ME ci-dessus seront consommés par AE2 lors de l'autocraft.
+        // The raw components are now pushed into the ME network. AE2 never starts a
+        // job just because ingredients were inserted — a craft must be explicitly
+        // requested for the OUTPUT. So submit the Domum block craft here, exactly like
+        // the ME-materials path (CraftRequestPacket -> CraftHandler.handleCraftRequest).
+        // No refund on craft failure: the components stay in the player's ME network,
+        // nothing is lost, and the craft can be retried without a fresh transfer.
+        CraftHandler.handleCraftRequest(player, domumStack, toCraft);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
