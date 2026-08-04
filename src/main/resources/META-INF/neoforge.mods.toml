@@ -47,26 +47,6 @@ ordering="AFTER"
 side="BOTH"
 
 [[dependencies.${mod_id}]]
-modId="structurize"
-type="required"
-versionRange="[1.0.820,)"
-ordering="AFTER"
-side="BOTH"
-
-[[dependencies.${mod_id}]]
-modId="blockui"
-type="required"
-versionRange="[1.0.211,)"
-ordering="AFTER"
-side="BOTH"
-
-[[dependencies.${mod_id}]]
-modId="guideme"
-type="required"
-versionRange="[21.1.15,)"
-ordering="AFTER"
-
-[[dependencies.${mod_id}]]
 modId="jade"
 type="optional"
 versionRange="[15.0.0,)"
