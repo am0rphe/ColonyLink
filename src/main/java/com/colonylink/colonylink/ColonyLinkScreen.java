@@ -1,8 +1,10 @@
 package com.colonylink.colonylink;
 
+import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.neoforge.network.PacketDistributor;
@@ -37,6 +39,19 @@ public class ColonyLinkScreen extends Screen
     private static final int ENTRY_HEIGHT    = 20;
     private static final int MAX_VISIBLE     = 8;
     private static final int SCROLLBAR_WIDTH = 6;
+
+    // ── AE theme — frame texture (layer 1) ────────────────────────────────────
+    // This texture belongs to AE2 (assets are CC BY-NC-SA) and is NEVER copied into
+    // this repo — we only reference it by ResourceLocation at runtime. AE2 is a
+    // required dependency so it is guaranteed present, but an internal asset path can
+    // change between AE2 versions; we probe once at init() and fall back silently to
+    // the procedural drawAeFrame rather than showing a magenta missing-texture.
+    private static final ResourceLocation AE_BACKGROUND =
+            ResourceLocation.fromNamespaceAndPath("ae2", "textures/guis/background.png");
+    private static final int AE_BG_BORDER = 4;    // nine-slice border, px
+    private static final int AE_BG_TEX    = 256;  // background.png is 256x256
+    private static final int AE_BG_TILE   = 248;  // source edge/center band = 256 - 2*4
+    private boolean aeBackgroundPresent = false;  // probed once in init(), not per frame
 
     // ── #12 : index spécial de la tab Citizens ───────────────────────────────
     private static final int CITIZENS_TAB_INDEX = Integer.MAX_VALUE;
@@ -472,6 +487,11 @@ public class ColonyLinkScreen extends Screen
         if (!initWand.isEmpty())
             this.citizenPackageCount = ColonyLinkWandLinkableHandler.getCitizenPackages(initWand);
         refreshSentCache();
+
+        // AE theme: probe the AE2 frame texture ONCE per screen open (never per frame).
+        // Silent procedural fallback (drawAeFrame) if the asset path is absent.
+        this.aeBackgroundPresent = this.minecraft != null
+                && this.minecraft.getResourceManager().getResource(AE_BACKGROUND).isPresent();
     }
 
     /**
@@ -802,6 +822,8 @@ public class ColonyLinkScreen extends Screen
                 bg = _tabCfg.tabInactiveBg(); bl = _tabCfg.tabInactiveLight(); bd = _tabCfg.tabInactiveDark();
             }
 
+            // Control category: tab chrome follows the floored control alpha.
+            bg = _tabCfg.applyControl(bg); bl = _tabCfg.applyControl(bl); bd = _tabCfg.applyControl(bd);
             g.fill(tx, ty, tx + tw, ty + th, bg);
             g.fill(tx, ty, tx + tw, ty + 1, bl);
             g.fill(tx, ty, tx + 1, ty + th, bl);
@@ -825,14 +847,16 @@ public class ColonyLinkScreen extends Screen
         {
             int tx = getGuiX() - TAB_WIDTH, ty = getAddTabY(), tw = TAB_WIDTH, th = TAB_HEIGHT;
             boolean hov = mx >= tx && mx <= tx + tw && my >= ty && my <= ty + th;
-            g.fill(tx, ty, tx + tw, ty + th, hov ? 0xFF226622 : 0xFF1A4A1A);
-            g.fill(tx, ty, tx + tw, ty + 1, 0xFF44AA44);
-            g.fill(tx, ty, tx + 1, ty + th, 0xFF44AA44);
-            g.fill(tx, ty + th - 1, tx + tw, ty + th, 0xFF113311);
-            g.fill(tx + tw - 1, ty, tx + tw, ty + th, 0xFF113311);
+            ColonyLinkGuiConfig _addCfg = ColonyLinkGuiConfig.get();
+            // Control category: add-builder tab follows the floored control alpha.
+            g.fill(tx, ty, tx + tw, ty + th, _addCfg.applyControl(hov ? 0xFF226622 : 0xFF1A4A1A));
+            g.fill(tx, ty, tx + tw, ty + 1, _addCfg.applyControl(0xFF44AA44));
+            g.fill(tx, ty, tx + 1, ty + th, _addCfg.applyControl(0xFF44AA44));
+            g.fill(tx, ty + th - 1, tx + tw, ty + th, _addCfg.applyControl(0xFF113311));
+            g.fill(tx + tw - 1, ty, tx + tw, ty + th, _addCfg.applyControl(0xFF113311));
             int cx = tx + tw / 2, cy = ty + th / 2;
-            g.fill(cx - 3, cy - 1, cx + 4, cy + 2, 0xFF44FF44);
-            g.fill(cx - 1, cy - 3, cx + 2, cy + 4, 0xFF44FF44);
+            g.fill(cx - 3, cy - 1, cx + 4, cy + 2, _addCfg.applyControl(0xFF44FF44));
+            g.fill(cx - 1, cy - 3, cx + 2, cy + 4, _addCfg.applyControl(0xFF44FF44));
             if (hov)
             {
                 tip.clear();
@@ -866,6 +890,8 @@ public class ColonyLinkScreen extends Screen
                 bd = _tabCfg.tabInactiveDark();
             }
 
+            // Control category: Citizens tab chrome follows the floored control alpha.
+            bg = _tabCfg.applyControl(bg); bl = _tabCfg.applyControl(bl); bd = _tabCfg.applyControl(bd);
             g.fill(drawTx, ty, drawTx + tw, ty + th, bg);
             g.fill(drawTx, ty, drawTx + tw, ty + 1, bl);
             g.fill(drawTx, ty, drawTx + 1, ty + th, bl);
@@ -874,9 +900,9 @@ public class ColonyLinkScreen extends Screen
 
             // Icône bonhomme pixel-art centrée — neutre, thémée
             int cx = drawTx + tw / 2, cy = ty + th / 2 - 1;
-            int col = _tabCfg.isAe()
+            int col = _tabCfg.applyControl(_tabCfg.isAe()
                     ? (active ? 0xFFF2F2F2 : (hov ? 0xFFCBCCD4 : 0xFF9A9FB4))
-                    : (active ? 0xFFEEEEEE : (hov ? 0xFFCCCCCC : 0xFFAAAAAA));
+                    : (active ? 0xFFEEEEEE : (hov ? 0xFFCCCCCC : 0xFFAAAAAA)));
             g.fill(cx - 2, cy - 5, cx + 3, cy - 1, col); // tête
             g.fill(cx - 3, cy - 1, cx + 4, cy + 3, col); // corps
             g.fill(cx - 3, cy + 3, cx - 1, cy + 6, col); // jambe gauche
@@ -931,18 +957,19 @@ public class ColonyLinkScreen extends Screen
         boolean hov = mx >= bx && mx <= bx + bw && my >= by && my <= by + bh;
 
         // Fond — légèrement différent de la barre de titre pour être visible
-        int bg = ae ? _c.neutralBtnBg(hov) : (hov ? 0xFF505070 : 0xFF404060);
+        // Control category: face, bevels and icon follow the floored control alpha.
+        int bg = _c.applyControl(ae ? _c.neutralBtnBg(hov) : (hov ? 0xFF505070 : 0xFF404060));
         g.fill(bx, by, bx + bw, by + bh, bg);
         // Bordure fine cohérente avec le reste du GUI
-        int _bl = ae ? _c.btnBevelLight() : 0xFF8888AA;
-        int _bd = ae ? _c.btnBevelDark()  : 0xFF222244;
+        int _bl = _c.applyControl(ae ? _c.btnBevelLight() : 0xFF8888AA);
+        int _bd = _c.applyControl(ae ? _c.btnBevelDark()  : 0xFF222244);
         g.fill(bx, by, bx + bw, by + 1, _bl);
         g.fill(bx, by, bx + 1, by + bh, _bl);
         g.fill(bx, by + bh - 1, bx + bw, by + bh, _bd);
         g.fill(bx + bw - 1, by, bx + bw, by + bh, _bd);
 
         // Icône "settings" : 3 lignes horizontales avec un carré (≠ engrenage des tabs)
-        int ic = ae ? _c.iconNeutral(!hov) : (hov ? 0xFFDDDDFF : 0xFF9999CC);
+        int ic = _c.applyControl(ae ? _c.iconNeutral(!hov) : (hov ? 0xFFDDDDFF : 0xFF9999CC));
         int ox = bx + 3, oy = by + 3;
         // Ligne 1 : ─ ■ ─
         g.fill(ox,     oy,     ox + 4, oy + 1, ic);
@@ -971,6 +998,8 @@ public class ColonyLinkScreen extends Screen
         int col  = active ? _c.iconNeutral(false) : (hasRedir ? _c.iconNeutral(true) : 0xFFBB7722);
         int hole = active ? (ae ? 0xFF413F54 : 0xFF8B8B8B)
                           : (hasRedir ? (ae ? 0xFF2B2A38 : 0xFF4A4A4A) : 0xFF5A3A10);
+        // Control category: gear icon follows the floored control alpha.
+        col = _c.applyControl(col); hole = _c.applyControl(hole);
         g.fill(ox + 3, oy + 1, ox + 7, oy + 9, col);
         g.fill(ox + 1, oy + 3, ox + 9, oy + 7, col);
         g.fill(ox + 4, oy,     ox + 6, oy + 2,  col);
@@ -1082,12 +1111,12 @@ public class ColonyLinkScreen extends Screen
         int rbX = getReqBtnX(), rbY = getReqBtnY(), rbW = getReqBtnW(), rbH = getReqBtnH();
         ResourceStatus rs = displayStatus(builderRequest.status(), builderRequest.stack());
         boolean hov = mx >= rbX && mx <= rbX + rbW && my >= rbY && my <= rbY + rbH;
-        int bg = _cr.applyOpacity(hov && isButtonClickable(rs) ? getButtonHoverColor(rs) : getButtonColor(rs));
+        int bg = _cr.applyControl(hov && isButtonClickable(rs) ? getButtonHoverColor(rs) : getButtonColor(rs));
         g.fill(rbX, rbY, rbX + rbW, rbY + rbH, bg);
-        g.fill(rbX, rbY, rbX + rbW, rbY + 1, _cr.btnBevelLight());
-        g.fill(rbX, rbY, rbX + 1, rbY + rbH, _cr.btnBevelLight());
-        g.fill(rbX, rbY + rbH - 1, rbX + rbW, rbY + rbH, _cr.btnBevelDark());
-        g.fill(rbX + rbW - 1, rbY, rbX + rbW, rbY + rbH, _cr.btnBevelDark());
+        g.fill(rbX, rbY, rbX + rbW, rbY + 1, _cr.applyControl(_cr.btnBevelLight()));
+        g.fill(rbX, rbY, rbX + 1, rbY + rbH, _cr.applyControl(_cr.btnBevelLight()));
+        g.fill(rbX, rbY + rbH - 1, rbX + rbW, rbY + rbH, _cr.applyControl(_cr.btnBevelDark()));
+        g.fill(rbX + rbW - 1, rbY, rbX + rbW, rbY + rbH, _cr.applyControl(_cr.btnBevelDark()));
         g.drawCenteredString(this.font, getRequestButtonText(rs), rbX + rbW / 2, rbY + 4, getButtonTextColor(rs));
 
         // Tooltip survol bouton ou ligne item — affiche les infos de substitution si présentes
@@ -1114,7 +1143,7 @@ public class ColonyLinkScreen extends Screen
         boolean cCancellable = builderRequest.cancellable();
         boolean cHov = cCancellable && mx >= cbX && mx <= cbX + cbW && my >= cbY && my <= cbY + cbH;
         int cFill = cCancellable ? (cHov ? 0xFFCC4444 : 0xFF992222) : 0xFF555555;
-        g.fill(cbX, cbY, cbX + cbW, cbY + cbH, _cr.applyOpacity(cFill));
+        g.fill(cbX, cbY, cbX + cbW, cbY + cbH, _cr.applyControl(cFill));
         g.fill(cbX, cbY, cbX + cbW, cbY + 1, _cr.btnBevelLight());
         g.fill(cbX, cbY, cbX + 1, cbY + cbH, _cr.btnBevelLight());
         g.fill(cbX, cbY + cbH - 1, cbX + cbW, cbY + cbH, _cr.btnBevelDark());
@@ -1133,11 +1162,12 @@ public class ColonyLinkScreen extends Screen
         // La face (bg) porte le sens (rouge/orange/…) et reste telle quelle ;
         // seul le bevel (chrome) suit le thème.
         ColonyLinkGuiConfig _c = ColonyLinkGuiConfig.get();
-        g.fill(bx, by, bx + bw, by + bh, bg);
-        g.fill(bx, by, bx + bw, by + 1, _c.btnBevelLight());
-        g.fill(bx, by, bx + 1, by + bh, _c.btnBevelLight());
-        g.fill(bx, by + bh - 1, bx + bw, by + bh, _c.btnBevelDark());
-        g.fill(bx + bw - 1, by, bx + bw, by + bh, _c.btnBevelDark());
+        // Control category: face + bevels follow the floored control alpha; label stays opaque.
+        g.fill(bx, by, bx + bw, by + bh, _c.applyControl(bg));
+        g.fill(bx, by, bx + bw, by + 1, _c.applyControl(_c.btnBevelLight()));
+        g.fill(bx, by, bx + 1, by + bh, _c.applyControl(_c.btnBevelLight()));
+        g.fill(bx, by + bh - 1, bx + bw, by + bh, _c.applyControl(_c.btnBevelDark()));
+        g.fill(bx + bw - 1, by, bx + bw, by + bh, _c.applyControl(_c.btnBevelDark()));
         g.drawCenteredString(this.font, label, bx + bw / 2, by + 3, tc);
     }
 
@@ -1145,23 +1175,25 @@ public class ColonyLinkScreen extends Screen
     {
         if (!hasWarehouseCard || isOutOfPower()) return;
         int sw = 110, sh = 14, sx = getGuiX() + GUI_WIDTH - sw - 8, sy = getWareCheckBtnY();
-        g.fill(sx, sy, sx + sw, sy + sh, 0xFF2A2A2A);
-        g.fill(sx, sy, sx + sw, sy + 1, 0xFF555555);
-        g.fill(sx, sy, sx + 1, sy + sh, 0xFF555555);
-        g.fill(sx, sy + sh - 1, sx + sw, sy + sh, 0xFF111111);
-        g.fill(sx + sw - 1, sy, sx + sw, sy + sh, 0xFF111111);
+        // Control category: the whole toggle follows the floored control alpha; labels stay opaque.
+        ColonyLinkGuiConfig _cSw = ColonyLinkGuiConfig.get();
+        g.fill(sx, sy, sx + sw, sy + sh, _cSw.applyControl(0xFF2A2A2A));
+        g.fill(sx, sy, sx + sw, sy + 1, _cSw.applyControl(0xFF555555));
+        g.fill(sx, sy, sx + 1, sy + sh, _cSw.applyControl(0xFF555555));
+        g.fill(sx, sy + sh - 1, sx + sw, sy + sh, _cSw.applyControl(0xFF111111));
+        g.fill(sx + sw - 1, sy, sx + sw, sy + sh, _cSw.applyControl(0xFF111111));
         int half = sw / 2;
         if (warehousePriority)
         {
-            g.fill(sx + 1, sy + 1, sx + half, sy + sh - 1, 0xFF224422);
-            g.fill(sx + 3, sy + 3, sx + 9, sy + sh - 3, 0xFF00FF88);
+            g.fill(sx + 1, sy + 1, sx + half, sy + sh - 1, _cSw.applyControl(0xFF224422));
+            g.fill(sx + 3, sy + 3, sx + 9, sy + sh - 3, _cSw.applyControl(0xFF00FF88));
         }
         else
         {
-            g.fill(sx + half, sy + 1, sx + sw - 1, sy + sh - 1, 0xFF112244);
-            g.fill(sx + sw - 9, sy + 3, sx + sw - 3, sy + sh - 3, 0xFF4488FF);
+            g.fill(sx + half, sy + 1, sx + sw - 1, sy + sh - 1, _cSw.applyControl(0xFF112244));
+            g.fill(sx + sw - 9, sy + 3, sx + sw - 3, sy + sh - 3, _cSw.applyControl(0xFF4488FF));
         }
-        g.fill(sx + half, sy + 2, sx + half + 1, sy + sh - 2, 0xFF444444);
+        g.fill(sx + half, sy + 2, sx + half + 1, sy + sh - 2, _cSw.applyControl(0xFF444444));
         String networkLabel = "AE2";
         g.drawCenteredString(this.font, Component.translatable("colonylink.screen.toggle.wh").getString(),          sx + half / 2,        sy + 3, warehousePriority ? 0x00FF88 : 0x556655);
         g.drawCenteredString(this.font, networkLabel,  sx + half + half / 2, sy + 3, warehousePriority ? 0x334466 : 0x4488FF);
@@ -1187,11 +1219,12 @@ public class ColonyLinkScreen extends Screen
             default -> { label = Component.translatable("colonylink.screen.btn.check_warehouse").getString(); bg = hov ? 0xFF336633 : 0xFF224422; tc = 0x88FF88; }
         }
         ColonyLinkGuiConfig _cw = ColonyLinkGuiConfig.get();
-        g.fill(bx, by, bx + bw, by + bh, bg);
-        g.fill(bx, by, bx + bw, by + 1, _cw.btnBevelLight());
-        g.fill(bx, by, bx + 1, by + bh, _cw.btnBevelLight());
-        g.fill(bx, by + bh - 1, bx + bw, by + bh, _cw.btnBevelDark());
-        g.fill(bx + bw - 1, by, bx + bw, by + bh, _cw.btnBevelDark());
+        // Control category: face + bevels follow the floored control alpha; label stays opaque.
+        g.fill(bx, by, bx + bw, by + bh, _cw.applyControl(bg));
+        g.fill(bx, by, bx + bw, by + 1, _cw.applyControl(_cw.btnBevelLight()));
+        g.fill(bx, by, bx + 1, by + bh, _cw.applyControl(_cw.btnBevelLight()));
+        g.fill(bx, by + bh - 1, bx + bw, by + bh, _cw.applyControl(_cw.btnBevelDark()));
+        g.fill(bx + bw - 1, by, bx + bw, by + bh, _cw.applyControl(_cw.btnBevelDark()));
         g.drawCenteredString(this.font, label, bx + bw / 2, by + 3, tc);
     }
 
@@ -1234,6 +1267,71 @@ public class ColonyLinkScreen extends Screen
         }
     }
 
+    /**
+     * Layer 1 — AE2 frame drawn by blitting AE2's own background.png as a nine-slice,
+     * re-implemented here with GuiGraphics (AE2's BackgroundGenerator/Blitter are
+     * internal, unpublished API and are NOT called). BORDER=4px corners at native
+     * size; edges tiled 1:1 in {@code AE_BG_TILE}-wide chunks (no scaling, so a
+     * non-integer GUI scale magnifies with nearest-neighbour, not blur).
+     *
+     * NOTE — this draws the border RING only, NOT the centre: drawing the centre would
+     * repaint the body, which layer 1 must leave untouched (the body stays dark until
+     * layer 2). It is a drop-in replacement for the border-only drawAeFrame.
+     *
+     * {@code alpha} is the effective opacity (config opacity multiplied over the
+     * texture's own alpha). The tint is reset to opaque on every exit path.
+     */
+    private static void drawAeNineSlice(GuiGraphics g, int x, int y, int w, int h, float alpha)
+    {
+        // Degenerate: no room for a border ring on both sides — draw nothing.
+        if (w < AE_BG_BORDER * 2 || h < AE_BG_BORDER * 2) return;
+
+        final int b = AE_BG_BORDER;
+        final int innerW = w - b * 2;
+        final int innerH = h - b * 2;
+
+        // 4 corners, native 4x4.
+        blitTinted(g, AE_BACKGROUND, x,         y,         0,           0,           b, b, AE_BG_TEX, AE_BG_TEX, alpha);
+        blitTinted(g, AE_BACKGROUND, x + w - b, y,         AE_BG_TEX-b, 0,           b, b, AE_BG_TEX, AE_BG_TEX, alpha);
+        blitTinted(g, AE_BACKGROUND, x,         y + h - b, 0,           AE_BG_TEX-b, b, b, AE_BG_TEX, AE_BG_TEX, alpha);
+        blitTinted(g, AE_BACKGROUND, x + w - b, y + h - b, AE_BG_TEX-b, AE_BG_TEX-b, b, b, AE_BG_TEX, AE_BG_TEX, alpha);
+
+        // Top / bottom edges, tiled 1:1 (source band is AE_BG_TILE px wide).
+        for (int cx = 0; cx < innerW; cx += AE_BG_TILE)
+        {
+            int tw = Math.min(AE_BG_TILE, innerW - cx);
+            blitTinted(g, AE_BACKGROUND, x + b + cx, y,         b, 0,           tw, b, AE_BG_TEX, AE_BG_TEX, alpha);
+            blitTinted(g, AE_BACKGROUND, x + b + cx, y + h - b, b, AE_BG_TEX-b, tw, b, AE_BG_TEX, AE_BG_TEX, alpha);
+        }
+        // Left / right edges, tiled 1:1.
+        for (int cy = 0; cy < innerH; cy += AE_BG_TILE)
+        {
+            int th = Math.min(AE_BG_TILE, innerH - cy);
+            blitTinted(g, AE_BACKGROUND, x,         y + b + cy, 0,           b, b, th, AE_BG_TEX, AE_BG_TEX, alpha);
+            blitTinted(g, AE_BACKGROUND, x + w - b, y + b + cy, AE_BG_TEX-b, b, b, th, AE_BG_TEX, AE_BG_TEX, alpha);
+        }
+    }
+
+    /**
+     * Tinted texture blit that actually honours alpha. GuiGraphics' raw-ResourceLocation
+     * blit routes to a no-blend, no-colour innerBlit (POSITION_TEX shader), so setColor's
+     * alpha is written but never composited — the blit stays opaque. We reproduce MC's own
+     * tinted-blit discipline (enableBlend -> shader colour -> blit -> disableBlend, cf. the
+     * per-vertex-colour GuiGraphics.innerBlit) around the raw blit. Blend + shader colour are
+     * reset on exit so no later render is tinted. Reusable by AE theme layers 3-5 (tabs and
+     * buttons as textures).
+     */
+    private static void blitTinted(GuiGraphics g, ResourceLocation tex, int x, int y,
+                                   int u, int v, int w, int h, int texW, int texH, float alpha)
+    {
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        g.setColor(1f, 1f, 1f, alpha);
+        g.blit(tex, x, y, u, v, w, h, texW, texH);
+        g.setColor(1f, 1f, 1f, 1f);
+        RenderSystem.disableBlend();
+    }
+
     // ── render() ──────────────────────────────────────────────────────────────
     @Override
     public void render(GuiGraphics g, int rawMx, int rawMy, float pt)
@@ -1258,8 +1356,11 @@ public class ColonyLinkScreen extends Screen
         // Fond
         g.fill(x, y, x + GUI_WIDTH, y + GUI_HEIGHT, _cfg.bg());
 
-        // Bordures : cadre AE fin pixel-perfect en mode AE, sinon bordures config
-        if (_cfg.isAe())
+        // Bordures : en mode AE, cadre AE2 blitté (texture presente) ; sinon repli
+        // procedural drawAeFrame ; mode DEFAULT = bordures config. Memes x/y/w/h.
+        if (_cfg.isAe() && aeBackgroundPresent)
+            drawAeNineSlice(g, x, y, GUI_WIDTH, GUI_HEIGHT, _cfg.alphaBackground());
+        else if (_cfg.isAe())
             drawAeFrame(g, _cfg, x, y, GUI_WIDTH, GUI_HEIGHT);
         else
             _cfg.drawBorders(g, x, y, GUI_WIDTH, GUI_HEIGHT);
@@ -1592,12 +1693,12 @@ public class ColonyLinkScreen extends Screen
                     for (Component ln : entry.tooltipLines()) tip.add(ln);
                 }
 
-                int bg2 = _cl.applyOpacity(getButtonColorWithWarehouse(status, stack, hov && isButtonClickable(status, stack)));
+                int bg2 = _cl.applyControl(getButtonColorWithWarehouse(status, stack, hov && isButtonClickable(status, stack)));
                 g.fill(bx2, by2, bx2 + bw2, by2 + bh2, bg2);
-                g.fill(bx2, by2, bx2 + bw2, by2 + 1, _cl.btnBevelLight());
-                g.fill(bx2, by2, bx2 + 1, by2 + bh2, _cl.btnBevelLight());
-                g.fill(bx2, by2 + bh2 - 1, bx2 + bw2, by2 + bh2, _cl.btnBevelDark());
-                g.fill(bx2 + bw2 - 1, by2, bx2 + bw2, by2 + bh2, _cl.btnBevelDark());
+                g.fill(bx2, by2, bx2 + bw2, by2 + 1, _cl.applyControl(_cl.btnBevelLight()));
+                g.fill(bx2, by2, bx2 + 1, by2 + bh2, _cl.applyControl(_cl.btnBevelLight()));
+                g.fill(bx2, by2 + bh2 - 1, bx2 + bw2, by2 + bh2, _cl.applyControl(_cl.btnBevelDark()));
+                g.fill(bx2 + bw2 - 1, by2, bx2 + bw2, by2 + bh2, _cl.applyControl(_cl.btnBevelDark()));
                 g.drawCenteredString(this.font, getButtonTextWithWarehouse(status, stack),
                         bx2 + bw2 / 2, by2 + 4, getButtonTextColor(status));
             }
@@ -1642,25 +1743,25 @@ public class ColonyLinkScreen extends Screen
                 long ticks = (System.currentTimeMillis() / 400) % 3;
                 String dots = ticks == 0 ? "." : ticks == 1 ? ".." : "...";
                 caLabel     = Component.translatable("colonylink.screen.btn.crafting_anim", dots).getString();
-                caBg        = _cBtn.applyOpacity(caHov ? 0xFF003355 : 0xFF002244);
+                caBg        = _cBtn.applyControl(caHov ? 0xFF003355 : 0xFF002244);
                 caTextColor = 0x55AAFF;
             }
             else if (hasCraft)
             {
                 caLabel     = Component.translatable("colonylink.screen.btn.craft_all").getString();
-                caBg        = _cBtn.applyOpacity(caHov ? 0xFF007700 : 0xFF005500);
+                caBg        = _cBtn.applyControl(caHov ? 0xFF007700 : 0xFF005500);
                 caTextColor = 0x00FF00;
             }
             else
             {
                 caLabel     = Component.translatable("colonylink.screen.btn.craft_all").getString();
-                caBg        = _cBtn.applyOpacity(0xFF333333);
+                caBg        = _cBtn.applyControl(0xFF333333);
                 caTextColor = 0x888888;
             }
 
             g.fill(caX, caY, caX + caW, caY + caH, caBg);
-            g.fill(caX, caY, caX + caW, caY + 1, _cBtn.btnBevelLight()); g.fill(caX, caY, caX + 1, caY + caH, _cBtn.btnBevelLight());
-            g.fill(caX, caY + caH - 1, caX + caW, caY + caH, _cBtn.btnBevelDark()); g.fill(caX + caW - 1, caY, caX + caW, caY + caH, _cBtn.btnBevelDark());
+            g.fill(caX, caY, caX + caW, caY + 1, _cBtn.applyControl(_cBtn.btnBevelLight())); g.fill(caX, caY, caX + 1, caY + caH, _cBtn.applyControl(_cBtn.btnBevelLight()));
+            g.fill(caX, caY + caH - 1, caX + caW, caY + caH, _cBtn.applyControl(_cBtn.btnBevelDark())); g.fill(caX + caW - 1, caY, caX + caW, caY + caH, _cBtn.applyControl(_cBtn.btnBevelDark()));
             g.drawCenteredString(this.font, caLabel, caX + caW / 2, caY + 4, caTextColor);
 
             if (caHov)
@@ -1690,9 +1791,9 @@ public class ColonyLinkScreen extends Screen
             int saX = getSendAllBtnX(), saY = getSendAllBtnY(), saW = getSendAllBtnW(), saH = getSendAllBtnH();
             boolean saHov = mx >= saX && mx <= saX + saW && my >= saY && my <= saY + saH;
             boolean hasAvail = hasSendableItems();
-            g.fill(saX, saY, saX + saW, saY + saH, _cBtn.applyOpacity(hasAvail ? (saHov ? 0xFF0066CC : 0xFF004488) : 0xFF333333));
-            g.fill(saX, saY, saX + saW, saY + 1, _cBtn.btnBevelLight()); g.fill(saX, saY, saX + 1, saY + saH, _cBtn.btnBevelLight());
-            g.fill(saX, saY + saH - 1, saX + saW, saY + saH, _cBtn.btnBevelDark()); g.fill(saX + saW - 1, saY, saX + saW, saY + saH, _cBtn.btnBevelDark());
+            g.fill(saX, saY, saX + saW, saY + saH, _cBtn.applyControl(hasAvail ? (saHov ? 0xFF0066CC : 0xFF004488) : 0xFF333333));
+            g.fill(saX, saY, saX + saW, saY + 1, _cBtn.applyControl(_cBtn.btnBevelLight())); g.fill(saX, saY, saX + 1, saY + saH, _cBtn.applyControl(_cBtn.btnBevelLight()));
+            g.fill(saX, saY + saH - 1, saX + saW, saY + saH, _cBtn.applyControl(_cBtn.btnBevelDark())); g.fill(saX + saW - 1, saY, saX + saW, saY + saH, _cBtn.applyControl(_cBtn.btnBevelDark()));
             g.drawCenteredString(this.font, Component.translatable("colonylink.screen.btn.send_all").getString(), saX + saW / 2, saY + 4, hasAvail ? 0x4488FF : 0x888888);
 
         } // fin du bloc non-Citizens

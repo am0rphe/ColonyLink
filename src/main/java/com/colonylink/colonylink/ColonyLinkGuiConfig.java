@@ -43,6 +43,10 @@ public class ColonyLinkGuiConfig
     public static final float DEFAULT_SCALE        = 0.9f;
     public static final Theme DEFAULT_THEME        = Theme.DEFAULT;
 
+    // Controls (buttons, tabs) keep a minimum alpha so they stay locatable when the
+    // background is made very transparent. Effective control alpha = max(opacity, this).
+    public static final float MIN_CONTROL_OPACITY  = 0.50f;
+
     // ── Champs (sérialisés par Gson) ──────────────────────────────────────────
     public int   bgColor     = DEFAULT_BG_COLOR;
     public int   titleColor  = DEFAULT_TITLE_COLOR;
@@ -211,16 +215,31 @@ public class ColonyLinkGuiConfig
 
     // ── Helpers couleur ───────────────────────────────────────────────────────
 
-    /**
-     * Applique l'opacité configurée sur une couleur ARGB.
-     * L'alpha de la couleur source est multiplié par l'opacité globale.
-     */
-    public int applyOpacity(int argb)
+    /** Background alpha factor (0..1): the raw slider opacity, 10%-100%. */
+    public float alphaBackground() { return opacity; }
+
+    /** Control alpha factor: same slider, floored so buttons/tabs stay visible. */
+    public float alphaControl() { return Math.max(opacity, MIN_CONTROL_OPACITY); }
+
+    /** Scales an ARGB's alpha byte by the given 0..1 factor. */
+    private static int applyAlpha(int argb, float factor)
     {
-        int a = (argb >> 24) & 0xFF;
-        int a2 = (int)(a * opacity);
+        int a  = (argb >> 24) & 0xFF;
+        int a2 = (int)(a * factor);
         return (a2 << 24) | (argb & 0x00FFFFFF);
     }
+
+    /**
+     * Applique l'opacité configurée sur une couleur ARGB (catégorie fond, opacité pleine).
+     * Conservée pour les appelants existants ; équivalente à {@link #applyBackground(int)}.
+     */
+    public int applyOpacity(int argb) { return applyAlpha(argb, alphaBackground()); }
+
+    /** Background-category alpha (full opacity). */
+    public int applyBackground(int argb) { return applyAlpha(argb, alphaBackground()); }
+
+    /** Control-category alpha (floored at MIN_CONTROL_OPACITY). */
+    public int applyControl(int argb) { return applyAlpha(argb, alphaControl()); }
 
     // ── Chrome principal (thème-conscient, opacité appliquée) ──────────────────
 
