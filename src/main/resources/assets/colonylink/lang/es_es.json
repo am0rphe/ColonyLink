@@ -99,6 +99,7 @@
   "colonylink.domum_queue.invalid": "§c[ColonyLink] Objeto Domum no válido: %s (no es un bloque texturizado o le falta MaterialTextureData)",
   "colonylink.domum_queue.no_terminal": "§c[ColonyLink] No se encontró ninguna Terminal de enlace de almacén en esta dimensión. Coloca una y conéctala primero a tu red de AE2.\n§7(Receta: §f%s§7)",
   "colonylink.domum_queue.sent": "§a[ColonyLink] Receta enviada a la terminal — abre la pestaña del codificador para codificarla.",
+  "colonylink.domum_queue.full": "La cola Domum está llena (%s máx.). Codifica o elimina algunas entradas primero.",
   "colonylink.handler.builder_inv_full": "§6[ColonyLink] El inventario del constructor está lleno — libera espacio o espera a que el constructor use objetos.",
   "colonylink.handler.clipboard_not_linked": "§c¡Portapapeles no encontrado o no vinculado!",
   "colonylink.handler.cross_dimension": "§c[ColonyLink] Este constructor está en otra dimensión (§f%s§c). El Portapapeles no puede llegar a colonias en otras dimensiones.",

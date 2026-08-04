@@ -33,6 +33,12 @@ public final class DomumQueueManager
 {
     private static final Map<IGrid, List<ItemStack>> QUEUES = new WeakHashMap<>();
 
+    // A3 — hard cap on the shared queue size. Legitimate use stays well under a few
+    // dozen entries (pruneCraftable drains it continuously as patterns become
+    // craftable). The bound protects the NBT copy persisted on every terminal of the
+    // grid (save bloat) and the size of the full-list DomumQueueSyncPacket broadcast.
+    public static final int MAX_QUEUE_SIZE = 128;
+
     private DomumQueueManager() {}
 
     private static List<ItemStack> queueFor(IGrid grid, Supplier<List<ItemStack>> seed)
@@ -45,6 +51,16 @@ public final class DomumQueueManager
                 if (s != null)
                     for (ItemStack it : s)
                         if (!it.isEmpty()) l.add(it.copyWithCount(1));
+            }
+            // A3 — truncate a reseeded queue to the cap. A world saved before this guard
+            // existed can carry a bloated NBT queue; keep the first MAX_QUEUE_SIZE entries
+            // so the fix also repairs existing saves. Debug-log the dropped count.
+            if (l.size() > MAX_QUEUE_SIZE)
+            {
+                int dropped = l.size() - MAX_QUEUE_SIZE;
+                l.subList(MAX_QUEUE_SIZE, l.size()).clear();
+                ColonyLink.LOGGER.debug("[DomumQueue] Reseeded queue exceeded cap: dropped {} entries (kept {}).",
+                        dropped, MAX_QUEUE_SIZE);
             }
             return l;
         });
@@ -73,13 +89,25 @@ public final class DomumQueueManager
         return false;
     }
 
-    /** Ajoute si absent. Retourne true si ajoute (false = deja en file). */
+    /** Vrai si la queue de cette grille a atteint le plafond. Ne seme pas. */
+    public static synchronized boolean isFull(IGrid grid)
+    {
+        if (grid == null) return false;
+        List<ItemStack> q = QUEUES.get(grid);
+        return q != null && q.size() >= MAX_QUEUE_SIZE;
+    }
+
+    /** Ajoute si absent. Retourne true si ajoute (false = deja en file OU queue pleine). */
     public static synchronized boolean add(IGrid grid, Supplier<List<ItemStack>> seed, ItemStack stack)
     {
         if (grid == null || stack.isEmpty()) return false;
         List<ItemStack> q = queueFor(grid, seed);
         for (ItemStack s : q)
             if (ItemStack.isSameItemSameComponents(s, stack)) return false;
+        // A3 — authoritative cap: refuse once the queue is full. Placed after the dedup
+        // scan so an already-queued item keeps returning false for the same reason as
+        // before (dedup behaviour unchanged). Callers distinguish full via isFull(grid).
+        if (q.size() >= MAX_QUEUE_SIZE) return false;
         q.add(stack.copyWithCount(1));
         return true;
     }

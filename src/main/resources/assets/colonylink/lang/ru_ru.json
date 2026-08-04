@@ -99,6 +99,7 @@
   "colonylink.domum_queue.invalid": "§c[ColonyLink] Неверный предмет Domum: %s (не текстурированный блок или отсутствует MaterialTextureData)",
   "colonylink.domum_queue.no_terminal": "§c[ColonyLink] В этом измерении не найден Терминал связи склада. Поставьте его и сначала подключите к сети AE2.\n§7(Рецепт: §f%s§7)",
   "colonylink.domum_queue.sent": "§a[ColonyLink] Рецепт отправлен в терминал — откройте вкладку кодировщика, чтобы закодировать.",
+  "colonylink.domum_queue.full": "Очередь Domum заполнена (макс. %s). Сначала закодируйте или удалите записи.",
   "colonylink.handler.builder_inv_full": "§6[ColonyLink] Инвентарь строителя полон — освободите место или подождите, пока строитель использует предметы.",
   "colonylink.handler.clipboard_not_linked": "§cБуфер обмена не найден или не привязан!",
   "colonylink.handler.cross_dimension": "§c[ColonyLink] Этот строитель в другом измерении (§f%s§c). Буфер обмена не может связаться с колониями в других измерениях.",

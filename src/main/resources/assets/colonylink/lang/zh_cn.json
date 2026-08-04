@@ -451,6 +451,7 @@
   "colonylink.domum_queue.no_terminal": "§c[ColonyLink] 此维度中未找到仓库链接终端。请先放置一个并将其连接到你的AE2网络。\n§7（配方：§f%s§7）",
   "colonylink.domum_queue.already_queued": "§e[ColonyLink] 配方已在终端排队。",
   "colonylink.domum_queue.sent": "§a[ColonyLink] 配方已发送到终端 — 打开Domum样板编码器进行编码。",
+  "colonylink.domum_queue.full": "Domum 队列已满（上限 %s）。请先编码或移除部分条目。",
   "colonylink.craft_all.base": "§a全部合成：§f%s §a已开始",
   "colonylink.craft_all.failed": "§c，%s 失败",
   "colonylink.craft_all.queued": "§e，%s 已排队（无空闲CPU）",

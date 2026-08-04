@@ -69,6 +69,38 @@ public record DomumQueuePacket(
 
         ServerLevel level = player.serverLevel();
 
+        // A3 — redirector↔wand validation (client is NOT authoritative on redirectorPos).
+        // Only accept a redirectorPos actually linked to THIS player's wand. Same predicate
+        // and dimension guard as CancelRequestPacket. Both known senders are in the Clipboard
+        // screen, so the wand is in the player's inventory or Curios (findWandInInventory
+        // covers both).
+        ItemStack wand = ColonyLinkServerTicker.findWandInInventory(player);
+        if (wand == null)
+        {
+            player.sendSystemMessage(Component.translatable("colonylink.domum_queue.invalid",
+                    net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(packet.domumStack().getItem()).toString()));
+            return;
+        }
+        boolean redirectorLinked = false;
+        for (BuilderEntry e : ColonyLinkWandLinkableHandler.getBuilderEntries(wand))
+        {
+            if (e.hasRedirector() && e.redirectorPos().equals(packet.redirectorPos()))
+            {
+                // Dimension guard: refuse a cross-dimension redirector. Legacy entries
+                // (dimension == null) are not filtered — historical behaviour preserved.
+                if (e.dimension() != null && !e.dimension().equals(level.dimension()))
+                    break;
+                redirectorLinked = true;
+                break;
+            }
+        }
+        if (!redirectorLinked)
+        {
+            player.sendSystemMessage(Component.translatable("colonylink.domum_queue.invalid",
+                    net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(packet.domumStack().getItem()).toString()));
+            return;
+        }
+
         // v1.6.1 — Resout la GRILLE ME du Redirector (via redirectorPos) et ajoute l'item a
         // la queue Domum PARTAGEE de cette grille (DomumQueueManager). L'item apparait alors
         // sur TOUS les terminaux du reseau, pas seulement un. La queue partagee est la source
@@ -91,7 +123,16 @@ public record DomumQueuePacket(
         boolean added = WarehouseLinkTerminalPart.queueDomumOnGrid(
                 level, redirectorGrid, packet.domumStack());
 
-        player.sendSystemMessage(Component.translatable(
-                added ? "colonylink.domum_queue.sent" : "colonylink.domum_queue.already_queued"));
+        // A3 — three outcomes now. queueDomumOnGrid already seeded the grid via add(), so
+        // isFull reflects the true post-seed size: a refused add on a full queue means the
+        // cap was hit (distinct from a plain duplicate). Never reuse already_queued/invalid
+        // for the full case — they would mislead the player.
+        if (added)
+            player.sendSystemMessage(Component.translatable("colonylink.domum_queue.sent"));
+        else if (DomumQueueManager.isFull(redirectorGrid))
+            player.sendSystemMessage(Component.translatable("colonylink.domum_queue.full",
+                    DomumQueueManager.MAX_QUEUE_SIZE));
+        else
+            player.sendSystemMessage(Component.translatable("colonylink.domum_queue.already_queued"));
     }
 }
