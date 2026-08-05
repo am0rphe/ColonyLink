@@ -232,6 +232,7 @@ public class ColonyLinkGuiConfig
     // color="black" → BlockUI Color 0xFF000000). Chrome/status colors are shared
     // with the AE light palette (see light() below); only the body text differs.
     private static final int MC_BODY_TEXT  = 0xFF000000; // pure black on parchment
+    private static final int MC_MUTED_TEXT = 0xFF5A5040; // dark brown-grey secondary text, legible on cream parchment
 
     private boolean ae() { return theme == Theme.AE; }
     private boolean mc() { return theme == Theme.MINECOLONIES; }
@@ -387,7 +388,7 @@ public class ColonyLinkGuiConfig
      *  light body, white in DEFAULT. */
     public int bodyText()  { return mc() ? MC_BODY_TEXT : (ae() ? AE_BODY_TEXT : 0xFFFFFFFF); }
     /** Muted/secondary text tint for the AE light body (raw; guard with isAe()). */
-    public int mutedText() { return AE_MUTED_TEXT; }
+    public int mutedText() { return mc() ? MC_MUTED_TEXT : AE_MUTED_TEXT; }
 
     /** Éclaircit une couleur ARGB par un facteur (helper local, cf. ColonyLinkScreen). */
     private static int lighten(int argb, float f)

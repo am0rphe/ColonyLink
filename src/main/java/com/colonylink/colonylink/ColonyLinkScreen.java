@@ -96,7 +96,7 @@ public class ColonyLinkScreen extends Screen
     // NEVER copied into this repo. Blitted (stretched) to our existing button sizes; only
     // the 4 sizes the validated mapping uses are referenced (large/medium/very_small are
     // unused). Each has a dedicated _disabled variant. No hover sprite exists in MC → hover
-    // feedback is carried by the LABEL colour only (see MC_LABEL_HOVER), never a texture tint.
+    // feedback is carried by DARKENING the texture (see MC_HOVER_DARKEN), label stays black.
     private static ResourceLocation mcGui(String sub)
     { return ResourceLocation.fromNamespaceAndPath("minecolonies", "textures/gui/" + sub); }
     private static final ResourceLocation MC_BTN_ML     = mcGui("builderhut/builder_button_medium_large.png");          // 129x17
@@ -111,12 +111,17 @@ public class ColonyLinkScreen extends Screen
     private static final ResourceLocation MC_BTN_PROBE  = MC_BTN_ML;
     private boolean mcButtonPresent = false;  // probed once in init(), not per frame
 
-    // MineColonies button label colours (Mc-style: black, no shadow; hover = pale yellow,
-    // the DEFAULT_HOVER_COLOR of MineColonies; disabled = grey). The sense is carried by the
-    // label TEXT ("Craft"/"Send"…), not its colour — so MC labels drop the AE_SEM_* tints.
-    private static final int MC_LABEL          = 0xFF000000;
-    private static final int MC_LABEL_HOVER    = 0xFFFFFFA0;
-    private static final int MC_LABEL_DISABLED = 0xFFA0A0A0;
+    // MineColonies button label colours (MC-style: black, no shadow; disabled = grey). The
+    // sense is carried by the label TEXT ("Craft"/"Send"…), not its colour. Hover is NOT shown
+    // by the label (pale yellow was invisible on the light wood) but by darkening the button
+    // BACKGROUND — see MC_HOVER_DARKEN.
+    private static final int   MC_LABEL          = 0xFF000000;
+    private static final int   MC_LABEL_DISABLED = 0xFFA0A0A0;
+    // Hover feedback: multiply the (enabled) button texture by this brightness (~18% darker).
+    private static final float MC_HOVER_DARKEN   = 0.82f;
+    // Very subtle zebra shade for MineColonies list rows: translucent black (~8% alpha) drawn
+    // over even rows so the parchment stays visible through it. NOT an opaque row well.
+    private static final int   MC_ROW_SHADE       = 0x14000000;
 
     // ── #12 : index spécial de la tab Citizens ───────────────────────────────
     private static final int CITIZENS_TAB_INDEX = Integer.MAX_VALUE;
@@ -1137,7 +1142,7 @@ public class ColonyLinkScreen extends Screen
 
         if (!isOutOfPower())
         {
-            g.drawString(this.font, Component.translatable("colonylink.screen.info.builder", builderName).getString(),   x + 10, y + 26, _c.bodyText(), false);
+            drawInfoLine(g, x + 10, y + 26, Component.translatable("colonylink.screen.info.builder", builderName).getString());
 
             // Bouton Locate — à droite sur la ligne Builder, masqué sur l'onglet Citizens
             if (activeTabIndex != CITIZENS_TAB_INDEX)
@@ -1150,10 +1155,10 @@ public class ColonyLinkScreen extends Screen
                         lHov ? 0xFF1A5C2E : 0xFF0F3A1E, Component.translatable("colonylink.screen.btn.locate").getString(), 0xFF44DD88,
                         lHov, true, _c.semGreen());
             }
-            g.drawString(this.font, Component.translatable("colonylink.screen.info.building", buildingName).getString(), x + 10, y + 36, _c.bodyText(), false);
+            drawInfoLine(g, x + 10, y + 36, Component.translatable("colonylink.screen.info.building", buildingName).getString());
 
             String sl = Component.translatable("colonylink.screen.info.status").getString();
-            g.drawString(this.font, sl, x + 10, y + 46, _c.bodyText(), false);
+            drawInfoLine(g, x + 10, y + 46, sl);
             g.drawString(this.font, translateStatus(workerStatus),
                     x + 10 + this.font.width(sl), y + 46, getWorkerStatusColor(), false);
 
@@ -1168,7 +1173,7 @@ public class ColonyLinkScreen extends Screen
             }
 
             int cpuY = workerIdleReason.isEmpty() ? 58 : 66;
-            g.drawString(this.font, Component.translatable("colonylink.screen.info.cpus", availableCpus).getString(), x + 10, y + cpuY, _c.bodyText(), false);
+            drawInfoLine(g, x + 10, y + cpuY, Component.translatable("colonylink.screen.info.cpus", availableCpus).getString());
 
             boolean _ae = _c.isLightBody();
             int rColor = switch (redirectorState) {
@@ -1184,7 +1189,7 @@ public class ColonyLinkScreen extends Screen
                 default           -> redirectorState;
             };
             String rl = Component.translatable("colonylink.screen.info.redirector").getString();
-            g.drawString(this.font, rl, x + 100, y + cpuY, _c.bodyText(), false);
+            drawInfoLine(g, x + 100, y + cpuY, rl);
             g.drawString(this.font, rDisplay, x + 100 + this.font.width(rl), y + cpuY, rColor, false);
         }
         else
@@ -1369,20 +1374,23 @@ public class ColonyLinkScreen extends Screen
 
     /**
      * MineColonies button: the mapped texture (enabled/disabled) blitted STRETCHED to the
-     * existing button rect via blitTintedStretched — NO hover tint (MineColonies has no hover
-     * sprite). {@code srcW/srcH} are the texture's NATIVE size (needed so the whole texture
-     * maps 0..src → 0..dest). The label is drawn black (no shadow), pale-yellow on hover, grey
-     * when disabled, and always opaque. Sense colour is intentionally dropped (the text says it).
+     * existing button rect via blitTintedStretched. {@code srcW/srcH} are the texture's NATIVE
+     * size (needed so the whole texture maps 0..src → 0..dest). Hover DARKENS the wood texture
+     * (MineColonies has no hover sprite); the label is drawn black (no shadow), grey when
+     * disabled, always opaque. Sense colour is intentionally dropped (the text says it).
      */
     private void drawMcButton(GuiGraphics g, int x, int y, int w, int h,
                               ResourceLocation tex, ResourceLocation texDisabled, int srcW, int srcH,
                               String label, boolean enabled, boolean hovered, float alpha)
     {
+        // Hover = darken the enabled wood texture (~18%); label stays black. Disabled uses its
+        // own _disabled texture at full brightness + grey label.
+        float bright = (enabled && hovered) ? MC_HOVER_DARKEN : 1f;
         blitTintedStretched(g, enabled ? tex : texDisabled, x, y, w, h,
-                0f, 0f, srcW, srcH, srcW, srcH, alpha);
+                0f, 0f, srcW, srcH, srcW, srcH, bright, alpha);
         if (label != null && !label.isEmpty())
         {
-            int col = !enabled ? MC_LABEL_DISABLED : (hovered ? MC_LABEL_HOVER : MC_LABEL);
+            int col = enabled ? MC_LABEL : MC_LABEL_DISABLED;
             drawCenteredNoShadow(g, label, x + w / 2, y + (h - 8) / 2, col);
         }
     }
@@ -1402,6 +1410,33 @@ public class ColonyLinkScreen extends Screen
         else if (w >= 30) { te = MC_BTN_QS;   td = MC_BTN_QS_D;   sw = 44;  sh = 16; } // Unlink / Locate / line buttons
         else              { te = MC_BTN_MINI; td = MC_BTN_MINI_D; sw = 14;  sh = 15; } // config gear / cancel ×
         drawMcButton(g, x, y, w, h, te, td, sw, sh, label, enabled, hovered, a);
+    }
+
+    /**
+     * Draws a builder-info line ("§7Label: §fValue"). AE/DEFAULT keep the original colour codes
+     * (grey label / white value read fine on their dark bodies). MineColonies STRIPS the codes —
+     * they'd force an unreadable grey/white on the cream parchment — and draws the label black
+     * (bodyText) + the value in the dark muted tint. Lines with no "§f" (label-only, e.g.
+     * "§7Status: " whose value is drawn separately in a semantic colour) are drawn black.
+     */
+    private void drawInfoLine(GuiGraphics g, int x, int y, String full)
+    {
+        ColonyLinkGuiConfig c = ColonyLinkGuiConfig.get();
+        if (!c.isMineColonies())
+        {
+            g.drawString(this.font, full, x, y, c.bodyText(), false);
+            return;
+        }
+        int sep = full.indexOf("§f");
+        if (sep < 0)
+        {
+            g.drawString(this.font, full.replaceAll("§.", ""), x, y, c.bodyText(), false);
+            return;
+        }
+        String label = full.substring(0, sep).replaceAll("§.", "");
+        String value = full.substring(sep + 2).replaceAll("§.", "");
+        g.drawString(this.font, label, x, y, c.bodyText(), false);
+        g.drawString(this.font, value, x + this.font.width(label), y, c.mutedText(), false);
     }
 
     /** AE-mode label color for a resource-request status (semantic tints). */
@@ -1677,9 +1712,21 @@ public class ColonyLinkScreen extends Screen
                                             int w, int h, float u, float v, int sw, int sh,
                                             int texW, int texH, float alpha)
     {
+        blitTintedStretched(g, tex, x, y, w, h, u, v, sw, sh, texW, texH, 1f, alpha);
+    }
+
+    /**
+     * As above, but multiplies the texture by a grey {@code bright} factor (1.0 = unchanged,
+     * &lt;1.0 = darker). Used for the MineColonies button hover (no hover sprite exists, so we
+     * darken the wood texture instead). Blend + tint are reset on all paths.
+     */
+    private static void blitTintedStretched(GuiGraphics g, ResourceLocation tex, int x, int y,
+                                            int w, int h, float u, float v, int sw, int sh,
+                                            int texW, int texH, float bright, float alpha)
+    {
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
-        g.setColor(1f, 1f, 1f, alpha);
+        g.setColor(bright, bright, bright, alpha);
         g.blit(tex, x, y, w, h, u, v, sw, sh, texW, texH);
         g.setColor(1f, 1f, 1f, 1f);
         RenderSystem.disableBlend();
@@ -1755,13 +1802,25 @@ public class ColonyLinkScreen extends Screen
 
         // Barre de titre
         int _bw = _cfg.frameBorderWidth();
-        g.fill(x + _bw, y + _bw,
-                x + GUI_WIDTH - _bw, y + 22, _cfg.title());
-        // Liseré haut de titre (thémé)
-        int _tc2 = _cfg.applyOpacity(_cfg.titleHi());
-        g.fill(x + _bw, y + _bw,
-                x + GUI_WIDTH - _bw, y + _bw + 2, _tc2);
-        g.drawString(this.font, this.title, x + 58, y + 7, _cfg.titleText(), false);
+        if (_cfg.isMineColonies())
+        {
+            // MineColonies: no grey band (it clashes with the parchment). The title sits
+            // directly on the paper in black, with a thin brown rule under the title zone to
+            // separate it from the content. Buttons (Unlink/Restart) and the drag handle keep
+            // their exact positions — nothing is moved or masked.
+            g.drawString(this.font, this.title, x + 58, y + 7, _cfg.bodyText(), false);
+            g.fill(x + _bw, y + 21, x + GUI_WIDTH - _bw, y + 22, _cfg.applyBackground(MC_PAPER_BORDER));
+        }
+        else
+        {
+            g.fill(x + _bw, y + _bw,
+                    x + GUI_WIDTH - _bw, y + 22, _cfg.title());
+            // Liseré haut de titre (thémé)
+            int _tc2 = _cfg.applyOpacity(_cfg.titleHi());
+            g.fill(x + _bw, y + _bw,
+                    x + GUI_WIDTH - _bw, y + _bw + 2, _tc2);
+            g.drawString(this.font, this.title, x + 58, y + 7, _cfg.titleText(), false);
+        }
 
         // ── Curseur handle drag ✥ — centré entre Unlink et Restart ──────────
         {
@@ -1807,7 +1866,9 @@ public class ColonyLinkScreen extends Screen
                 g.fill(x + 6, y + 79, x + GUI_WIDTH - 6, y + 80, _c.applyOpacity(_c.wellDark()));
                 g.fill(x + GUI_WIDTH - 7, y + 22, x + GUI_WIDTH - 6, y + 80, _c.applyOpacity(_c.wellDark()));
             }
-            boolean _aeC = _c.isAe();
+            // Light-body themes (AE + MineColonies) use the dark muted tint; DEFAULT keeps its
+            // light-grey literal on the dark body.
+            boolean _aeC = _c.isLightBody();
             g.drawCenteredString(this.font, Component.translatable("colonylink.screen.cit.header").getString(), x + GUI_WIDTH / 2 - 12, y + 30, _c.bodyText());
             String countStr = citizensLoading ? Component.translatable("colonylink.screen.cit.loading").getString()
                     : citizenEntries.isEmpty() ? Component.translatable("colonylink.screen.cit.no_requests").getString()
@@ -1894,11 +1955,16 @@ public class ColonyLinkScreen extends Screen
                 {
                     var ce  = citizenEntries.get(i + scrollOffset);
                     int ey  = listY + i * ENTRY_HEIGHT;
-                    // MineColonies: no zebra row background — rows sit on the parchment.
+                    // DEFAULT/AE: opaque zebra wells. MineColonies: very subtle translucent
+                    // shade on even rows so the parchment stays visible through it.
                     if (!_cl.isMineColonies())
                     {
                         int rowBg = _cl.applyOpacity((i % 2 == 0) ? _cl.rowA() : _cl.rowB());
                         g.fill(x + 7, ey, x + 7 + listW, ey + ENTRY_HEIGHT, rowBg);
+                    }
+                    else if (i % 2 == 0)
+                    {
+                        g.fill(x + 7, ey, x + 7 + listW, ey + ENTRY_HEIGHT, _cl.applyOpacity(MC_ROW_SHADE));
                     }
                     g.renderItem(ce.stack(), x + 9, ey + 2);
 
@@ -1924,8 +1990,15 @@ public class ColonyLinkScreen extends Screen
 
                     // Drop the §f prefix (it would force white and override bodyText).
                     g.drawString(this.font, truncName, x + 29, ey + 3, _cl.bodyText(), false);
-                    g.drawString(this.font, "§7" + ce.citizenName() + " §8· §7" + ce.jobName(),
-                            x + 29, ey + 12, 0xAAAAAA, false);
+                    // Sub-line (name · job). The §7/§8 codes force a light grey unreadable on
+                    // the parchment, so MineColonies drops them and uses the dark muted tint;
+                    // AE and DEFAULT keep the original coloured string.
+                    if (_cl.isMineColonies())
+                        g.drawString(this.font, ce.citizenName() + " · " + ce.jobName(),
+                                x + 29, ey + 12, _cl.mutedText(), false);
+                    else
+                        g.drawString(this.font, "§7" + ce.citizenName() + " §8· §7" + ce.jobName(),
+                                x + 29, ey + 12, 0xAAAAAA, false);
 
                     boolean alreadySent = isCitizenSentDisplayed(sentKey(ce));
                     boolean aeBtn = _cl.isAe() && aeButtonPresent;
@@ -2044,21 +2117,26 @@ public class ColonyLinkScreen extends Screen
                 int rc = entry.realCount();
                 int ey = listY + i * ENTRY_HEIGHT;
 
-                // MineColonies: no zebra row background — rows sit on the parchment.
+                // DEFAULT/AE: opaque zebra wells. MineColonies: very subtle translucent
+                // shade on even rows so the parchment stays visible through it.
                 if (!_cl.isMineColonies())
                 {
                     int _rowBg = _cl.applyOpacity((i % 2 == 0) ? _cl.rowA() : _cl.rowB());
                     g.fill(x + 7, ey, x + 7 + listW, ey + ENTRY_HEIGHT, _rowBg);
                 }
+                else if (i % 2 == 0)
+                {
+                    g.fill(x + 7, ey, x + 7 + listW, ey + ENTRY_HEIGHT, _cl.applyOpacity(MC_ROW_SHADE));
+                }
                 g.renderItem(stack, x + 9, ey + 2);
 
                 // ── Nom avec défilement si trop long ──────────────────────────────
                 String rawName = stack.getDisplayName().getString();
-                // AE: plain "[DO] " (same width — the § codes are zero-width, so line
-                // measurement/truncation below is unchanged), then the tag is over-drawn
-                // in semBlue on top. DEFAULT keeps the cyan §b tag.
+                // Light-body themes (AE + MineColonies): plain "[DO] " (same width — the § codes
+                // are zero-width, so line measurement/truncation below is unchanged), then the tag
+                // is over-drawn in semBlue on top. DEFAULT keeps the cyan §b tag.
                 boolean domumTag = entry.isDomum();
-                String prefix  = domumTag ? (_cl.isAe() ? "[DO] " : "§b[DO] §r") : "";
+                String prefix  = domumTag ? (_cl.isLightBody() ? "[DO] " : "§b[DO] §r") : "";
                 String fullText = rc + "x " + rawName;
                 int nameAreaW = listW - 65 - 20; // largeur dispo pour le texte
                 int fullW = this.font.width(prefix + fullText);
@@ -2083,14 +2161,14 @@ public class ColonyLinkScreen extends Screen
                     g.enableScissor(toScreenX(x + 29), toScreenY(ey),
                             toScreenX(x + 29 + nameAreaW), toScreenY(ey + ENTRY_HEIGHT));
                     g.drawString(this.font, prefix + fullText, x + 29 - offset, ey + 6, _cl.bodyText(), false);
-                    if (domumTag && _cl.isAe())
+                    if (domumTag && _cl.isLightBody())
                         g.drawString(this.font, "[DO]", x + 29 - offset, ey + 6, _cl.semBlue(), false);
                     g.disableScissor();
                 }
                 else
                 {
                     g.drawString(this.font, prefix + fullText, x + 29, ey + 6, _cl.bodyText(), false);
-                    if (domumTag && _cl.isAe())
+                    if (domumTag && _cl.isLightBody())
                         g.drawString(this.font, "[DO]", x + 29, ey + 6, _cl.semBlue(), false);
                 }
 
