@@ -66,6 +66,58 @@ public class ColonyLinkScreen extends Screen
     private static final ResourceLocation AE_BTN_PROBE    = ResourceLocation.fromNamespaceAndPath("ae2", "textures/gui/sprites/button.png");
     private boolean aeButtonPresent = false;  // probed once in init(), not per frame
 
+    // ── MineColonies theme — parchment background (layer 1) ───────────────────
+    // colonist_paper.png is a MineColonies GPL-3.0 asset, referenced by
+    // ResourceLocation at runtime ONLY and NEVER copied into this repo. MineColonies
+    // is a required (transitive, via BlockUI) dependency of ColonyLink so the asset is
+    // guaranteed present, but the internal path can change between MC versions; we probe
+    // once at init() and fall back silently to a procedural parchment fill otherwise.
+    // The texture is 190x244; it is stretched over the whole Clipboard body (276x320),
+    // exactly as MineColonies stretches its own fixed-size window paper.
+    private static final ResourceLocation MC_PAPER =
+            ResourceLocation.fromNamespaceAndPath("minecolonies", "textures/gui/citizen/colonist_paper.png");
+    private static final int MC_PAPER_TEX_W  = 190;        // colonist_paper.png width
+    private static final int MC_PAPER_TEX_H  = 244;        // colonist_paper.png height
+    // Internal decorative margin of colonist_paper.png (transparent edge + torn border →
+    // flat cream interior), in TEXTURE pixels. Measured by pixel inspection of the source
+    // asset (center-line scan: alpha-0 edge + dark torn line before the cream plateau).
+    // The paper is blitted OVERSIZED by these margins so the torn border spills OUTSIDE the
+    // Clipboard frame and the cream interior aligns with the body rect. Tune if it drifts.
+    private static final int MC_PAPER_MARGIN_L = 9;
+    private static final int MC_PAPER_MARGIN_R = 10;
+    private static final int MC_PAPER_MARGIN_T = 8;
+    private static final int MC_PAPER_MARGIN_B = 9;
+    private static final int MC_PAPER_FALLBACK = 0xFFE8DCC0; // beige parchment (procedural fallback only)
+    private static final int MC_PAPER_BORDER   = 0xFF6B4E2E; // brown edge (procedural fallback only)
+    private boolean mcPaperPresent = false;   // probed once in init(), not per frame
+
+    // ── MineColonies theme — button textures (layer: buttons) ─────────────────
+    // builderhut/* GPL-3.0 assets, referenced by ResourceLocation at runtime ONLY and
+    // NEVER copied into this repo. Blitted (stretched) to our existing button sizes; only
+    // the 4 sizes the validated mapping uses are referenced (large/medium/very_small are
+    // unused). Each has a dedicated _disabled variant. No hover sprite exists in MC → hover
+    // feedback is carried by the LABEL colour only (see MC_LABEL_HOVER), never a texture tint.
+    private static ResourceLocation mcGui(String sub)
+    { return ResourceLocation.fromNamespaceAndPath("minecolonies", "textures/gui/" + sub); }
+    private static final ResourceLocation MC_BTN_ML     = mcGui("builderhut/builder_button_medium_large.png");          // 129x17
+    private static final ResourceLocation MC_BTN_ML_D   = mcGui("builderhut/builder_button_medium_large_disabled.png");
+    private static final ResourceLocation MC_BTN_S      = mcGui("builderhut/builder_button_small.png");                 // 64x17
+    private static final ResourceLocation MC_BTN_S_D    = mcGui("builderhut/builder_button_small_disabled.png");
+    private static final ResourceLocation MC_BTN_QS     = mcGui("builderhut/builder_button_quite_small.png");           // 44x16
+    private static final ResourceLocation MC_BTN_QS_D   = mcGui("builderhut/builder_button_quite_small_disabled.png");
+    private static final ResourceLocation MC_BTN_MINI   = mcGui("builderhut/builder_button_mini.png");                  // 14x15
+    private static final ResourceLocation MC_BTN_MINI_D = mcGui("builderhut/builder_button_mini_disabled.png");
+    // Pivot probe: one texture stands in for the whole builder-button set (same jar/dir).
+    private static final ResourceLocation MC_BTN_PROBE  = MC_BTN_ML;
+    private boolean mcButtonPresent = false;  // probed once in init(), not per frame
+
+    // MineColonies button label colours (Mc-style: black, no shadow; hover = pale yellow,
+    // the DEFAULT_HOVER_COLOR of MineColonies; disabled = grey). The sense is carried by the
+    // label TEXT ("Craft"/"Send"…), not its colour — so MC labels drop the AE_SEM_* tints.
+    private static final int MC_LABEL          = 0xFF000000;
+    private static final int MC_LABEL_HOVER    = 0xFFFFFFA0;
+    private static final int MC_LABEL_DISABLED = 0xFFA0A0A0;
+
     // ── #12 : index spécial de la tab Citizens ───────────────────────────────
     private static final int CITIZENS_TAB_INDEX = Integer.MAX_VALUE;
 
@@ -508,6 +560,13 @@ public class ColonyLinkScreen extends Screen
         // Layer 4: probe the button-sprite PNG once (proxy for the atlas sprites).
         this.aeButtonPresent = this.minecraft != null
                 && this.minecraft.getResourceManager().getResource(AE_BTN_PROBE).isPresent();
+        // MineColonies theme: probe the parchment texture ONCE per screen open.
+        // Silent procedural parchment fallback if the asset path is absent.
+        this.mcPaperPresent = this.minecraft != null
+                && this.minecraft.getResourceManager().getResource(MC_PAPER).isPresent();
+        // MineColonies buttons: single pivot probe (proxy for the whole builder-button set).
+        this.mcButtonPresent = this.minecraft != null
+                && this.minecraft.getResourceManager().getResource(MC_BTN_PROBE).isPresent();
     }
 
     /**
@@ -753,11 +812,12 @@ public class ColonyLinkScreen extends Screen
 
     private int getWorkerStatusColor()
     {
-        // Theme-aware: in AE the status colors map to the light-body semantic tints
-        // (green stays green, etc.); in DEFAULT the original bright colors are kept
-        // unchanged. The vivid dark-background colors are unreadable on the AE body.
+        // Theme-aware: on any LIGHT body (AE or MineColonies) the status colors map to
+        // the light-calibrated semantic tints (green stays green, etc.); in DEFAULT the
+        // original bright colors are kept unchanged. The vivid dark-background colors are
+        // unreadable on a light parchment/terminal body.
         ColonyLinkGuiConfig c = ColonyLinkGuiConfig.get();
-        boolean ae = c.isAe();
+        boolean ae = c.isLightBody();
         if (workerStatus == null) return ae ? c.semGray() : 0x888888;
         if (workerStatus.equals("Working"))                                    return ae ? c.semGreen()  : 0x00FF00;
         if (workerStatus.equals("Idle"))                                       return ae ? c.semAmber()  : 0xFFFF00;
@@ -994,7 +1054,12 @@ public class ColonyLinkScreen extends Screen
         // Fond — AE + sprite présent : fond nine-slice AE2 sous l'icône ; sinon rendu
         // actuel (face neutre + biseaux). L'icône est dessinée par-dessus dans les deux cas.
         // Control category: face, bevels and icon follow the floored control alpha.
-        if (ae && aeButtonPresent)
+        if (mcButtonReady())
+        {
+            // MineColonies mini wood button under the gear glyph (no label).
+            drawMcButtonAuto(g, bx, by, bw, bh, "", true, hov);
+        }
+        else if (ae && aeButtonPresent)
         {
             drawAeButtonBg(g, bx, by, bw, bh, hov ? AeBtnVis.HOVER : AeBtnVis.NORMAL, _c.alphaControl());
         }
@@ -1014,7 +1079,8 @@ public class ColonyLinkScreen extends Screen
         // Icône "settings" : 3 lignes horizontales avec un carré (≠ engrenage des tabs)
         // AE: dark glyph (AE_BODY_TEXT) so it reads on the light nine-slice button bg;
         // DEFAULT colour unchanged. Icon glyph only — the button background is untouched.
-        int ic = _c.applyControl(ae ? _c.bodyText() : (hov ? 0xFFDDDDFF : 0xFF9999CC));
+        // AE + MineColonies: dark glyph so it reads on the light button bg; DEFAULT unchanged.
+        int ic = _c.applyControl((ae || _c.isMineColonies()) ? _c.bodyText() : (hov ? 0xFFDDDDFF : 0xFF9999CC));
         int ox = bx + 3, oy = by + 3;
         // Ligne 1 : ─ ■ ─
         g.fill(ox,     oy,     ox + 4, oy + 1, ic);
@@ -1059,11 +1125,15 @@ public class ColonyLinkScreen extends Screen
     {
         ColonyLinkGuiConfig _c = ColonyLinkGuiConfig.get();
         int panelH = 58;
-        g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 22 + panelH, _c.applyOpacity(_c.wellBg()));
-        g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 23, _c.applyOpacity(_c.wellLight()));
-        g.fill(x + 6, y + 22, x + 7, y + 22 + panelH, _c.applyOpacity(_c.wellLight()));
-        g.fill(x + 6, y + 22 + panelH - 1, x + GUI_WIDTH - 6, y + 22 + panelH, _c.applyOpacity(_c.wellDark()));
-        g.fill(x + GUI_WIDTH - 7, y + 22, x + GUI_WIDTH - 6, y + 22 + panelH, _c.applyOpacity(_c.wellDark()));
+        // MineColonies: no opaque well — text sits directly on the parchment.
+        if (!_c.isMineColonies())
+        {
+            g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 22 + panelH, _c.applyOpacity(_c.wellBg()));
+            g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 23, _c.applyOpacity(_c.wellLight()));
+            g.fill(x + 6, y + 22, x + 7, y + 22 + panelH, _c.applyOpacity(_c.wellLight()));
+            g.fill(x + 6, y + 22 + panelH - 1, x + GUI_WIDTH - 6, y + 22 + panelH, _c.applyOpacity(_c.wellDark()));
+            g.fill(x + GUI_WIDTH - 7, y + 22, x + GUI_WIDTH - 6, y + 22 + panelH, _c.applyOpacity(_c.wellDark()));
+        }
 
         if (!isOutOfPower())
         {
@@ -1100,7 +1170,7 @@ public class ColonyLinkScreen extends Screen
             int cpuY = workerIdleReason.isEmpty() ? 58 : 66;
             g.drawString(this.font, Component.translatable("colonylink.screen.info.cpus", availableCpus).getString(), x + 10, y + cpuY, _c.bodyText(), false);
 
-            boolean _ae = _c.isAe();
+            boolean _ae = _c.isLightBody();
             int rColor = switch (redirectorState) {
                 case "LINKED"     -> _ae ? _c.semGreen() : 0x00FF00;
                 case "STANDBY"    -> _ae ? _c.semAmber() : 0xFF8800;
@@ -1121,7 +1191,7 @@ public class ColonyLinkScreen extends Screen
         {
             // Out of Power
             int cx = x + GUI_WIDTH / 2;
-            boolean _aeP = _c.isAe();
+            boolean _aeP = _c.isLightBody();
             g.drawCenteredString(this.font, Component.translatable("colonylink.screen.power.title").getString(),          cx, y + 30, _aeP ? _c.semRed() : 0xFF4444);
             g.drawCenteredString(this.font, Component.translatable("colonylink.screen.power.charge").getString(), cx, y + 42, _aeP ? _c.mutedText() : 0xAAAAAA);
             g.drawCenteredString(this.font, Component.translatable("colonylink.screen.power.mods").getString(),  cx, y + 52, _aeP ? _c.mutedText() : 0xAAAAAA);
@@ -1134,11 +1204,15 @@ public class ColonyLinkScreen extends Screen
     {
         ColonyLinkGuiConfig _cr = ColonyLinkGuiConfig.get();
         int pY = y + 80, pH = 30;
-        g.fill(x + 6, pY, x + GUI_WIDTH - 6, pY + pH, _cr.applyOpacity(_cr.reqBg()));
-        g.fill(x + 6, pY, x + GUI_WIDTH - 6, pY + 1, _cr.applyOpacity(_cr.reqLight()));
-        g.fill(x + 6, pY, x + 7, pY + pH, _cr.applyOpacity(_cr.reqLight()));
-        g.fill(x + 6, pY + pH - 1, x + GUI_WIDTH - 6, pY + pH, _cr.applyOpacity(_cr.reqDark()));
-        g.fill(x + GUI_WIDTH - 7, pY, x + GUI_WIDTH - 6, pY + pH, _cr.applyOpacity(_cr.reqDark()));
+        // MineColonies: no opaque request well — content sits on the parchment.
+        if (!_cr.isMineColonies())
+        {
+            g.fill(x + 6, pY, x + GUI_WIDTH - 6, pY + pH, _cr.applyOpacity(_cr.reqBg()));
+            g.fill(x + 6, pY, x + GUI_WIDTH - 6, pY + 1, _cr.applyOpacity(_cr.reqLight()));
+            g.fill(x + 6, pY, x + 7, pY + pH, _cr.applyOpacity(_cr.reqLight()));
+            g.fill(x + 6, pY + pH - 1, x + GUI_WIDTH - 6, pY + pH, _cr.applyOpacity(_cr.reqDark()));
+            g.fill(x + GUI_WIDTH - 7, pY, x + GUI_WIDTH - 6, pY + pH, _cr.applyOpacity(_cr.reqDark()));
+        }
         g.fill(x + 7, pY + 11, x + GUI_WIDTH - 7, pY + 12, _cr.applyOpacity(_cr.isAe() ? 0xFF878FA5 : 0xFF3A3A6A));
         g.drawString(this.font, Component.translatable("colonylink.screen.req.title").getString(), x + 10, pY + 3, _cr.isAe() ? _cr.semBlue() : 0xAAAAFF, false);
 
@@ -1159,7 +1233,11 @@ public class ColonyLinkScreen extends Screen
         int rbX = getReqBtnX(), rbY = getReqBtnY(), rbW = getReqBtnW(), rbH = getReqBtnH();
         ResourceStatus rs = displayStatus(builderRequest.status(), builderRequest.stack());
         boolean hov = mx >= rbX && mx <= rbX + rbW && my >= rbY && my <= rbY + rbH;
-        if (_cr.isAe() && aeButtonPresent)
+        if (mcButtonReady())
+        {
+            drawMcButtonAuto(g, rbX, rbY, rbW, rbH, getRequestButtonText(rs), isButtonClickable(rs), hov);
+        }
+        else if (_cr.isAe() && aeButtonPresent)
         {
             drawAeButton(g, rbX, rbY, rbW, rbH, hov, isButtonClickable(rs), getRequestButtonText(rs), aeStatusTextColor(rs));
         }
@@ -1197,7 +1275,12 @@ public class ColonyLinkScreen extends Screen
         int cbX = getCancelBtnX(), cbY = getCancelBtnY(), cbW = getCancelBtnW(), cbH = getCancelBtnH();
         boolean cCancellable = builderRequest.cancellable();
         boolean cHov = cCancellable && mx >= cbX && mx <= cbX + cbW && my >= cbY && my <= cbY + cbH;
-        if (_cr.isAe() && aeButtonPresent)
+        if (mcButtonReady())
+        {
+            // Mini wood button + our "×" (black / hover pale-yellow / disabled grey).
+            drawMcButtonAuto(g, cbX, cbY, cbW, cbH, "×", cCancellable, cHov);
+        }
+        else if (_cr.isAe() && aeButtonPresent)
         {
             drawAeButtonBg(g, cbX, cbY, cbW, cbH,
                     cCancellable ? aeBtnVis(true, cHov) : AeBtnVis.DISABLED, _cr.alphaControl());
@@ -1275,6 +1358,52 @@ public class ColonyLinkScreen extends Screen
         drawCenteredNoShadow(g, label, x + w / 2, y + (h - 8) / 2, col);
     }
 
+    // ── MineColonies textured button (cousin of drawAeButton, AE code untouched) ──
+
+    /** True when the MineColonies theme is active AND its button textures are available. */
+    private boolean mcButtonReady()
+    {
+        ColonyLinkGuiConfig c = ColonyLinkGuiConfig.get();
+        return c.isMineColonies() && mcPaperPresent && mcButtonPresent;
+    }
+
+    /**
+     * MineColonies button: the mapped texture (enabled/disabled) blitted STRETCHED to the
+     * existing button rect via blitTintedStretched — NO hover tint (MineColonies has no hover
+     * sprite). {@code srcW/srcH} are the texture's NATIVE size (needed so the whole texture
+     * maps 0..src → 0..dest). The label is drawn black (no shadow), pale-yellow on hover, grey
+     * when disabled, and always opaque. Sense colour is intentionally dropped (the text says it).
+     */
+    private void drawMcButton(GuiGraphics g, int x, int y, int w, int h,
+                              ResourceLocation tex, ResourceLocation texDisabled, int srcW, int srcH,
+                              String label, boolean enabled, boolean hovered, float alpha)
+    {
+        blitTintedStretched(g, enabled ? tex : texDisabled, x, y, w, h,
+                0f, 0f, srcW, srcH, srcW, srcH, alpha);
+        if (label != null && !label.isEmpty())
+        {
+            int col = !enabled ? MC_LABEL_DISABLED : (hovered ? MC_LABEL_HOVER : MC_LABEL);
+            drawCenteredNoShadow(g, label, x + w / 2, y + (h - 8) / 2, col);
+        }
+    }
+
+    /**
+     * Convenience: pick the best-fit MineColonies builder-button texture by width (with its
+     * native size for correct UV) and draw at the floored control alpha. Buckets reproduce the
+     * validated mapping (≥100→medium_large, ≥50→small, ≥30→quite_small, else mini).
+     */
+    private void drawMcButtonAuto(GuiGraphics g, int x, int y, int w, int h,
+                                  String label, boolean enabled, boolean hovered)
+    {
+        float a = ColonyLinkGuiConfig.get().alphaControl();
+        ResourceLocation te, td; int sw, sh;
+        if (w >= 100)     { te = MC_BTN_ML;   td = MC_BTN_ML_D;   sw = 129; sh = 17; } // Check WH / Craft All / Send All
+        else if (w >= 50) { te = MC_BTN_S;    td = MC_BTN_S_D;    sw = 64;  sh = 17; } // Req / Restart
+        else if (w >= 30) { te = MC_BTN_QS;   td = MC_BTN_QS_D;   sw = 44;  sh = 16; } // Unlink / Locate / line buttons
+        else              { te = MC_BTN_MINI; td = MC_BTN_MINI_D; sw = 14;  sh = 15; } // config gear / cancel ×
+        drawMcButton(g, x, y, w, h, te, td, sw, sh, label, enabled, hovered, a);
+    }
+
     /** AE-mode label color for a resource-request status (semantic tints). */
     private int aeStatusTextColor(ResourceStatus s)
     {
@@ -1294,6 +1423,12 @@ public class ColonyLinkScreen extends Screen
                             boolean hovered, boolean enabled, int aeLabel)
     {
         ColonyLinkGuiConfig _c = ColonyLinkGuiConfig.get();
+        // MineColonies theme + textures present: mapped wood button, black label.
+        if (mcButtonReady())
+        {
+            drawMcButtonAuto(g, bx, by, bw, bh, label, enabled, hovered);
+            return;
+        }
         // AE theme + sprite present: neutral nine-slice bg, sense carried by the label.
         if (_c.isAe() && aeButtonPresent)
         {
@@ -1393,7 +1528,11 @@ public class ColonyLinkScreen extends Screen
             default -> { label = Component.translatable("colonylink.screen.btn.check_warehouse").getString(); bg = hov ? 0xFF336633 : 0xFF224422; tc = 0x88FF88; aeLabel = _cw.semGreen(); }
         }
         // Control category: face + bevels follow the floored control alpha; label stays opaque.
-        if (_cw.isAe() && aeButtonPresent)
+        if (mcButtonReady())
+        {
+            drawMcButtonAuto(g, bx, by, bw, bh, label, true, hov);
+        }
+        else if (_cw.isAe() && aeButtonPresent)
         {
             drawAeButton(g, bx, by, bw, bh, hov, true, label, aeLabel);
         }
@@ -1529,6 +1668,23 @@ public class ColonyLinkScreen extends Screen
         RenderSystem.disableBlend();
     }
 
+    /**
+     * Like {@link #blitTinted}, but STRETCHES a source region (sw×sh at u,v within a
+     * texW×texH texture) to the destination rect (w×h). Used to blit the MineColonies
+     * parchment (190×244) over the Clipboard body (276×320). Honours opacity/blend.
+     */
+    private static void blitTintedStretched(GuiGraphics g, ResourceLocation tex, int x, int y,
+                                            int w, int h, float u, float v, int sw, int sh,
+                                            int texW, int texH, float alpha)
+    {
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        g.setColor(1f, 1f, 1f, alpha);
+        g.blit(tex, x, y, w, h, u, v, sw, sh, texW, texH);
+        g.setColor(1f, 1f, 1f, 1f);
+        RenderSystem.disableBlend();
+    }
+
     // ── render() ──────────────────────────────────────────────────────────────
     @Override
     public void render(GuiGraphics g, int rawMx, int rawMy, float pt)
@@ -1550,21 +1706,52 @@ public class ColonyLinkScreen extends Screen
         // ── Couleurs depuis ColonyLinkGuiConfig ──────────────────────────────
         ColonyLinkGuiConfig _cfg = ColonyLinkGuiConfig.get();
 
-        // Fond — en AE + texture, le corps clair vient du centre tuilé (layer 2),
-        // dessiné avec le cadre dans drawAeNineSlice ; mêmes x/y/w/h que le fill.
-        // Sinon : fill (sombre config en DEFAULT, ou repli AE procédural drawAeFrame).
+        // Fond + cadre selon le thème. DEFAULT et AE inchangés (mêmes branches).
+        // MINECOLONIES (layer 1) : parchemin blitté plein-corps, sinon repli beige.
         boolean _aeTex = _cfg.isAe() && aeBackgroundPresent;
-        if (!_aeTex)
-            g.fill(x, y, x + GUI_WIDTH, y + GUI_HEIGHT, _cfg.bg());
-
-        // Bordures : en mode AE, cadre AE2 blitté (texture presente, + centre clair) ;
-        // sinon repli procedural drawAeFrame ; mode DEFAULT = bordures config.
+        boolean _mcTex = _cfg.isMineColonies() && mcPaperPresent;
         if (_aeTex)
+        {
+            // AE : le nine-slice peint corps + cadre en un passage (pas de fill préalable).
             drawAeNineSlice(g, x, y, GUI_WIDTH, GUI_HEIGHT, _cfg.alphaBackground(), true);
-        else if (_cfg.isAe())
-            drawAeFrame(g, _cfg, x, y, GUI_WIDTH, GUI_HEIGHT);
+        }
+        else if (_mcTex)
+        {
+            // MineColonies : parchemin blitté OVERSIZED. On déborde de sa marge interne
+            // déchirée vers l'extérieur pour que la zone crème plate coïncide avec le corps
+            // (x, y, GUI_WIDTH, GUI_HEIGHT) et que les bords déchirés sortent du cadre.
+            // Marge écran = marge texture × ratio d'étirement (corps / texture).
+            float _rx = (float) GUI_WIDTH  / MC_PAPER_TEX_W;   // ≈ 1.453
+            float _ry = (float) GUI_HEIGHT / MC_PAPER_TEX_H;   // ≈ 1.311
+            int _ml = Math.round(MC_PAPER_MARGIN_L * _rx);
+            int _mr = Math.round(MC_PAPER_MARGIN_R * _rx);
+            int _mt = Math.round(MC_PAPER_MARGIN_T * _ry);
+            int _mb = Math.round(MC_PAPER_MARGIN_B * _ry);
+            blitTintedStretched(g, MC_PAPER, x - _ml, y - _mt,
+                    GUI_WIDTH + _ml + _mr, GUI_HEIGHT + _mt + _mb,
+                    0f, 0f, MC_PAPER_TEX_W, MC_PAPER_TEX_H, MC_PAPER_TEX_W, MC_PAPER_TEX_H,
+                    _cfg.alphaBackground());
+        }
+        else if (_cfg.isMineColonies())
+        {
+            // Repli procédural (texture MC absente — jamais vu quand MC est présent) :
+            // fond beige uni + bordure brune simple, façon parchemin approximatif.
+            g.fill(x, y, x + GUI_WIDTH, y + GUI_HEIGHT, _cfg.applyBackground(MC_PAPER_FALLBACK));
+            int _mcb = _cfg.applyBackground(MC_PAPER_BORDER);
+            g.fill(x, y, x + GUI_WIDTH, y + 2, _mcb);
+            g.fill(x, y, x + 2, y + GUI_HEIGHT, _mcb);
+            g.fill(x, y + GUI_HEIGHT - 2, x + GUI_WIDTH, y + GUI_HEIGHT, _mcb);
+            g.fill(x + GUI_WIDTH - 2, y, x + GUI_WIDTH, y + GUI_HEIGHT, _mcb);
+        }
         else
-            _cfg.drawBorders(g, x, y, GUI_WIDTH, GUI_HEIGHT);
+        {
+            // DEFAULT + AE-sans-texture : fill config puis cadre (ordre historique).
+            g.fill(x, y, x + GUI_WIDTH, y + GUI_HEIGHT, _cfg.bg());
+            if (_cfg.isAe())
+                drawAeFrame(g, _cfg, x, y, GUI_WIDTH, GUI_HEIGHT);
+            else
+                _cfg.drawBorders(g, x, y, GUI_WIDTH, GUI_HEIGHT);
+        }
 
         // Barre de titre
         int _bw = _cfg.frameBorderWidth();
@@ -1611,11 +1798,15 @@ public class ColonyLinkScreen extends Screen
         if (activeTabIndex == CITIZENS_TAB_INDEX)
         {
             ColonyLinkGuiConfig _c = ColonyLinkGuiConfig.get();
-            g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 80, _c.applyOpacity(_c.wellBg()));
-            g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 23, _c.applyOpacity(_c.wellLight()));
-            g.fill(x + 6, y + 22, x + 7, y + 80, _c.applyOpacity(_c.wellLight()));
-            g.fill(x + 6, y + 79, x + GUI_WIDTH - 6, y + 80, _c.applyOpacity(_c.wellDark()));
-            g.fill(x + GUI_WIDTH - 7, y + 22, x + GUI_WIDTH - 6, y + 80, _c.applyOpacity(_c.wellDark()));
+            // MineColonies: no opaque header well — text sits on the parchment.
+            if (!_c.isMineColonies())
+            {
+                g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 80, _c.applyOpacity(_c.wellBg()));
+                g.fill(x + 6, y + 22, x + GUI_WIDTH - 6, y + 23, _c.applyOpacity(_c.wellLight()));
+                g.fill(x + 6, y + 22, x + 7, y + 80, _c.applyOpacity(_c.wellLight()));
+                g.fill(x + 6, y + 79, x + GUI_WIDTH - 6, y + 80, _c.applyOpacity(_c.wellDark()));
+                g.fill(x + GUI_WIDTH - 7, y + 22, x + GUI_WIDTH - 6, y + 80, _c.applyOpacity(_c.wellDark()));
+            }
             boolean _aeC = _c.isAe();
             g.drawCenteredString(this.font, Component.translatable("colonylink.screen.cit.header").getString(), x + GUI_WIDTH / 2 - 12, y + 30, _c.bodyText());
             String countStr = citizensLoading ? Component.translatable("colonylink.screen.cit.loading").getString()
@@ -1675,9 +1866,13 @@ public class ColonyLinkScreen extends Screen
         // Liste
         ColonyLinkGuiConfig _cl = ColonyLinkGuiConfig.get();
         int listW = GUI_WIDTH - 26, listY = getListStartY();
-        g.fill(x + 6, listY - 1, x + GUI_WIDTH - 18, listY - 1 + MAX_VISIBLE * ENTRY_HEIGHT + 1, _cl.applyOpacity(_cl.listBg()));
-        g.fill(x + 6, listY - 1, x + GUI_WIDTH - 18, listY, _cl.applyOpacity(_cl.wellLight()));
-        g.fill(x + 6, listY - 1, x + 7, listY - 1 + MAX_VISIBLE * ENTRY_HEIGHT + 1, _cl.applyOpacity(_cl.wellLight()));
+        // MineColonies: no opaque list well — rows sit directly on the parchment.
+        if (!_cl.isMineColonies())
+        {
+            g.fill(x + 6, listY - 1, x + GUI_WIDTH - 18, listY - 1 + MAX_VISIBLE * ENTRY_HEIGHT + 1, _cl.applyOpacity(_cl.listBg()));
+            g.fill(x + 6, listY - 1, x + GUI_WIDTH - 18, listY, _cl.applyOpacity(_cl.wellLight()));
+            g.fill(x + 6, listY - 1, x + 7, listY - 1 + MAX_VISIBLE * ENTRY_HEIGHT + 1, _cl.applyOpacity(_cl.wellLight()));
+        }
 
         // #12 : tab Citizens active → liste lecture seule des requêtes citoyens non-builders
         if (activeTabIndex == CITIZENS_TAB_INDEX)
@@ -1699,8 +1894,12 @@ public class ColonyLinkScreen extends Screen
                 {
                     var ce  = citizenEntries.get(i + scrollOffset);
                     int ey  = listY + i * ENTRY_HEIGHT;
-                    int rowBg = _cl.applyOpacity((i % 2 == 0) ? _cl.rowA() : _cl.rowB());
-                    g.fill(x + 7, ey, x + 7 + listW, ey + ENTRY_HEIGHT, rowBg);
+                    // MineColonies: no zebra row background — rows sit on the parchment.
+                    if (!_cl.isMineColonies())
+                    {
+                        int rowBg = _cl.applyOpacity((i % 2 == 0) ? _cl.rowA() : _cl.rowB());
+                        g.fill(x + 7, ey, x + 7 + listW, ey + ENTRY_HEIGHT, rowBg);
+                    }
                     g.renderItem(ce.stack(), x + 9, ey + 2);
 
                     String itemName = ce.stack().getDisplayName().getString();
@@ -1730,10 +1929,15 @@ public class ColonyLinkScreen extends Screen
 
                     boolean alreadySent = isCitizenSentDisplayed(sentKey(ce));
                     boolean aeBtn = _cl.isAe() && aeButtonPresent;
+                    boolean mcBtn = mcButtonReady();
                     if (alreadySent && hasBtn)
                     {
                         // Grisé — déjà envoyé, mais recliquable pour renvoyer
-                        if (aeBtn)
+                        if (mcBtn)
+                        {
+                            drawMcButtonAuto(g, btnX, btnY, btnW, btnH, Component.translatable("colonylink.screen.cit.sent").getString(), false, btnHov);
+                        }
+                        else if (aeBtn)
                         {
                             drawAeButtonBg(g, btnX, btnY, btnW, btnH, AeBtnVis.DISABLED, _cl.alphaControl());
                             drawCenteredNoShadow(g, Component.translatable("colonylink.screen.cit.sent").getString(), btnX + btnW / 2, btnY + 3, _cl.semGray());
@@ -1751,7 +1955,11 @@ public class ColonyLinkScreen extends Screen
                     }
                     else if (ceCanSend)
                     {
-                        if (aeBtn)
+                        if (mcBtn)
+                        {
+                            drawMcButtonAuto(g, btnX, btnY, btnW, btnH, Component.translatable("colonylink.screen.btn.send").getString(), true, btnHov);
+                        }
+                        else if (aeBtn)
                         {
                             drawAeButton(g, btnX, btnY, btnW, btnH, btnHov, true, Component.translatable("colonylink.screen.btn.send").getString(), _cl.semBlue());
                         }
@@ -1768,7 +1976,11 @@ public class ColonyLinkScreen extends Screen
                     }
                     else if (ceCanCraft)
                     {
-                        if (aeBtn)
+                        if (mcBtn)
+                        {
+                            drawMcButtonAuto(g, btnX, btnY, btnW, btnH, Component.translatable("colonylink.screen.btn.craft").getString(), true, btnHov);
+                        }
+                        else if (aeBtn)
                         {
                             drawAeButton(g, btnX, btnY, btnW, btnH, btnHov, true, Component.translatable("colonylink.screen.btn.craft").getString(), _cl.semGreen());
                         }
@@ -1832,8 +2044,12 @@ public class ColonyLinkScreen extends Screen
                 int rc = entry.realCount();
                 int ey = listY + i * ENTRY_HEIGHT;
 
-                int _rowBg = _cl.applyOpacity((i % 2 == 0) ? _cl.rowA() : _cl.rowB());
-                g.fill(x + 7, ey, x + 7 + listW, ey + ENTRY_HEIGHT, _rowBg);
+                // MineColonies: no zebra row background — rows sit on the parchment.
+                if (!_cl.isMineColonies())
+                {
+                    int _rowBg = _cl.applyOpacity((i % 2 == 0) ? _cl.rowA() : _cl.rowB());
+                    g.fill(x + 7, ey, x + 7 + listW, ey + ENTRY_HEIGHT, _rowBg);
+                }
                 g.renderItem(stack, x + 9, ey + 2);
 
                 // ── Nom avec défilement si trop long ──────────────────────────────
@@ -1929,7 +2145,12 @@ public class ColonyLinkScreen extends Screen
                     for (Component ln : entry.tooltipLines()) tip.add(ln);
                 }
 
-                if (_cl.isAe() && aeButtonPresent)
+                if (mcButtonReady())
+                {
+                    drawMcButtonAuto(g, bx2, by2, bw2, bh2,
+                            getButtonTextWithWarehouse(status, stack), isButtonClickable(status, stack), hov);
+                }
+                else if (_cl.isAe() && aeButtonPresent)
                 {
                     drawAeButton(g, bx2, by2, bw2, bh2, hov, isButtonClickable(status, stack),
                             getButtonTextWithWarehouse(status, stack), aeStatusTextColor(status));
@@ -2005,7 +2226,11 @@ public class ColonyLinkScreen extends Screen
 
             boolean caEnabled = craftInProgress || hasCraft;
             int caAeLabel = craftInProgress ? _cBtn.semBlue() : _cBtn.semGreen();
-            if (_cBtn.isAe() && aeButtonPresent)
+            if (mcButtonReady())
+            {
+                drawMcButtonAuto(g, caX, caY, caW, caH, caLabel, caEnabled, caHov);
+            }
+            else if (_cBtn.isAe() && aeButtonPresent)
             {
                 drawAeButton(g, caX, caY, caW, caH, caHov, caEnabled, caLabel, caAeLabel);
             }
@@ -2044,7 +2269,11 @@ public class ColonyLinkScreen extends Screen
             int saX = getSendAllBtnX(), saY = getSendAllBtnY(), saW = getSendAllBtnW(), saH = getSendAllBtnH();
             boolean saHov = mx >= saX && mx <= saX + saW && my >= saY && my <= saY + saH;
             boolean hasAvail = hasSendableItems();
-            if (_cBtn.isAe() && aeButtonPresent)
+            if (mcButtonReady())
+            {
+                drawMcButtonAuto(g, saX, saY, saW, saH, Component.translatable("colonylink.screen.btn.send_all").getString(), hasAvail, saHov);
+            }
+            else if (_cBtn.isAe() && aeButtonPresent)
             {
                 drawAeButton(g, saX, saY, saW, saH, saHov, hasAvail, Component.translatable("colonylink.screen.btn.send_all").getString(), _cBtn.semBlue());
             }

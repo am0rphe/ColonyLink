@@ -64,7 +64,9 @@ public class ColonyLinkConfigScreen extends Screen
     }
 
     /** Les contrôles de couleur (bg/title/border + épaisseur) sont verrouillés en thème AE. */
-    private boolean colorsLocked() { return wTheme == ColonyLinkGuiConfig.Theme.AE; }
+    // Colors are driven by the theme's own texture/palette in AE and MineColonies,
+    // so the R/G/B sliders are locked for both (only DEFAULT exposes them).
+    private boolean colorsLocked() { return wTheme != ColonyLinkGuiConfig.Theme.DEFAULT; }
 
     // ── Coordonnées ───────────────────────────────────────────────────────────
 
@@ -135,19 +137,37 @@ public class ColonyLinkConfigScreen extends Screen
         int bx = themeBtnX(), by = themeBtnY(), bw = themeBtnW(), bh = themeBtnH();
         boolean hov = mx >= bx && mx <= bx + bw && my >= by && my <= by + bh;
         boolean ae = wTheme == ColonyLinkGuiConfig.Theme.AE;
+        boolean mc = wTheme == ColonyLinkGuiConfig.Theme.MINECOLONIES;
 
-        // Fond : teinte AE (lavande) quand AE actif, gris neutre sinon
-        int bg = ae ? (hov ? 0xFF878FA5 : 0xFF696D88) : (hov ? 0xFF505050 : 0xFF404040);
+        // Fond : teinte AE (lavande) en AE, beige parchemin en MineColonies, gris sinon.
+        int bg, bevelLight, bevelDark, textCol;
+        String name;
+        if (ae)
+        {
+            bg = hov ? 0xFF878FA5 : 0xFF696D88;
+            bevelLight = 0xFFF2F2F2; bevelDark = 0xFF413F54; textCol = 0xFFEFEFFF;
+            name = Component.translatable("colonylink.cfg.theme_ae").getString();
+        }
+        else if (mc)
+        {
+            bg = hov ? 0xFFC8B487 : 0xFFB0996E;      // parchment beige
+            bevelLight = 0xFFEDE0C0; bevelDark = 0xFF6B4E2E; textCol = 0xFF2A1E0E;
+            name = Component.translatable("colonylink.cfg.theme_minecolonies").getString();
+        }
+        else
+        {
+            bg = hov ? 0xFF505050 : 0xFF404040;
+            bevelLight = 0xFF888888; bevelDark = 0xFF222222; textCol = 0xFFDDDDDD;
+            name = Component.translatable("colonylink.cfg.theme_default").getString();
+        }
         g.fill(bx, by, bx + bw, by + bh, bg);
-        g.fill(bx, by, bx + bw, by + 1, ae ? 0xFFF2F2F2 : 0xFF888888);
-        g.fill(bx, by, bx + 1, by + bh, ae ? 0xFFF2F2F2 : 0xFF888888);
-        g.fill(bx, by + bh - 1, bx + bw, by + bh, ae ? 0xFF413F54 : 0xFF222222);
-        g.fill(bx + bw - 1, by, bx + bw, by + bh, ae ? 0xFF413F54 : 0xFF222222);
+        g.fill(bx, by, bx + bw, by + 1, bevelLight);
+        g.fill(bx, by, bx + 1, by + bh, bevelLight);
+        g.fill(bx, by + bh - 1, bx + bw, by + bh, bevelDark);
+        g.fill(bx + bw - 1, by, bx + bw, by + bh, bevelDark);
 
-        String name = ae ? Component.translatable("colonylink.cfg.theme_ae").getString()
-                         : Component.translatable("colonylink.cfg.theme_default").getString();
         String label = Component.translatable("colonylink.cfg.theme", name).getString();
-        g.drawCenteredString(this.font, label, bx + bw / 2, by + 3, ae ? 0xFFEFEFFF : 0xFFDDDDDD);
+        g.drawCenteredString(this.font, label, bx + bw / 2, by + 3, textCol);
     }
 
     private void drawTabs(GuiGraphics g, int mx, int my)
@@ -204,12 +224,15 @@ public class ColonyLinkConfigScreen extends Screen
                     names[i] + " §f" + vals[i], colors[i], sliderBase + i, enabled);
         }
 
-        // Bandeau de verrouillage en thème AE
+        // Bandeau de verrouillage — thème-conscient (AE ou MineColonies).
         if (!enabled)
         {
+            boolean mc = wTheme == ColonyLinkGuiConfig.Theme.MINECOLONIES;
+            String lockKey  = mc ? "colonylink.cfg.locked_minecolonies"      : "colonylink.cfg.locked_ae";
+            String hintKey  = mc ? "colonylink.cfg.locked_minecolonies_hint" : "colonylink.cfg.locked_ae_hint";
             int oy = sy + 3 * 36 + 2;
-            g.drawString(this.font, Component.translatable("colonylink.cfg.locked_ae").getString(), sx, oy, 0xFF9A9FB4, false);
-            g.drawString(this.font, Component.translatable("colonylink.cfg.locked_ae_hint").getString(), sx, oy + 11, 0x888888, false);
+            g.drawString(this.font, Component.translatable(lockKey).getString(), sx, oy, 0xFF9A9FB4, false);
+            g.drawString(this.font, Component.translatable(hintKey).getString(), sx, oy + 11, 0x888888, false);
         }
     }
 
@@ -312,15 +335,18 @@ public class ColonyLinkConfigScreen extends Screen
         // Label
         g.drawString(this.font, Component.translatable("colonylink.cfg.preview").getString(), px, py - 10, 0x888888, false);
 
-        // Calcul couleurs avec opacité de travail — en AE, aperçu de la palette
+        // Calcul couleurs avec opacité de travail — AE : palette lavande ;
+        // MineColonies : parchemin beige ; DEFAULT : couleurs config.
         boolean ae = wTheme == ColonyLinkGuiConfig.Theme.AE;
-        int srcBg     = ae ? 0xFFADB0C4 : wBgColor;
-        int srcTitle  = ae ? 0xFF878FA5 : wTitleColor;
+        boolean mc = wTheme == ColonyLinkGuiConfig.Theme.MINECOLONIES;
+        int srcBg     = ae ? 0xFFADB0C4 : (mc ? 0xFFE8DCC0 : wBgColor);
+        int srcTitle  = ae ? 0xFF878FA5 : (mc ? 0xFFCBB98E : wTitleColor);
         int bgC     = applyOpacity(srcBg, wOpacity);
         int titleC  = applyOpacity(srcTitle, wOpacity);
-        int borderC = applyOpacity(ae ? 0xFFF2F2F2 : wBorderColor, wOpacity);
-        int shadowC = ae ? applyOpacity(0xFF413F54, wOpacity) : darken(borderC, 0.5f);
-        int bw      = ae ? 2 : wBorderWidth;
+        int borderC = applyOpacity(ae ? 0xFFF2F2F2 : (mc ? 0xFF6B4E2E : wBorderColor), wOpacity);
+        int shadowC = ae ? applyOpacity(0xFF413F54, wOpacity)
+                         : (mc ? applyOpacity(0xFF4A3320, wOpacity) : darken(borderC, 0.5f));
+        int bw      = ae ? 2 : (mc ? 2 : wBorderWidth);
 
         // Fond
         g.fill(px + bw, py + bw, px + pw - bw, py + ph - bw, bgC);
@@ -389,8 +415,9 @@ public class ColonyLinkConfigScreen extends Screen
             int bx = themeBtnX(), by = themeBtnY(), bw = themeBtnW(), bh = themeBtnH();
             if (mx >= bx && mx <= bx + bw && my >= by && my <= by + bh)
             {
-                wTheme = (wTheme == ColonyLinkGuiConfig.Theme.AE)
-                        ? ColonyLinkGuiConfig.Theme.DEFAULT : ColonyLinkGuiConfig.Theme.AE;
+                // Cycle DEFAULT → AE → MINECOLONIES → DEFAULT.
+                ColonyLinkGuiConfig.Theme[] _themes = ColonyLinkGuiConfig.Theme.values();
+                wTheme = _themes[(wTheme.ordinal() + 1) % _themes.length];
                 return true;
             }
         }

@@ -28,11 +28,13 @@ import java.nio.file.Path;
 public class ColonyLinkGuiConfig
 {
     // ── Thème d'apparence ─────────────────────────────────────────────────────
-    // DEFAULT = apparence historique du Clipboard, pilotée par bg/title/border.
-    // AE      = réplique du look Warehouse Link Terminal (palette extraite de
-    //           TerminalSkin/WarehouseLinkTerminalScreen). Appearance-only : aucun
-    //           comportement, packet ou logique n'en dépend.
-    public enum Theme { DEFAULT, AE }
+    // DEFAULT      = apparence historique du Clipboard, pilotée par bg/title/border.
+    // AE           = réplique du look Warehouse Link Terminal (palette extraite de
+    //                TerminalSkin/WarehouseLinkTerminalScreen).
+    // MINECOLONIES = réplique du look "parchemin" MineColonies (fond blitté depuis
+    //                minecolonies:textures/gui/citizen/colonist_paper.png à l'exécution).
+    // Appearance-only : aucun comportement, packet ou logique n'en dépend.
+    public enum Theme { DEFAULT, AE, MINECOLONIES }
 
     // ── Defaults ──────────────────────────────────────────────────────────────
     public static final int   DEFAULT_BG_COLOR     = 0xFF8B8B8B;
@@ -225,10 +227,31 @@ public class ColonyLinkGuiConfig
     private static final int AE_BODY_TEXT  = 0xFF413F54; // normal text on the AE light body (= AE2 palette DEFAULT_TEXT)
     private static final int AE_MUTED_TEXT = 0xFF878FA5; // secondary / muted text (= AE2 palette MUTED)
 
-    private boolean ae() { return theme == Theme.AE; }
+    // ── MineColonies theme — body text ────────────────────────────────────────
+    // MineColonies GUIs draw pure-black text on the light parchment body (XML
+    // color="black" → BlockUI Color 0xFF000000). Chrome/status colors are shared
+    // with the AE light palette (see light() below); only the body text differs.
+    private static final int MC_BODY_TEXT  = 0xFF000000; // pure black on parchment
 
-    /** Vrai si le thème AE est actif — pour quelques widgets bespoke du Screen. */
+    private boolean ae() { return theme == Theme.AE; }
+    private boolean mc() { return theme == Theme.MINECOLONIES; }
+
+    /**
+     * True for any theme with a LIGHT window body (AE or MineColonies). These themes
+     * share the light-calibrated chrome/status palette; DEFAULT keeps its dark palette
+     * and bright status colors. Used so palette accessors branch light-vs-dark rather
+     * than AE-vs-rest.
+     */
+    private boolean light() { return theme == Theme.AE || theme == Theme.MINECOLONIES; }
+
+    /** Vrai si le thème AE est actif — pour les widgets bespoke à texture AE du Screen. */
     public boolean isAe() { return ae(); }
+
+    /** Vrai si le thème MineColonies est actif — pour le fond parchemin du Screen. */
+    public boolean isMineColonies() { return mc(); }
+
+    /** Vrai si le thème a un corps clair (AE ou MineColonies) — texte sombre, chrome clair. */
+    public boolean isLightBody() { return light(); }
 
     // ── Helpers couleur ───────────────────────────────────────────────────────
 
@@ -306,27 +329,30 @@ public class ColonyLinkGuiConfig
     /** Onglet actif — fond (raw). Défaut = bgColor éclairci. */
     public int tabActiveBg()  { return ae() ? AE_TAB_ACTIVE_BG : (lighten(bgColor, 1.1f) | 0xFF000000); }
 
-    public int wellBg()       { return ae() ? AE_WELL_BG      : DEF_WELL_BG; }
+    // Content panels/lists sit BEHIND body text → they follow the light body (AE +
+    // MineColonies share the AE light tints) so black/dark text stays legible.
+    // DEFAULT keeps its dark tints unchanged (light() == false).
+    public int wellBg()       { return light() ? AE_WELL_BG      : DEF_WELL_BG; }
     /** Fond du panneau liste (0xFF373737 en Défaut ≠ wellBg 0xFF3A3A3A). */
-    public int listBg()       { return ae() ? AE_WELL_BG      : DEF_LIST_BG; }
-    public int wellLight()    { return ae() ? AE_WELL_LIGHT   : DEF_WELL_LIGHT; }
-    public int wellDark()     { return ae() ? AE_WELL_DARK    : DEF_WELL_DARK; }
+    public int listBg()       { return light() ? AE_WELL_BG      : DEF_LIST_BG; }
+    public int wellLight()    { return light() ? AE_WELL_LIGHT   : DEF_WELL_LIGHT; }
+    public int wellDark()     { return light() ? AE_WELL_DARK    : DEF_WELL_DARK; }
 
-    public int rowA()         { return ae() ? AE_ROW_A        : DEF_ROW_A; }
-    public int rowB()         { return ae() ? AE_ROW_B        : DEF_ROW_B; }
+    public int rowA()         { return light() ? AE_ROW_A        : DEF_ROW_A; }
+    public int rowB()         { return light() ? AE_ROW_B        : DEF_ROW_B; }
 
-    public int scrollTrack()  { return ae() ? AE_SCROLL_TRACK : DEF_SCROLL_TRACK; }
-    public int scrollThumb()  { return ae() ? AE_SCROLL_THUMB : DEF_SCROLL_THUMB; }
+    public int scrollTrack()  { return light() ? AE_SCROLL_TRACK : DEF_SCROLL_TRACK; }
+    public int scrollThumb()  { return light() ? AE_SCROLL_THUMB : DEF_SCROLL_THUMB; }
 
-    public int separator()    { return ae() ? AE_SEPARATOR    : DEF_SEPARATOR; }
+    public int separator()    { return light() ? AE_SEPARATOR    : DEF_SEPARATOR; }
 
     /** Points de la poignée de drag (raw). {@code hover} → variante claire. */
     public int handleDot(boolean hover)
     { return hover ? (ae() ? AE_HANDLE_HI : DEF_HANDLE_HI) : (ae() ? AE_HANDLE : DEF_HANDLE); }
 
-    public int reqBg()        { return ae() ? AE_REQ_BG    : DEF_REQ_BG; }
-    public int reqLight()     { return ae() ? AE_REQ_LIGHT : DEF_REQ_LIGHT; }
-    public int reqDark()      { return ae() ? AE_REQ_DARK  : DEF_REQ_DARK; }
+    public int reqBg()        { return light() ? AE_REQ_BG    : DEF_REQ_BG; }
+    public int reqLight()     { return light() ? AE_REQ_LIGHT : DEF_REQ_LIGHT; }
+    public int reqDark()      { return light() ? AE_REQ_DARK  : DEF_REQ_DARK; }
 
     /** Bevel clair/sombre des boutons (chrome, pas la face sémantique). */
     public int btnBevelLight() { return ae() ? AE_BTN_LIGHT : DEF_BTN_LIGHT; }
@@ -357,8 +383,9 @@ public class ColonyLinkGuiConfig
     public int semOrange() { return AE_SEM_ORANGE; }
     public int semSlate()  { return AE_SEM_SLATE; }
     public int semGray()   { return AE_SEM_GRAY; }
-    /** Normal body text: dark on the AE light body, white in DEFAULT. */
-    public int bodyText()  { return ae() ? AE_BODY_TEXT : 0xFFFFFFFF; }
+    /** Normal body text: pure black on the MineColonies parchment, AE-dark on the AE
+     *  light body, white in DEFAULT. */
+    public int bodyText()  { return mc() ? MC_BODY_TEXT : (ae() ? AE_BODY_TEXT : 0xFFFFFFFF); }
     /** Muted/secondary text tint for the AE light body (raw; guard with isAe()). */
     public int mutedText() { return AE_MUTED_TEXT; }
 
