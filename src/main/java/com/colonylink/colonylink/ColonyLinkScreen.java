@@ -123,6 +123,36 @@ public class ColonyLinkScreen extends Screen
     // over even rows so the parchment stays visible through it. NOT an opaque row well.
     private static final int   MC_ROW_SHADE       = 0x14000000;
 
+    // ── MineColonies theme — side tab textures (layer: tabs) ──────────────────
+    // modules/tab_left_side{1,2,3}.png (32×26 cream paper tabs, torn edge on the LEFT, attach
+    // edge on the RIGHT). GPL-3.0, blit-only, never copied. The 1/2/3 are visual VARIETY (not
+    // states); we cycle them by tab index. Only the LEFT 20px sub-region is blitted (the right
+    // 12px would tuck under the panel in MineColonies) → 1:1 horizontally, no mirror. States are
+    // done by tint: active = full brightness, inactive = slightly dimmed, hover = darker, and a
+    // translucent colour overlay for unread (blue) / unlinked (brown).
+    private static final ResourceLocation MC_TAB1 = mcGui("modules/tab_left_side1.png");
+    private static final ResourceLocation MC_TAB2 = mcGui("modules/tab_left_side2.png");
+    private static final ResourceLocation MC_TAB3 = mcGui("modules/tab_left_side3.png");
+    private static final ResourceLocation MC_TAB_PROBE = MC_TAB1;
+    private boolean mcTabPresent = false;  // probed once in init(), not per frame
+    private static final float MC_TAB_INACTIVE_DIM = 0.90f;   // inactive tabs slightly dimmed
+    // State is shown on the tab ICON (not a background overlay, which clashed with the torn paper
+    // edge): unread → semBlue, unlinked → this rust colour, normal → dark. Priority unlinked > unread.
+    private static final int   MC_TAB_UNLINKED_ICON = 0xFFB03A20; // rust/red icon for "no redirector"
+    private static final int   MC_TAB_ICON_DARK     = 0xFF2A1E0E; // normal MC tab icon (dark on cream)
+    // Visual-only nudge (+1px right) of the MC tab BLIT (and its icon) so the tab overlaps the
+    // parchment by 1px and hides the dark seam left by the texture's transparent right edge. The
+    // hitbox/getTabX are NOT shifted — clicks stay put.
+    private static final int   MC_TAB_BLIT_DX       = 1;
+
+    // ── MineColonies theme — WH|AE2 toggle (parchment-recoloured procedural) ───
+    // Procedural (not a texture composite): the active half is a raised lighter beige + a coloured
+    // accent bar (green WH / blue AE2) + accent label; the inactive half is neutral beige + muted
+    // label; divider/border in brown. Tunable.
+    private static final int   MC_TOGGLE_BG     = 0xFFC2AC82; // toggle body / inactive half (wood beige)
+    private static final int   MC_TOGGLE_ACTIVE = 0xFFE4D3A8; // raised active half (lighter beige)
+    private static final int   MC_TOGGLE_LIGHT  = 0xFFEAD9B0; // top/left bevel highlight
+
     // ── #12 : index spécial de la tab Citizens ───────────────────────────────
     private static final int CITIZENS_TAB_INDEX = Integer.MAX_VALUE;
 
@@ -572,6 +602,9 @@ public class ColonyLinkScreen extends Screen
         // MineColonies buttons: single pivot probe (proxy for the whole builder-button set).
         this.mcButtonPresent = this.minecraft != null
                 && this.minecraft.getResourceManager().getResource(MC_BTN_PROBE).isPresent();
+        // MineColonies side tabs: single pivot probe (proxy for tab_left_side{1,2,3}).
+        this.mcTabPresent = this.minecraft != null
+                && this.minecraft.getResourceManager().getResource(MC_TAB_PROBE).isPresent();
     }
 
     /**
@@ -874,6 +907,45 @@ public class ColonyLinkScreen extends Screen
     }
 
     // ── Tabs ──────────────────────────────────────────────────────────────────
+
+    /** True when the MineColonies theme is active AND the tab textures are available. */
+    private boolean mcTabReady()
+    {
+        ColonyLinkGuiConfig c = ColonyLinkGuiConfig.get();
+        return c.isMineColonies() && mcPaperPresent && mcTabPresent;
+    }
+
+    /** Cycle tab_left_side1/2/3 by index for visual variety (matches MineColonies). */
+    private static ResourceLocation mcTabTex(int i)
+    {
+        return switch (Math.floorMod(i, 3)) { case 0 -> MC_TAB1; case 1 -> MC_TAB2; default -> MC_TAB3; };
+    }
+
+    /**
+     * MineColonies textured side tab: blits the LEFT 20px of the cream paper tab (no mirror,
+     * 1:1 horizontally, stretched only 26→24 vertically), tinted by brightness ONLY. The unread
+     * and unlinked states are NOT painted onto the tab background (a rectangular overlay clashed
+     * with the torn transparent paper edge); they are carried by the tab ICON colour instead (see
+     * the caller). Priority for brightness: active(1.0) > unlinked/unread(0.90, tab stays neutral)
+     * > hover(0.82) > inactive(0.90). Blend/tint reset by the blit helper.
+     */
+    private void drawMcTab(GuiGraphics g, int tx, int ty, int tw, int th, int variantIndex,
+                           boolean active, boolean hover, boolean unlinked, boolean unread)
+    {
+        ColonyLinkGuiConfig c = ColonyLinkGuiConfig.get();
+        float alpha = c.alphaControl();
+        float bright;
+        if (active)                   bright = 1f;
+        else if (unlinked || unread)  bright = MC_TAB_INACTIVE_DIM; // state shown via icon, not the tab
+        else if (hover)               bright = MC_HOVER_DARKEN;
+        else                          bright = MC_TAB_INACTIVE_DIM;
+        // Left 20px of the 32×26 texture → the tab rect (tw≈20). No horizontal compression.
+        // Blit nudged +1px right (MC_TAB_BLIT_DX) to overlap the parchment and hide the seam;
+        // the caller's hitbox uses the un-nudged tx, so clicks are unaffected.
+        blitTintedStretched(g, mcTabTex(variantIndex), tx + MC_TAB_BLIT_DX, ty, tw, th,
+                0f, 0f, 20, 26, 32, 26, bright, alpha);
+    }
+
     private void drawTabs(GuiGraphics g, int mx, int my, List<Component> tip)
     {
         for (int i = 0; i < tabMetas.size(); i++)
@@ -886,50 +958,65 @@ public class ColonyLinkScreen extends Screen
             ColonyLinkGuiConfig _tabCfg = ColonyLinkGuiConfig.get();
             boolean hasUnread = unreadTabs.contains(i);
 
-            if (active)
+            if (mcTabReady())
             {
-                // Tab active : chrome thémé (Défaut = fond config éclairci, AE = palette)
-                bg = _tabCfg.tabActiveBg();
-                bl = _tabCfg.border();
-                bd = _tabCfg.borderShadow();
-            }
-            else if (!meta.hasRedirector())
-            {
-                // Pas de redirecteur → brun (SÉMANTIQUE : encode l'état "non lié")
-                bg = 0xFF5A3A10; bl = 0xFF886633; bd = 0xFF221500;
-            }
-            else if (hasUnread)
-            {
-                if (_tabCfg.isAe())
-                {
-                    // AE: unread notification accent in blue (semBlue, standing in for
-                    // AE2's focus-blue — our tabs are procedural, not the sprite) instead
-                    // of amber. Colour only — the unread trigger, hover and geometry are
-                    // unchanged; the bevels are lightened/darkened from the same blue.
-                    bg = _tabCfg.semBlue();
-                    bl = lighten(_tabCfg.semBlue(), 1.5f);
-                    bd = darken(_tabCfg.semBlue(), 0.45f);
-                }
-                else
-                {
-                    // #6 : tab inactive avec requêtes non lues → orange (SÉMANTIQUE : notification)
-                    bg = 0xFF7A4A1A; bl = 0xFFCC8833; bd = 0xFF3A2008;
-                }
+                // MineColonies: cream paper tab, tinted by state (unlinked=brown, unread=blue).
+                boolean hov = mx >= tx && mx <= tx + tw && my >= ty && my <= ty + th;
+                drawMcTab(g, tx, ty, tw, th, i, active, hov, !meta.hasRedirector(), hasUnread);
             }
             else
             {
-                // Tab inactive normale → chrome neutre thémé
-                bg = _tabCfg.tabInactiveBg(); bl = _tabCfg.tabInactiveLight(); bd = _tabCfg.tabInactiveDark();
-            }
+                if (active)
+                {
+                    // Tab active : chrome thémé (Défaut = fond config éclairci, AE = palette)
+                    bg = _tabCfg.tabActiveBg();
+                    bl = _tabCfg.border();
+                    bd = _tabCfg.borderShadow();
+                }
+                else if (!meta.hasRedirector())
+                {
+                    // Pas de redirecteur → brun (SÉMANTIQUE : encode l'état "non lié")
+                    bg = 0xFF5A3A10; bl = 0xFF886633; bd = 0xFF221500;
+                }
+                else if (hasUnread)
+                {
+                    if (_tabCfg.isAe())
+                    {
+                        // AE: unread notification accent in blue (semBlue, standing in for
+                        // AE2's focus-blue — our tabs are procedural, not the sprite) instead
+                        // of amber. Colour only — the unread trigger, hover and geometry are
+                        // unchanged; the bevels are lightened/darkened from the same blue.
+                        bg = _tabCfg.semBlue();
+                        bl = lighten(_tabCfg.semBlue(), 1.5f);
+                        bd = darken(_tabCfg.semBlue(), 0.45f);
+                    }
+                    else
+                    {
+                        // #6 : tab inactive avec requêtes non lues → orange (SÉMANTIQUE : notification)
+                        bg = 0xFF7A4A1A; bl = 0xFFCC8833; bd = 0xFF3A2008;
+                    }
+                }
+                else
+                {
+                    // Tab inactive normale → chrome neutre thémé
+                    bg = _tabCfg.tabInactiveBg(); bl = _tabCfg.tabInactiveLight(); bd = _tabCfg.tabInactiveDark();
+                }
 
-            // Control category: tab chrome follows the floored control alpha.
-            bg = _tabCfg.applyControl(bg); bl = _tabCfg.applyControl(bl); bd = _tabCfg.applyControl(bd);
-            g.fill(tx, ty, tx + tw, ty + th, bg);
-            g.fill(tx, ty, tx + tw, ty + 1, bl);
-            g.fill(tx, ty, tx + 1, ty + th, bl);
-            g.fill(tx, ty + th - 1, tx + tw, ty + th, bd);
-            if (!active) g.fill(tx + tw - 1, ty, tx + tw, ty + th, bd);
-            drawGearIcon(g, tx + (tw - 10) / 2, ty + (th - 10) / 2, active, meta.hasRedirector());
+                // Control category: tab chrome follows the floored control alpha.
+                bg = _tabCfg.applyControl(bg); bl = _tabCfg.applyControl(bl); bd = _tabCfg.applyControl(bd);
+                g.fill(tx, ty, tx + tw, ty + th, bg);
+                g.fill(tx, ty, tx + tw, ty + 1, bl);
+                g.fill(tx, ty, tx + 1, ty + th, bl);
+                g.fill(tx, ty + th - 1, tx + tw, ty + th, bd);
+                if (!active) g.fill(tx + tw - 1, ty, tx + tw, ty + th, bd);
+            }
+            // MineColonies: the marker icon carries the state (priority unlinked > unread > normal).
+            // AE/DEFAULT ignore mcCol (drawGearIcon keeps their own colour logic).
+            int mcCol = !meta.hasRedirector() ? MC_TAB_UNLINKED_ICON
+                      : hasUnread            ? _tabCfg.semBlue()
+                      :                        MC_TAB_ICON_DARK;
+            int iconDx = mcTabReady() ? MC_TAB_BLIT_DX : 0; // follow the +1px MC blit nudge
+            drawGearIcon(g, tx + (tw - 10) / 2 + iconDx, ty + (th - 10) / 2, active, meta.hasRedirector(), mcCol);
 
             if (mx >= tx && mx <= tx + tw && my >= ty && my <= ty + th)
             {
@@ -948,15 +1035,27 @@ public class ColonyLinkScreen extends Screen
             int tx = getGuiX() - TAB_WIDTH, ty = getAddTabY(), tw = TAB_WIDTH, th = TAB_HEIGHT;
             boolean hov = mx >= tx && mx <= tx + tw && my >= ty && my <= ty + th;
             ColonyLinkGuiConfig _addCfg = ColonyLinkGuiConfig.get();
-            // Control category: add-builder tab follows the floored control alpha.
-            g.fill(tx, ty, tx + tw, ty + th, _addCfg.applyControl(hov ? 0xFF226622 : 0xFF1A4A1A));
-            g.fill(tx, ty, tx + tw, ty + 1, _addCfg.applyControl(0xFF44AA44));
-            g.fill(tx, ty, tx + 1, ty + th, _addCfg.applyControl(0xFF44AA44));
-            g.fill(tx, ty + th - 1, tx + tw, ty + th, _addCfg.applyControl(0xFF113311));
-            g.fill(tx + tw - 1, ty, tx + tw, ty + th, _addCfg.applyControl(0xFF113311));
             int cx = tx + tw / 2, cy = ty + th / 2;
-            g.fill(cx - 3, cy - 1, cx + 4, cy + 2, _addCfg.applyControl(0xFF44FF44));
-            g.fill(cx - 1, cy - 3, cx + 2, cy + 4, _addCfg.applyControl(0xFF44FF44));
+            // Control category: add-builder tab follows the floored control alpha.
+            if (mcTabReady())
+            {
+                // MineColonies: cream paper tab + a dark-green "+" that reads on the paper.
+                drawMcTab(g, tx, ty, tw, th, tabMetas.size(), false, hov, false, false);
+                int pcx = cx + MC_TAB_BLIT_DX; // follow the +1px MC blit nudge
+                int plus = _addCfg.applyControl(hov ? 0xFF1F8A34 : 0xFF176B28);
+                g.fill(pcx - 3, cy - 1, pcx + 4, cy + 2, plus);
+                g.fill(pcx - 1, cy - 3, pcx + 2, cy + 4, plus);
+            }
+            else
+            {
+                g.fill(tx, ty, tx + tw, ty + th, _addCfg.applyControl(hov ? 0xFF226622 : 0xFF1A4A1A));
+                g.fill(tx, ty, tx + tw, ty + 1, _addCfg.applyControl(0xFF44AA44));
+                g.fill(tx, ty, tx + 1, ty + th, _addCfg.applyControl(0xFF44AA44));
+                g.fill(tx, ty + th - 1, tx + tw, ty + th, _addCfg.applyControl(0xFF113311));
+                g.fill(tx + tw - 1, ty, tx + tw, ty + th, _addCfg.applyControl(0xFF113311));
+                g.fill(cx - 3, cy - 1, cx + 4, cy + 2, _addCfg.applyControl(0xFF44FF44));
+                g.fill(cx - 1, cy - 3, cx + 2, cy + 4, _addCfg.applyControl(0xFF44FF44));
+            }
             if (hov)
             {
                 tip.clear();
@@ -975,32 +1074,43 @@ public class ColonyLinkScreen extends Screen
             int drawTx = active ? tx + TAB_OVERLAP : tx;
 
             ColonyLinkGuiConfig _tabCfg = ColonyLinkGuiConfig.get();
-            int bg, bl, bd;
-            if (active)
+            if (mcTabReady())
             {
-                bg = _tabCfg.tabActiveBg();
-                bl = _tabCfg.border();
-                bd = _tabCfg.borderShadow();
+                // MineColonies: same cream paper tab as builders (Citizens is never unlinked/unread).
+                drawMcTab(g, drawTx, ty, tw, th, tabMetas.size() + 1, active, hov, false, false);
             }
             else
             {
-                // Même chrome neutre thémé que les tabs builders inactives (avec hover)
-                bg = _tabCfg.tabInactiveBg(hov);
-                bl = _tabCfg.tabInactiveLight();
-                bd = _tabCfg.tabInactiveDark();
+                int bg, bl, bd;
+                if (active)
+                {
+                    bg = _tabCfg.tabActiveBg();
+                    bl = _tabCfg.border();
+                    bd = _tabCfg.borderShadow();
+                }
+                else
+                {
+                    // Même chrome neutre thémé que les tabs builders inactives (avec hover)
+                    bg = _tabCfg.tabInactiveBg(hov);
+                    bl = _tabCfg.tabInactiveLight();
+                    bd = _tabCfg.tabInactiveDark();
+                }
+
+                // Control category: Citizens tab chrome follows the floored control alpha.
+                bg = _tabCfg.applyControl(bg); bl = _tabCfg.applyControl(bl); bd = _tabCfg.applyControl(bd);
+                g.fill(drawTx, ty, drawTx + tw, ty + th, bg);
+                g.fill(drawTx, ty, drawTx + tw, ty + 1, bl);
+                g.fill(drawTx, ty, drawTx + 1, ty + th, bl);
+                g.fill(drawTx, ty + th - 1, drawTx + tw, ty + th, bd);
+                if (!active) g.fill(drawTx + tw - 1, ty, drawTx + tw, ty + th, bd);
             }
 
-            // Control category: Citizens tab chrome follows the floored control alpha.
-            bg = _tabCfg.applyControl(bg); bl = _tabCfg.applyControl(bl); bd = _tabCfg.applyControl(bd);
-            g.fill(drawTx, ty, drawTx + tw, ty + th, bg);
-            g.fill(drawTx, ty, drawTx + tw, ty + 1, bl);
-            g.fill(drawTx, ty, drawTx + 1, ty + th, bl);
-            g.fill(drawTx, ty + th - 1, drawTx + tw, ty + th, bd);
-            if (!active) g.fill(drawTx + tw - 1, ty, drawTx + tw, ty + th, bd);
-
-            // Icône bonhomme pixel-art centrée — neutre, thémée
-            int cx = drawTx + tw / 2, cy = ty + th / 2 - 1;
-            int col = _tabCfg.applyControl(_tabCfg.isAe()
+            // Icône bonhomme pixel-art centrée — neutre, thémée (sombre en MC sur le papier clair).
+            // En MC, décalée de +1px pour suivre le blit d'onglet nudgé.
+            int cx = drawTx + tw / 2 + (mcTabReady() ? MC_TAB_BLIT_DX : 0), cy = ty + th / 2 - 1;
+            int col = _tabCfg.applyControl(_tabCfg.isMineColonies()
+                    ? (active ? 0xFF000000 : (hov ? 0xFF3A3A3A : 0xFF5A5040))
+                    : _tabCfg.isAe()
                     ? (active ? 0xFFF2F2F2 : (hov ? 0xFFCBCCD4 : 0xFF9A9FB4))
                     : (active ? 0xFFEEEEEE : (hov ? 0xFFCCCCCC : 0xFFAAAAAA)));
             g.fill(cx - 2, cy - 5, cx + 3, cy - 1, col); // tête
@@ -1106,14 +1216,25 @@ public class ColonyLinkScreen extends Screen
         }
     }
 
-    private void drawGearIcon(GuiGraphics g, int ox, int oy, boolean active, boolean hasRedir)
+    private void drawGearIcon(GuiGraphics g, int ox, int oy, boolean active, boolean hasRedir, int mcCol)
     {
         ColonyLinkGuiConfig _c = ColonyLinkGuiConfig.get();
         boolean ae = _c.isAe();
-        // Neutre (actif / lié) thémé ; "sans redirecteur" reste orange (SÉMANTIQUE)
-        int col  = active ? _c.iconNeutral(false) : (hasRedir ? _c.iconNeutral(true) : 0xFFBB7722);
-        int hole = active ? (ae ? 0xFF413F54 : 0xFF8B8B8B)
+        int col, hole;
+        if (_c.isMineColonies())
+        {
+            // MineColonies: the glyph colour carries the state (dark normal / blue unread / rust
+            // unlinked — chosen by the caller); light centre so it reads on the cream paper tab.
+            col  = mcCol;
+            hole = 0xFFD8C8A8;
+        }
+        else
+        {
+            // Neutre (actif / lié) thémé ; "sans redirecteur" reste orange (SÉMANTIQUE)
+            col  = active ? _c.iconNeutral(false) : (hasRedir ? _c.iconNeutral(true) : 0xFFBB7722);
+            hole = active ? (ae ? 0xFF413F54 : 0xFF8B8B8B)
                           : (hasRedir ? (ae ? 0xFF2B2A38 : 0xFF4A4A4A) : 0xFF5A3A10);
+        }
         // Control category: gear icon follows the floored control alpha.
         col = _c.applyControl(col); hole = _c.applyControl(hole);
         g.fill(ox + 3, oy + 1, ox + 7, oy + 9, col);
@@ -1488,6 +1609,35 @@ public class ColonyLinkScreen extends Screen
         // Control category: the whole toggle follows the floored control alpha; labels stay opaque.
         ColonyLinkGuiConfig _cSw = ColonyLinkGuiConfig.get();
         int half = sw / 2;
+
+        // MineColonies theme: procedural two-half toggle recoloured for the parchment (no texture
+        // composite — a stretched modular sprite would be fragile for little gain). Active half =
+        // raised lighter beige + coloured accent bar (green WH / blue AE2) + accent label; inactive
+        // half = neutral beige + muted label; divider/border brown. Geometry/hitbox unchanged.
+        if (_cSw.isMineColonies())
+        {
+            g.fill(sx, sy, sx + sw, sy + sh, _cSw.applyControl(MC_TOGGLE_BG));
+            g.fill(sx, sy, sx + sw, sy + 1, _cSw.applyControl(MC_TOGGLE_LIGHT));
+            g.fill(sx, sy, sx + 1, sy + sh, _cSw.applyControl(MC_TOGGLE_LIGHT));
+            g.fill(sx, sy + sh - 1, sx + sw, sy + sh, _cSw.applyControl(MC_PAPER_BORDER));
+            g.fill(sx + sw - 1, sy, sx + sw, sy + sh, _cSw.applyControl(MC_PAPER_BORDER));
+            if (warehousePriority)
+            {
+                g.fill(sx + 1, sy + 1, sx + half, sy + sh - 1, _cSw.applyControl(MC_TOGGLE_ACTIVE));   // WH active (raised)
+                g.fill(sx + 3, sy + 3, sx + 9,    sy + sh - 3, _cSw.applyControl(_cSw.semGreen()));     // WH accent bar
+            }
+            else
+            {
+                g.fill(sx + half, sy + 1, sx + sw - 1, sy + sh - 1, _cSw.applyControl(MC_TOGGLE_ACTIVE)); // AE2 active (raised)
+                g.fill(sx + sw - 9, sy + 3, sx + sw - 3, sy + sh - 3, _cSw.applyControl(_cSw.semBlue())); // AE2 accent bar
+            }
+            g.fill(sx + half, sy + 2, sx + half + 1, sy + sh - 2, _cSw.applyControl(MC_PAPER_BORDER));    // divider
+            int whCol  = warehousePriority ? _cSw.semGreen() : _cSw.mutedText();
+            int ae2Col = warehousePriority ? _cSw.mutedText() : _cSw.semBlue();
+            drawCenteredNoShadow(g, Component.translatable("colonylink.screen.toggle.wh").getString(), sx + half / 2,        sy + 3, whCol);
+            drawCenteredNoShadow(g, "AE2",                                                             sx + half + half / 2, sy + 3, ae2Col);
+            return;
+        }
 
         // AE theme: same procedural two-half toggle, recoloured for the light body.
         // The active half is bright (raised), the inactive half a recessed grey, plus a
@@ -2180,10 +2330,14 @@ public class ColonyLinkScreen extends Screen
                 if (we != null)
                 {
                     long tot = we.inWarehouse() + we.viaCraft();
+                    // Warehouse availability colours: on a LIGHT body (AE + MineColonies) the bright
+                    // green/yellow/red are unreadable → use the light-calibrated semantic tints.
+                    // DEFAULT (dark body) keeps its original bright colours.
+                    boolean _whLight = _cl.isLightBody();
                     String wt; int wc;
-                    if (tot >= rc)     { wt = Component.translatable("colonylink.screen.wh.have", tot).getString();             wc = 0x00FF88; }
-                    else if (tot > 0)  { wt = Component.translatable("colonylink.screen.wh.partial", tot, rc).getString(); wc = 0xFFCC44; }
-                    else               { wt = Component.translatable("colonylink.screen.wh.none").getString();                  wc = 0xFF4444; }
+                    if (tot >= rc)     { wt = Component.translatable("colonylink.screen.wh.have", tot).getString();             wc = _whLight ? _cl.semGreen() : 0x00FF88; }
+                    else if (tot > 0)  { wt = Component.translatable("colonylink.screen.wh.partial", tot, rc).getString(); wc = _whLight ? _cl.semAmber() : 0xFFCC44; }
+                    else               { wt = Component.translatable("colonylink.screen.wh.none").getString();                  wc = _whLight ? _cl.semRed()   : 0xFF4444; }
                     g.drawString(this.font, wt, x + 29, ey + 13, wc, false);
 
                     if (lineHov && !we.tooltipLines().isEmpty())
