@@ -1,8 +1,12 @@
 {
   "variants": {
-    "facing=north": { "model": "colonylink:block/colony_link_redirector" },
-    "facing=south": { "model": "colonylink:block/colony_link_redirector", "y": 180 },
-    "facing=east": { "model": "colonylink:block/colony_link_redirector", "y": 90 },
-    "facing=west": { "model": "colonylink:block/colony_link_redirector", "y": 270 }
+    "facing=north,working=false": { "model": "colonylink:block/colony_link_redirector_off", "y": 0 },
+    "facing=north,working=true":  { "model": "colonylink:block/colony_link_redirector_on",  "y": 0 },
+    "facing=south,working=false": { "model": "colonylink:block/colony_link_redirector_off", "y": 180 },
+    "facing=south,working=true":  { "model": "colonylink:block/colony_link_redirector_on",  "y": 180 },
+    "facing=east,working=false":  { "model": "colonylink:block/colony_link_redirector_off", "y": 90 },
+    "facing=east,working=true":   { "model": "colonylink:block/colony_link_redirector_on",  "y": 90 },
+    "facing=west,working=false":  { "model": "colonylink:block/colony_link_redirector_off", "y": 270 },
+    "facing=west,working=true":   { "model": "colonylink:block/colony_link_redirector_on",  "y": 270 }
   }
 }

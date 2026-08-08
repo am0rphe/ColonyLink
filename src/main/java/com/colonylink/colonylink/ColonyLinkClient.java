@@ -10,6 +10,7 @@ import net.minecraft.util.FastColor;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.api.distmarker.OnlyIn;
+import net.neoforged.neoforge.client.event.EntityRenderersEvent;
 import net.neoforged.neoforge.client.event.InputEvent;
 import net.neoforged.neoforge.client.event.ModelEvent;
 import net.neoforged.neoforge.client.event.RegisterColorHandlersEvent;
@@ -76,6 +77,20 @@ public final class ColonyLinkClient
     {
         event.register(new ModelResourceLocation(WarehouseLinkTerminalPart.MODEL_OFF, STANDALONE_VARIANT));
         event.register(new ModelResourceLocation(WarehouseLinkTerminalPart.MODEL_ON,  STANDALONE_VARIANT));
+    }
+
+    // ── Block entity renderer registration ────────────────────────────────────
+
+    /**
+     * Registers the Redirector's BlockEntityRenderer (3D craft item + slide/bob).
+     * Called via modEventBus.addListener(ColonyLinkClient::onRegisterBlockEntityRenderers)
+     * from the ColonyLink constructor (client-only, guarded by dist.isClient()).
+     */
+    public static void onRegisterBlockEntityRenderers(EntityRenderersEvent.RegisterRenderers event)
+    {
+        event.registerBlockEntityRenderer(
+                ColonyLinkRegistry.REDIRECTOR_BLOCK_ENTITY.get(),
+                RedirectorBlockEntityRenderer::new);
     }
 
     // ── Item color registration ───────────────────────────────────────────────

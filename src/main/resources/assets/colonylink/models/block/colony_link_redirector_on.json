@@ -1,0 +1,7 @@
+{
+	"credit": "ColonyLink Redirector - active (working=true): blue-lit frame (LED rivets, glowing slot edges, blue ticks on posts/rails). Geometry, render_type and all other textures inherited from _off",
+	"parent": "colonylink:block/colony_link_redirector_off",
+	"textures": {
+		"frame": "colonylink:block/redirector_frame_on"
+	}
+}

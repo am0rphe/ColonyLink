@@ -7,6 +7,8 @@ import appeng.api.networking.IGridNode;
 import appeng.api.networking.IGridNodeListener;
 import appeng.api.networking.IManagedGridNode;
 import appeng.api.networking.IInWorldGridNodeHost;
+import appeng.api.networking.crafting.CraftingJobStatus;
+import appeng.api.networking.crafting.ICraftingCPU;
 import appeng.api.networking.crafting.ICraftingProvider;
 import appeng.api.networking.security.IActionHost;
 import appeng.api.networking.security.IActionSource;
@@ -14,17 +16,25 @@ import appeng.api.crafting.IPatternDetails;
 import appeng.api.stacks.AEItemKey;
 import appeng.api.stacks.AEKey;
 import appeng.api.stacks.KeyCounter;
+import appeng.api.util.AECableType;
 import com.ldtteam.domumornamentum.block.IMateriallyTexturedBlock;
 import com.ldtteam.domumornamentum.block.IMateriallyTexturedBlockComponent;
 import com.ldtteam.domumornamentum.client.model.data.MaterialTextureData;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
+import net.minecraft.core.particles.BlockParticleOption;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
+import net.minecraft.network.Connection;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientGamePacketListener;
+import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.MenuProvider;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
@@ -33,6 +43,7 @@ import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.entity.BlockEntityType;
@@ -43,10 +54,13 @@ import net.neoforged.neoforge.items.ItemStackHandler;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
@@ -73,6 +87,21 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  *       ne perd plus rien — l'état est rejoué au rechargement (idempotent : les
  *       matériaux n'ont été prélevés qu'une seule fois par AE2).
  *     - Borne configurable : ColonyLinkConfig.REDIRECTOR_CRAFT_QUEUE_MAX.
+ *
+ *   Passe 2 (rendu) :
+ *     - getUpdatePacket()/onDataPacket() : la sync live du BE fonctionne enfin
+ *       (sendBlockUpdated envoyait un packet nul par défaut).
+ *     - workingLinger (5 ticks) + capture du renderStack dans processOneCraft() :
+ *       les crafts résolus en 1 tick restent visibles ~0.25 s.
+ *     - clientTickSawdust() : sciure d'épicéa au point de contact lame/item
+ *       (ticker client, jamais exécuté côté serveur logique).
+ *
+ *   Passe 3 :
+ *     - Volet A : aeJobActive (ICraftingService.isRequesting sur les outputs de
+ *       nos patterns, throttle 5 ticks, cache des clés) maintient l'animation
+ *       pendant tout un job AE2, gaps et changements de recette compris.
+ *     - Volet B : node AE2 non exposé sur UP (vitre) — setExposedOnSides à la
+ *       création + getGridNode(UP) → null. DOWN + 4 côtés inchangés.
  */
 public class ColonyLinkRedirectorBlockEntity extends BlockEntity
         implements IInWorldGridNodeHost, ICraftingProvider, IActionHost, MenuProvider
@@ -111,6 +140,55 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
      * Accédé uniquement depuis le thread serveur (ticker + save/load).
      */
     private final List<ItemStack> pendingOutputs = new ArrayList<>();
+
+    // ── Couche 0 : miroir client pour le rendu animé ──────────────────────────
+    // Ces trois champs ne sont PAS persistés en NBT (saveAdditional/loadAdditional
+    // ne les touchent pas) : ils sont recalculés à chaque tick serveur et ne sont
+    // synchronisés au client que via getUpdateTag()/handleUpdateTag(). Le mot-clé
+    // transient documente l'intention (aucune sérialisation Java n'est utilisée ici).
+    private transient boolean working = false;
+    private transient ItemStack renderStack = ItemStack.EMPTY;
+    private transient int shuffleProgress = 0;
+
+    // ── Passe 2 : linger visuel + sciure ─────────────────────────────────────
+
+    /** How long the block stays visually "working" after the last processed craft (Fab: ~0.25s). */
+    private static final int WORKING_LINGER_TICKS = 5;
+
+    /** Server-side countdown armed by processOneCraft(), decremented in
+     *  updateShuffleAndSync() BEFORE computing newWorking. Never persisted. */
+    private transient int workingLinger = 0;
+
+    /** Set when processOneCraft() captures a fresh renderStack; forces one client sync. */
+    private transient boolean renderStackDirty = false;
+
+    /** Sawdust = spruce plank crumbs (fixed choice, no dynamic colour — Fab's spec).
+     *  Vanilla Blocks/ParticleTypes are bootstrapped long before mod classes load,
+     *  so a plain static final is safe. Common-side classes only. */
+    private static final BlockParticleOption SAWDUST =
+            new BlockParticleOption(ParticleTypes.BLOCK, Blocks.SPRUCE_PLANKS.defaultBlockState());
+
+    // ── Passe 3 : AE job awareness (visual only, never persisted) ─────────────
+
+    /** Visual-only: true while an AE2 crafting job still requests one of our patterns' outputs.
+     *  Backed by ICraftingService.isRequesting(key) — the set of keys active CPU jobs are
+     *  still WAITING FOR (rebuilt from every cluster's craftingLogic.getAllWaitingFor()).
+     *  Falls back to false on job completion/cancellation at the next check. */
+    private transient boolean aeJobActive = false;
+
+    /** Output of the first requested pattern found by the last check (render fallback
+     *  after a relog/chunk reload mid-batch, or during a gap before the first craft). */
+    private transient ItemStack aeJobStack = ItemStack.EMPTY;
+
+    private transient int aeJobCheckCooldown = 0;
+
+    /** Never query the grid every tick — one check per 5 ticks matches the shuffle cadence. */
+    private static final int AE_JOB_CHECK_INTERVAL = 5;
+
+    /** Primary-output keys of the buffer's patterns, memoised so the 5-tick check does NOT
+     *  re-decode up to 27 pattern NBTs each time. Rebuilt lazily; invalidated whenever the
+     *  buffer changes (notifyPatternChange() is the single choke point for that). */
+    private transient Set<AEItemKey> patternOutputKeys = null;
 
     // ── Buffer — accepte UNIQUEMENT les DomumPatternItem ─────────────────────
 
@@ -171,6 +249,14 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
                         { owner.onGridStateChanged(); }
                     })
             .setInWorldNode(true)
+            // Passe 3 (volet B) — the top face is pure glass: the AE2 node must never
+            // be reachable from UP. DOWN + the 4 horizontal sides stay connectable
+            // (fixed set, independent of the horizontal FACING). Configured on the
+            // managed node BEFORE create() runs in onLoad(), so the node is born with
+            // the restriction (no transient UP connection at chunk load). On existing
+            // worlds InWorldGridNode.setExposedOnSides()/updateState() destroys any
+            // now-invalid UP connection cleanly (AE2 handles it natively).
+            .setExposedOnSides(EnumSet.complementOf(EnumSet.of(Direction.UP)))
             .setFlags(GridFlags.REQUIRE_CHANNEL)
             .setVisualRepresentation(ColonyLinkRegistry.REDIRECTOR_BLOCK_ITEM.get())
             .setIdlePowerUsage(1.0)
@@ -300,7 +386,18 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
 
     public static <T extends BlockEntity> BlockEntityTicker<T> createTicker(Level level, BlockEntityType<T> serverType)
     {
-        if (level.isClientSide()) return null;
+        if (level.isClientSide())
+        {
+            // Passe 2 (Fix 3) — client ticker: sawdust particles ONLY. No server
+            // logic (crafts, sync, linger) may run here. It keys off the WORKING
+            // blockstate property, which is natively synced by setBlockAndUpdate(),
+            // so it does not depend on the BE data packet (Fix 1) to work.
+            return (lvl, pos, blockState, be) ->
+            {
+                if (be instanceof ColonyLinkRedirectorBlockEntity redirector)
+                    redirector.clientTickSawdust(lvl, pos, blockState);
+            };
+        }
         return (lvl, pos, blockState, be) ->
         {
             if (be instanceof ColonyLinkRedirectorBlockEntity redirector)
@@ -310,8 +407,247 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
                 redirector.flushPendingOutputs(lvl);
                 // 2) Puis exécuter au plus un craft de la file.
                 redirector.processOneCraft(lvl);
+                // 3) Couche 0 : recalcul de l'état d'affichage + sync client.
+                redirector.updateShuffleAndSync(lvl);
             }
         };
+    }
+
+    /**
+     * Passe 2 (Fix 3) — client ticker body: emits spruce-plank "sawdust" crumbs
+     * around the blade/item contact point while the block is visually working
+     * (which includes the 5-tick linger, since it drives the WORKING property).
+     *
+     * <p>Dedicated-server safety: only common-side classes are used here
+     * ({@link BlockParticleOption}, {@link ParticleTypes}, {@link Level#addParticle}) —
+     * no {@code @OnlyIn}, no client-only imports. On the logical server the method
+     * is simply never reached (client-only ticker branch).
+     */
+    private void clientTickSawdust(Level lvl, BlockPos pos, BlockState blockState)
+    {
+        if (!blockState.hasProperty(ColonyLinkRedirectorBlock.WORKING)
+                || !blockState.getValue(ColonyLinkRedirectorBlock.WORKING))
+            return;
+
+        RandomSource r = lvl.getRandom();
+
+        // Stretch the jitter along the local slide axis so the dust follows the
+        // cut line: the blade plane is local Z=8 and items slide along local X.
+        // Facing N/S (axis Z) -> cut line on world X; facing E/W -> on world Z.
+        boolean cutAlongX = !blockState.hasProperty(ColonyLinkRedirectorBlock.FACING)
+                || blockState.getValue(ColonyLinkRedirectorBlock.FACING).getAxis() == Direction.Axis.Z;
+        double longSpread  = 0.30;  // ±0.15 along the cut line
+        double shortSpread = 0.12;  // ±0.06 across it
+
+        // 1 guaranteed + 1 at 50% per tick — moderate, "contained" burst.
+        int count = 1 + (r.nextBoolean() ? 1 : 0);
+        for (int i = 0; i < count; i++)
+        {
+            double jx = (r.nextDouble() - 0.5) * (cutAlongX ? longSpread : shortSpread);
+            double jz = (r.nextDouble() - 0.5) * (cutAlongX ? shortSpread : longSpread);
+            double x = pos.getX() + 0.5 + jx;
+            double y = pos.getY() + 0.72 + (r.nextDouble() - 0.5) * 0.10; // blade/item contact height
+            double z = pos.getZ() + 0.5 + jz;
+            double vx = (r.nextDouble() - 0.5) * 0.04;
+            double vy = 0.01 + r.nextDouble() * 0.02;   // tiny upward puff, gravity does the rest
+            double vz = (r.nextDouble() - 0.5) * 0.04;
+            lvl.addParticle(SAWDUST, x, y, z, vx, vy, vz);
+        }
+    }
+
+    /**
+     * Couche 0 — Met à jour l'état d'affichage (working / renderStack /
+     * shuffleProgress) et le pousse au client. Appelé chaque tick serveur.
+     *
+     * Note de sync : le prompt d'origine ne déclenchait sendBlockUpdated() que sur
+     * la transition de working. On resynchronise aussi lorsqu'un nouvel item est
+     * tiré au sort (reset du shuffle à 5) et lorsqu'on repasse idle, sinon le
+     * renderStack ne parviendrait jamais au client pendant un craft continu —
+     * l'effet shuffle serait invisible. Coût (passe 2) : un block update par
+     * craft traité (capture) + au plus un / 5 ticks (shuffle) par Redirector
+     * actif — tag léger, voir getUpdateTag().
+     */
+    private void updateShuffleAndSync(Level level)
+    {
+        if (level == null || level.isClientSide()) return;
+
+        // Passe 3 (volet A) — refresh the AE-job signal first (throttled internally
+        // to one grid query per 5 ticks) so a job detected this tick feeds newWorking.
+        refreshAeJobActive();
+
+        // Passe 2 (Fix 2) — decrement BEFORE computing newWorking: processOneCraft()
+        // ran just before in the same tick and arms linger=WORKING_LINGER_TICKS, so a
+        // craft processed this tick yields exactly 5 ticks of visible activity after
+        // the LAST craft (single 1-tick crafts no longer flicker or stay dark).
+        if (workingLinger > 0) workingLinger--;
+
+        boolean newWorking = !craftQueue.isEmpty() || !pendingOutputs.isEmpty()
+                || workingLinger > 0 || aeJobActive;
+        boolean needSync = renderStackDirty;   // fresh capture from processOneCraft()
+        renderStackDirty = false;
+
+        if (newWorking != this.working)
+        {
+            this.working = newWorking;
+            needSync = true;
+
+            // Couche 2 : bascule la propriété de blockstate WORKING → modèle _off/_on.
+            // UNIQUEMENT sur transition idle↔busy : un seul setBlockAndUpdate par
+            // changement (aucun spam), qui notifie déjà les clients pour le re-render.
+            BlockState oldState = level.getBlockState(worldPosition);
+            if (oldState.hasProperty(ColonyLinkRedirectorBlock.WORKING))
+                level.setBlockAndUpdate(worldPosition,
+                        oldState.setValue(ColonyLinkRedirectorBlock.WORKING, newWorking));
+        }
+
+        if (this.working)
+        {
+            // Passe 3 (volet A) — render fallback: after a relog/chunk reload mid-batch
+            // (or during a gap before the first craft) the server-side renderStack can be
+            // EMPTY while the job still runs. Repopulate it with the requested output.
+            // The capture done in processOneCraft() has priority — never overwritten here.
+            if (this.renderStack.isEmpty() && aeJobActive && !aeJobStack.isEmpty())
+            {
+                this.renderStack = aeJobStack.copy();
+                needSync = true;
+            }
+
+            this.shuffleProgress++;
+            if (this.shuffleProgress >= 5)
+            {
+                this.shuffleProgress = 0;
+                // Passe 2 (Fix 2) — random re-pick only while the queue is still
+                // populated. When the queue is drained but the linger is running,
+                // keep the stack captured at processing time (never overwrite it
+                // with EMPTY while working is true).
+                if (!craftQueue.isEmpty())
+                {
+                    updateRenderStack();
+                    needSync = true; // nouvel item tiré → resync client
+                }
+            }
+        }
+        else
+        {
+            if (!this.renderStack.isEmpty()) needSync = true;
+            this.renderStack = ItemStack.EMPTY;
+            this.shuffleProgress = 0;
+        }
+
+        if (needSync)
+            level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), Block.UPDATE_ALL);
+    }
+
+    /**
+     * Passe 3 (volet A) — visual-only signal: does the grid have a crafting job in
+     * flight that still requests one of OUR patterns' outputs?
+     *
+     * <p>API (recon, AE2 19.2.x decompiled) — DUAL signal:
+     * (1) {@code ICraftingService.isRequesting(AEKey)}: O(1) lookup into
+     * {@code CraftingService.currentlyCrafting}, rebuilt on change from every CPU
+     * cluster's {@code craftingLogic.getAllWaitingFor()} — keys pushed to providers
+     * and not yet delivered back (fills at pushPattern, drains on insert, cleared on
+     * job end/cancel). (2) {@code ICraftingCPU.getJobStatus().crafting()}: the job's
+     * requested FINAL output, non-null for the job's whole lifetime — covers the
+     * gaps where nothing of ours is in flight (input sub-crafts, scheduling stalls).
+     * Grid-wide semantics: if two Redirectors provide the same pattern, both light
+     * up during the batch (accepted limit, v1).
+     *
+     * <p>Throttle: one grid query burst per {@link #AE_JOB_CHECK_INTERVAL} ticks, with
+     * early exit on the first requested key. Never called client-side (server ticker).
+     * Zero impact on the real craft pipeline (isBusy/pushPattern/processOneCraft).
+     */
+    private void refreshAeJobActive()
+    {
+        if (aeJobCheckCooldown > 0) { aeJobCheckCooldown--; return; }
+        aeJobCheckCooldown = AE_JOB_CHECK_INTERVAL;
+
+        aeJobActive = false;
+        aeJobStack = ItemStack.EMPTY;
+
+        IGridNode node = gridNode.getNode();
+        if (node == null || !node.isActive()) return;   // no grid / power off -> stays false
+
+        Set<AEItemKey> keys = this.patternOutputKeys;
+        if (keys == null)
+            keys = this.patternOutputKeys = buildPatternOutputKeys();
+        if (keys.isEmpty()) return;                      // empty buffer -> nothing to ask
+
+        var craftingService = node.getGrid().getCraftingService();
+
+        // Signal 1 — in-flight pushes. isRequesting(key) is an O(1) lookup into the
+        // union of every CPU's job.waitingFor: keys whose patterns were PUSHED to
+        // providers and not delivered back yet (recon: waitingFor fills at
+        // pushPattern time, drains on insert). Also catches our outputs when they
+        // are intermediates of a bigger job, on whichever provider was chosen.
+        for (AEItemKey key : keys)
+        {
+            if (craftingService.isRequesting(key))
+            {
+                aeJobActive = true;
+                aeJobStack = key.toStack(1);
+                return;                                  // early exit at the first hit
+            }
+        }
+
+        // Signal 2 — whole-job window. waitingFor goes quiet during input sub-crafts
+        // or scheduling stalls (nothing of ours in flight), which would flicker the
+        // animation mid-job. For direct orders of our outputs, the CPU's job status
+        // carries the requested FINAL output for the job's entire lifetime — the
+        // "first to last item" window. Few CPUs per grid -> cheap sweep, early exit.
+        for (ICraftingCPU cpu : craftingService.getCpus())
+        {
+            CraftingJobStatus status = cpu.getJobStatus();
+            if (status == null) continue;
+            if (status.crafting().what() instanceof AEItemKey itemKey && keys.contains(itemKey))
+            {
+                aeJobActive = true;
+                aeJobStack = itemKey.toStack(1);
+                return;
+            }
+        }
+    }
+
+    /**
+     * Passe 3 (volet A) — primary-output keys of the buffer's patterns, built through
+     * the EXACT ICraftingProvider path already exposed to AE2 (getAvailablePatterns()
+     * -> DomumPatternDetails.getPrimaryOutput()): no hand-rolled re-decoding. Called
+     * lazily by refreshAeJobActive() and memoised until the buffer changes.
+     */
+    private Set<AEItemKey> buildPatternOutputKeys()
+    {
+        Set<AEItemKey> keys = new HashSet<>();
+        for (IPatternDetails details : getAvailablePatterns())
+        {
+            if (details.getPrimaryOutput().what() instanceof AEItemKey itemKey)
+                keys.add(itemKey);
+        }
+        return keys;
+    }
+
+    /**
+     * Couche 0 — Pick un craft aléatoire depuis la file et en expose le
+     * targetStack (copie défensive) pour le rendu 3D côté client.
+     * Utilise level.getRandom() : le BlockEntity n'a pas de champ random propre.
+     */
+    private void updateRenderStack()
+    {
+        if (craftQueue.isEmpty() || level == null)
+        {
+            this.renderStack = ItemStack.EMPTY;
+            return;
+        }
+
+        // Snapshot instantané de la file concurrente pour l'indexation.
+        List<PendingDomumCraft> temp = new ArrayList<>(craftQueue);
+        if (temp.isEmpty())
+        {
+            this.renderStack = ItemStack.EMPTY;
+            return;
+        }
+
+        int idx = level.getRandom().nextInt(temp.size());
+        this.renderStack = temp.get(idx).targetStack().copy();
     }
 
     /**
@@ -394,6 +730,14 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
             ColonyLink.LOGGER.warn("[DomumPattern] processOneCraft: target is not a Domum item, skipping.");
             return;
         }
+
+        // Passe 2 (Fix 2) — this craft is effectively being processed: arm the
+        // visual linger and show WHAT is being cut right now. Placed after the
+        // validity guards (error skips must not light the block), before the
+        // build/inject so even 1-tick crafts are observable client-side.
+        this.workingLinger = WORKING_LINGER_TICKS;
+        this.renderStack = targetStack.copy();
+        this.renderStackDirty = true;
 
         // Les matériaux ont déjà été extraits du ME par AE2 avant pushPattern().
         ItemStack result = buildDomumResult(targetStack, materials, level.registryAccess());
@@ -495,6 +839,10 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
      */
     public void notifyPatternChange()
     {
+        // Passe 3 — the memoised output-key list follows the buffer content. All
+        // buffer mutations funnel through onContentsChanged() -> here, so this is
+        // the single invalidation point (client-side calls just clear an unused cache).
+        patternOutputKeys = null;
         if (level != null && !level.isClientSide())
             ICraftingProvider.requestUpdate(gridNode);
     }
@@ -519,7 +867,24 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
     public void setRemoved() { super.setRemoved(); gridNode.destroy(); }
 
     @Override
-    public @Nullable IGridNode getGridNode(Direction dir) { return gridNode.getNode(); }
+    public @Nullable IGridNode getGridNode(Direction dir)
+    {
+        // Passe 3 (volet B) — defence in depth with setExposedOnSides(): the top
+        // face is pure glass, never hand the node out for UP.
+        return dir == Direction.UP ? null : gridNode.getNode();
+    }
+
+    @Override
+    public AECableType getCableConnectionType(Direction dir)
+    {
+        // Passe 4 (volet C) — without this override the IInWorldGridNodeHost default
+        // is AECableType.GLASS (IInWorldGridNodeHost.java:19-21), which made adjacent
+        // smart cables degrade their connection arm to a thin glass joint. Standard
+        // AE2 machines return SMART (AENetworkedBlockEntity, PatternProviderBlockEntity).
+        // UP is pure glass with no node exposed (passe 3): NONE = isValid() false,
+        // no connection arm at all.
+        return dir == Direction.UP ? AECableType.NONE : AECableType.SMART;
+    }
 
     private boolean firstTickDone = false;
 
@@ -694,11 +1059,34 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
     { this.linkedBuilderName = (name != null && !name.isBlank()) ? name : "N/A"; markDirtyAndUpdate(); }
 
     public RedirectorState getState() { return state; }
-    public void setState(RedirectorState state) { this.state = state; markDirtyAndUpdate(); }
+
+    public void setState(RedirectorState state)
+    {
+        // Passe 2 — no-op on unchanged state. updateState() is invoked from
+        // repeated paths (Jade server data ~4/s while the block is looked at,
+        // terminal GUI sync ticker) and, now that getUpdatePacket() is live,
+        // every markDirtyAndUpdate() ships a real BE packet: only sync actual
+        // transitions.
+        if (this.state == state) return;
+        this.state = state;
+        markDirtyAndUpdate();
+    }
 
     public boolean isLinked() { return targetInventoryPos != null; }
 
     public IManagedGridNode getManagedGridNode() { return gridNode; }
+
+    // ── Couche 0 : accesseurs de rendu (lus par le futur BlockEntityRenderer) ──
+
+    /** @return true si un craft est en cours, des sorties attendent l'injection,
+     *  ou le linger visuel de 5 ticks court encore (passe 2). */
+    public boolean isWorking() { return this.working; }
+
+    /** @return l'ItemStack courant à afficher en 3D (copie serveur, EMPTY si idle). */
+    public ItemStack getRenderStack() { return this.renderStack; }
+
+    /** @return le progrès de shuffle (0→5) pour le glissement X de l'item. */
+    public int getShuffleProgress() { return this.shuffleProgress; }
 
     private void markDirtyAndUpdate()
     {
@@ -708,6 +1096,36 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
     }
 
     // ── Sync client ───────────────────────────────────────────────────────────
+
+    /**
+     * Passe 2 (Fix 1) — without this override, {@code level.sendBlockUpdated()}
+     * never ships BE data to clients mid-game: the default implementation returns
+     * {@code null}, so every sendBlockUpdated() in this class was a data no-op and
+     * renderStack/working only reached clients on chunk (re)load. The packet
+     * serialises via {@link #getUpdateTag}: a handful of primitives plus ONE
+     * ItemStack — well under a kilobyte per send.
+     */
+    @Override
+    public Packet<ClientGamePacketListener> getUpdatePacket()
+    {
+        return ClientboundBlockEntityDataPacket.create(this);
+    }
+
+    /**
+     * Passe 2 (Fix 1) — client-side receipt of the packet above. Routes through
+     * {@link #handleUpdateTag} (same path as the chunk-load sync — simple
+     * idempotent reads) instead of the NeoForge default, which calls
+     * {@code loadWithComponents()} and would skip the client mirror fields
+     * (working / renderStack / ae2Active / state caches).
+     */
+    @Override
+    public void onDataPacket(Connection net, ClientboundBlockEntityDataPacket pkt,
+                             HolderLookup.Provider lookupProvider)
+    {
+        CompoundTag tag = pkt.getTag();
+        if (tag != null && !tag.isEmpty())
+            handleUpdateTag(tag, lookupProvider);
+    }
 
     @Override
     public CompoundTag getUpdateTag(HolderLookup.Provider provider)
@@ -731,6 +1149,11 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
             tag.putInt("builder_z", linkedBuilderPos.getZ());
         }
         tag.putString("linked_builder_name", linkedBuilderName);
+
+        // ── Couche 0 : état d'affichage animé ────────────────────────────────
+        tag.putBoolean("working", this.working);
+        tag.put("renderStack", this.renderStack.saveOptional(provider));
+        tag.putInt("shuffleProgress", this.shuffleProgress);
         return tag;
     }
 
@@ -750,6 +1173,13 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
         if (tag.contains("builder_x"))
             linkedBuilderPos = new BlockPos(tag.getInt("builder_x"), tag.getInt("builder_y"), tag.getInt("builder_z"));
         if (tag.contains("linked_builder_name")) linkedBuilderName = tag.getString("linked_builder_name");
+
+        // ── Couche 0 : état d'affichage animé ────────────────────────────────
+        this.working = tag.getBoolean("working");
+        this.renderStack = tag.contains("renderStack")
+                ? ItemStack.parseOptional(provider, tag.getCompound("renderStack"))
+                : ItemStack.EMPTY;
+        this.shuffleProgress = tag.getInt("shuffleProgress");
     }
 
     // ── NBT ───────────────────────────────────────────────────────────────────

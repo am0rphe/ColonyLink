@@ -86,6 +86,8 @@ public class ColonyLink
             modEventBus.addListener(this::registerScreens);
         if (net.neoforged.fml.loading.FMLEnvironment.dist.isClient())
             modEventBus.addListener(ColonyLinkClient::onRegisterAdditionalModels);
+        if (net.neoforged.fml.loading.FMLEnvironment.dist.isClient())
+            modEventBus.addListener(ColonyLinkClient::onRegisterBlockEntityRenderers);
         modEventBus.addListener(ColonyLinkRegistry::registerCapabilities);
 
         if (net.neoforged.fml.loading.FMLEnvironment.dist.isClient())

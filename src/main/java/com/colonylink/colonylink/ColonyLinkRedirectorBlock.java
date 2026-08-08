@@ -18,6 +18,7 @@ import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.BooleanProperty;
 import net.minecraft.world.level.block.state.properties.DirectionProperty;
 import net.minecraft.world.level.storage.loot.LootParams;
 import net.minecraft.world.phys.BlockHitResult;
@@ -29,18 +30,29 @@ public class ColonyLinkRedirectorBlock extends Block implements EntityBlock
 {
     public static final DirectionProperty FACING = BlockStateProperties.HORIZONTAL_FACING;
 
+    /** true while a craft is in progress (or outputs await injection): drives _off/_on models. */
+    public static final BooleanProperty WORKING = BooleanProperty.create("working");
+
     public ColonyLinkRedirectorBlock()
     {
         super(BlockBehaviour.Properties.of()
                 .strength(0.5f)
-                .destroyTime(0.5f));
-        this.registerDefaultState(this.stateDefinition.any().setValue(FACING, Direction.NORTH));
+                .destroyTime(0.5f)
+                // The upper half is a glass cage: without noOcclusion() the block is
+                // treated as a full opaque cube, so neighbor/ground faces are culled
+                // against it (x-ray through the windows) and light cannot enter the
+                // cage. Same technique as AE2's Molecular Assembler
+                // (AEBlocks: metalProps().noOcclusion()).
+                .noOcclusion());
+        this.registerDefaultState(this.stateDefinition.any()
+                .setValue(FACING, Direction.NORTH)
+                .setValue(WORKING, false));
     }
 
     @Override
     protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder)
     {
-        builder.add(FACING);
+        builder.add(FACING, WORKING);
     }
 
     @Override
@@ -63,7 +75,9 @@ public class ColonyLinkRedirectorBlock extends Block implements EntityBlock
     public @Nullable <T extends BlockEntity> BlockEntityTicker<T> getTicker(
             Level level, BlockState state, BlockEntityType<T> serverType)
     {
-        if (level.isClientSide()) return null;
+        // Passe 2 (Fix 3) — no early client return anymore: createTicker() branches
+        // internally (client = sawdust particles only, server = craft pipeline +
+        // display sync). Without this delegation the client ticker would be dead code.
         return ColonyLinkRedirectorBlockEntity.createTicker(level, serverType);
     }
 

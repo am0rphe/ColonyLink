@@ -1,0 +1,186 @@
+{
+	"credit": "ColonyLink Redirector - architect cutter (working=false)",
+	"parent": "minecraft:block/block",
+	"render_type": "minecraft:cutout",
+	"ambientocclusion": false,
+	"textures": {
+		"body": "colonylink:block/redirector_body",
+		"bottom": "colonylink:block/redirector_bottom",
+		"frame": "colonylink:block/redirector_frame",
+		"glass": "colonylink:block/redirector_glass",
+		"saw": "colonylink:block/redirector_saw",
+		"particle": "colonylink:block/redirector_body"
+	},
+	"elements": [
+		{
+			"__comment": "Solid machine base Y=0..10; up face omitted (fully covered by the rim)",
+			"from": [0, 0, 0],
+			"to": [16, 10, 16],
+			"faces": {
+				"down":  {"uv": [0, 0, 16, 16], "texture": "#bottom", "cullface": "down"},
+				"north": {"uv": [0, 6, 16, 16], "texture": "#body", "cullface": "north"},
+				"south": {"uv": [0, 6, 16, 16], "texture": "#body", "cullface": "south"},
+				"east":  {"uv": [0, 6, 16, 16], "texture": "#body", "cullface": "east"},
+				"west":  {"uv": [0, 6, 16, 16], "texture": "#body", "cullface": "west"}
+			}
+		},
+		{
+			"__comment": "Frame rim Y=10..11; the up face is the saw deck (slot drawn in the texture); down face omitted (rests on the base)",
+			"from": [0, 10, 0],
+			"to": [16, 11, 16],
+			"faces": {
+				"up":    {"uv": [0, 0, 16, 16], "texture": "#frame"},
+				"north": {"uv": [0, 0, 16, 1], "texture": "#frame", "cullface": "north"},
+				"south": {"uv": [0, 0, 16, 1], "texture": "#frame", "cullface": "south"},
+				"east":  {"uv": [0, 0, 16, 1], "texture": "#frame", "cullface": "east"},
+				"west":  {"uv": [0, 0, 16, 1], "texture": "#frame", "cullface": "west"}
+			}
+		},
+		{
+			"__comment": "Corner post NW Y=11..16 (starts above the rim: no overlap -> no z-fighting); down face omitted",
+			"from": [0, 11, 0],
+			"to": [1, 16, 1],
+			"faces": {
+				"north": {"uv": [0, 0, 1, 5], "texture": "#frame", "cullface": "north"},
+				"west":  {"uv": [0, 0, 1, 5], "texture": "#frame", "cullface": "west"},
+				"south": {"uv": [0, 0, 1, 5], "texture": "#frame"},
+				"east":  {"uv": [0, 0, 1, 5], "texture": "#frame"},
+				"up":    {"uv": [0, 0, 1, 1], "texture": "#frame", "cullface": "up"}
+			}
+		},
+		{
+			"__comment": "Corner post NE",
+			"from": [15, 11, 0],
+			"to": [16, 16, 1],
+			"faces": {
+				"north": {"uv": [0, 0, 1, 5], "texture": "#frame", "cullface": "north"},
+				"east":  {"uv": [0, 0, 1, 5], "texture": "#frame", "cullface": "east"},
+				"south": {"uv": [0, 0, 1, 5], "texture": "#frame"},
+				"west":  {"uv": [0, 0, 1, 5], "texture": "#frame"},
+				"up":    {"uv": [0, 0, 1, 1], "texture": "#frame", "cullface": "up"}
+			}
+		},
+		{
+			"__comment": "Corner post SW",
+			"from": [0, 11, 15],
+			"to": [1, 16, 16],
+			"faces": {
+				"south": {"uv": [0, 0, 1, 5], "texture": "#frame", "cullface": "south"},
+				"west":  {"uv": [0, 0, 1, 5], "texture": "#frame", "cullface": "west"},
+				"north": {"uv": [0, 0, 1, 5], "texture": "#frame"},
+				"east":  {"uv": [0, 0, 1, 5], "texture": "#frame"},
+				"up":    {"uv": [0, 0, 1, 1], "texture": "#frame", "cullface": "up"}
+			}
+		},
+		{
+			"__comment": "Corner post SE",
+			"from": [15, 11, 15],
+			"to": [16, 16, 16],
+			"faces": {
+				"south": {"uv": [0, 0, 1, 5], "texture": "#frame", "cullface": "south"},
+				"east":  {"uv": [0, 0, 1, 5], "texture": "#frame", "cullface": "east"},
+				"north": {"uv": [0, 0, 1, 5], "texture": "#frame"},
+				"west":  {"uv": [0, 0, 1, 5], "texture": "#frame"},
+				"up":    {"uv": [0, 0, 1, 1], "texture": "#frame", "cullface": "up"}
+			}
+		},
+		{
+			"__comment": "Top rail north Y=15..16, spans between the posts; end faces omitted (hidden against posts)",
+			"from": [1, 15, 0],
+			"to": [15, 16, 1],
+			"faces": {
+				"north": {"uv": [1, 0, 15, 1], "texture": "#frame", "cullface": "north"},
+				"south": {"uv": [15, 0, 1, 1], "texture": "#frame"},
+				"up":    {"uv": [1, 0, 15, 1], "texture": "#frame", "cullface": "up"},
+				"down":  {"uv": [1, 0, 15, 1], "texture": "#frame"}
+			}
+		},
+		{
+			"__comment": "Top rail south",
+			"from": [1, 15, 15],
+			"to": [15, 16, 16],
+			"faces": {
+				"south": {"uv": [1, 0, 15, 1], "texture": "#frame", "cullface": "south"},
+				"north": {"uv": [15, 0, 1, 1], "texture": "#frame"},
+				"up":    {"uv": [1, 0, 15, 1], "texture": "#frame", "cullface": "up"},
+				"down":  {"uv": [1, 0, 15, 1], "texture": "#frame"}
+			}
+		},
+		{
+			"__comment": "Top rail west",
+			"from": [0, 15, 1],
+			"to": [1, 16, 15],
+			"faces": {
+				"west":  {"uv": [1, 0, 15, 1], "texture": "#frame", "cullface": "west"},
+				"east":  {"uv": [15, 0, 1, 1], "texture": "#frame"},
+				"up":    {"uv": [0, 1, 1, 15], "texture": "#frame", "cullface": "up"},
+				"down":  {"uv": [0, 1, 1, 15], "texture": "#frame"}
+			}
+		},
+		{
+			"__comment": "Top rail east",
+			"from": [15, 15, 1],
+			"to": [16, 16, 15],
+			"faces": {
+				"east":  {"uv": [1, 0, 15, 1], "texture": "#frame", "cullface": "east"},
+				"west":  {"uv": [15, 0, 1, 1], "texture": "#frame"},
+				"up":    {"uv": [0, 1, 1, 15], "texture": "#frame", "cullface": "up"},
+				"down":  {"uv": [0, 1, 1, 15], "texture": "#frame"}
+			}
+		},
+		{
+			"__comment": "North window: zero-thickness pane inset at Z=0.5 (never coplanar with frame), both faces drawn so it is visible from outside AND inside",
+			"from": [1, 11, 0.5],
+			"to": [15, 15, 0.5],
+			"faces": {
+				"north": {"uv": [1, 6, 15, 10], "texture": "#glass"},
+				"south": {"uv": [15, 6, 1, 10], "texture": "#glass"}
+			}
+		},
+		{
+			"__comment": "South window",
+			"from": [1, 11, 15.5],
+			"to": [15, 15, 15.5],
+			"faces": {
+				"south": {"uv": [1, 6, 15, 10], "texture": "#glass"},
+				"north": {"uv": [15, 6, 1, 10], "texture": "#glass"}
+			}
+		},
+		{
+			"__comment": "West window",
+			"from": [0.5, 11, 1],
+			"to": [0.5, 15, 15],
+			"faces": {
+				"west":  {"uv": [1, 6, 15, 10], "texture": "#glass"},
+				"east":  {"uv": [15, 6, 1, 10], "texture": "#glass"}
+			}
+		},
+		{
+			"__comment": "East window",
+			"from": [15.5, 11, 1],
+			"to": [15.5, 15, 15],
+			"faces": {
+				"east":  {"uv": [1, 6, 15, 10], "texture": "#glass"},
+				"west":  {"uv": [15, 6, 1, 10], "texture": "#glass"}
+			}
+		},
+		{
+			"__comment": "Top window: zero-thickness horizontal pane at Y=15.5 between the rails, both faces drawn (fixes the open top)",
+			"from": [1, 15.5, 1],
+			"to": [15, 15.5, 15],
+			"faces": {
+				"up":   {"uv": [1, 1, 15, 15], "texture": "#glass"},
+				"down": {"uv": [15, 1, 1, 15], "texture": "#glass"}
+			}
+		},
+		{
+			"__comment": "Circular saw blade: zero-thickness plane at Z=8, animated texture (5 teeth, 8 frames x 18deg = seamless 2-pitch loop, 1 rev/s at frametime 1). Emerges from the deck slot like a table saw; clears glass (top Y=15 < 15.5), posts and rails. North UV mirrored so the spin direction is physically consistent from both sides",
+			"from": [3, 10, 8],
+			"to": [13, 15, 8],
+			"faces": {
+				"south": {"uv": [3, 6, 13, 11], "texture": "#saw"},
+				"north": {"uv": [13, 6, 3, 11], "texture": "#saw"}
+			}
+		}
+	]
+}
