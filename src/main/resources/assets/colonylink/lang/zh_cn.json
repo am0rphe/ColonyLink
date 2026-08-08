@@ -272,6 +272,7 @@
   "colonylink.redir.card_insert2": "§7剪贴板GUI中的§f检查仓库§7按钮。",
   "colonylink.redir.card_inserted": "§a✔ 已插入卡 — 仓库扫描已启用",
   "colonylink.redir.card_empty": "§8✘ 空 — 请插入一张仓库链接卡",
+  "colonylink.redir.title": "殖民地链接转发器",
   "colonylink.jade.ae2_connected": "§aAE2：已连接",
   "colonylink.jade.ae2_disconnected": "§cAE2：已断开",
   "colonylink.jade.place_adjacent": "§7放置在§fAE2线缆§7旁边。",

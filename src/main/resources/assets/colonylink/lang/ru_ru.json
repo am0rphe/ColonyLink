@@ -166,6 +166,7 @@
   "colonylink.reason.sick": "§c🤒 Болен — нужно лечение",
   "colonylink.reason.sleeping": "§9💤 Спит",
   "colonylink.redir.card_empty": "§8✘ Пусто — вставьте Карту связи склада",
+  "colonylink.redir.title": "Перенаправитель ColonyLink",
   "colonylink.redir.card_insert1": "§7Вставьте §fКарту связи склада§7, чтобы включить",
   "colonylink.redir.card_insert2": "§7кнопку §fПроверить склад §7в GUI буфера обмена.",
   "colonylink.redir.card_inserted": "§a✔ Карта вставлена — сканирование склада включено",

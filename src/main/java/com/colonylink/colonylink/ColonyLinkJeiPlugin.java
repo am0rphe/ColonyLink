@@ -10,6 +10,7 @@ import net.minecraft.client.renderer.Rect2i;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -60,6 +61,19 @@ public class ColonyLinkJeiPlugin implements IModPlugin
                         if (area == null) return Optional.empty();
 
                         return factory.createBuilder(stack).buildWithArea(area);
+                    }
+                });
+
+        // UI passe 1 — the Redirector's upgrade-cell box overflows the panel's
+        // right edge (AE2 UpgradesPanel style): declare it as an extra area so the
+        // JEI overlay never overlaps it (mirror of AE2's addExclusionZones).
+        reg.addGuiContainerHandler(ColonyLinkRedirectorScreen.class,
+                new IGuiContainerHandler<ColonyLinkRedirectorScreen>()
+                {
+                    @Override
+                    public List<Rect2i> getGuiExtraAreas(ColonyLinkRedirectorScreen screen)
+                    {
+                        return screen.getJeiExclusionAreas();
                     }
                 });
     }

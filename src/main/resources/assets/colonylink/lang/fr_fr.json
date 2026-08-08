@@ -298,6 +298,7 @@
   "colonylink.term_pkt.crafted": "§a[Terminal] Fabriqué §f%s",
   "colonylink.term_pkt.no_pattern": "§c[Terminal] Aucun modèle pour §f%s",
   "colonylink.redir.card_empty": "§8✘ Vide — insérez une Carte de liaison d'entrepôt",
+  "colonylink.redir.title": "Redirecteur ColonyLink",
   "colonylink.redir.card_insert1": "§7Insérez une §fCarte de liaison d'entrepôt §7pour activer",
   "colonylink.redir.card_insert2": "§7le bouton §fVérifier l'entrepôt §7dans l'interface du Presse-papiers.",
   "colonylink.redir.card_inserted": "§a✔ Carte insérée — analyse de l'entrepôt activée",

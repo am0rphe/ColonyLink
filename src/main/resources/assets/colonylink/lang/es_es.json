@@ -166,6 +166,7 @@
   "colonylink.reason.sick": "§c🤒 Enfermo — necesita tratamiento",
   "colonylink.reason.sleeping": "§9💤 Durmiendo",
   "colonylink.redir.card_empty": "§8✘ Vacío — inserta una Tarjeta de enlace de almacén",
+  "colonylink.redir.title": "Redireccionador ColonyLink",
   "colonylink.redir.card_insert1": "§7Inserta una §fTarjeta de enlace de almacén §7para activar",
   "colonylink.redir.card_insert2": "§7el botón §fVer almacén §7en el GUI del Portapapeles.",
   "colonylink.redir.card_inserted": "§a✔ Tarjeta insertada — escaneo del almacén activado",

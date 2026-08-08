@@ -273,7 +273,7 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
     // ── MenuProvider ──────────────────────────────────────────────────────────
 
     @Override
-    public Component getDisplayName() { return Component.literal("Colony Link Redirector"); }
+    public Component getDisplayName() { return Component.translatable("colonylink.redir.title"); }
 
     @Override
     public @Nullable AbstractContainerMenu createMenu(int containerId, Inventory playerInventory, Player player)

@@ -35,9 +35,12 @@ public class ColonyLinkRedirectorMenu extends AbstractContainerMenu
         this.blockEntity = blockEntity;
 
         // ── Slot Warehouse Link Card ─────────────────────────────────────────
-        // Positionné en haut à droite du GUI, visuellement distinct du buffer.
-        // Coordonnées : x=170, y=10 — dans la barre de titre élargie
-        this.addSlot(new SlotItemHandler(blockEntity.warehouseCardSlot, 0, 170, 20)
+        // Item area of the AE2 upgrade-cell box overflowing the top-right edge. The
+        // Screen DERIVES the box origin from this slot (box = slot - cell item offset
+        // (1,6)), so moving the slot moves the whole cell + fallback + JEI zone + tooltip.
+        // Nudged 2px left (177→175) so the cell's open left flank tucks under the panel's
+        // right frame → a continuous border all the way around (Fab's on-capture call).
+        this.addSlot(new SlotItemHandler(blockEntity.warehouseCardSlot, 0, 175, 12)
         {
             @Override
             public boolean mayPlace(ItemStack stack)
@@ -46,7 +49,7 @@ public class ColonyLinkRedirectorMenu extends AbstractContainerMenu
             }
         });
 
-        // ── Buffer slots — 12 colonnes x 10 lignes ──────────────────────────
+        // ── Buffer slots — 9 columns x 3 rows (UI passe 1: grid top at y=38) ─
         for (int row = 0; row < BUFFER_ROWS; row++)
         {
             for (int col = 0; col < BUFFER_COLS; col++)
@@ -55,7 +58,7 @@ public class ColonyLinkRedirectorMenu extends AbstractContainerMenu
                         blockEntity.buffer,
                         row * BUFFER_COLS + col,
                         8 + col * 18,
-                        52 + row * 18
+                        38 + row * 18
                 ));
             }
         }
@@ -65,14 +68,14 @@ public class ColonyLinkRedirectorMenu extends AbstractContainerMenu
         {
             for (int col = 0; col < 9; col++)
             {
-                this.addSlot(new Slot(playerInventory, col + row * 9 + 9, 8 + col * 18, 123 + row * 18));
+                this.addSlot(new Slot(playerInventory, col + row * 9 + 9, 8 + col * 18, 107 + row * 18));
             }
         }
 
         // ── Hotbar joueur ────────────────────────────────────────────────────
         for (int col = 0; col < 9; col++)
         {
-            this.addSlot(new Slot(playerInventory, col, 8 + col * 18, 181));
+            this.addSlot(new Slot(playerInventory, col, 8 + col * 18, 165));
         }
     }
 

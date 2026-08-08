@@ -271,6 +271,7 @@
   "colonylink.redir.card_insert2": "§7the §fCheck Warehouse §7button in the Clipboard GUI.",
   "colonylink.redir.card_inserted": "§a✔ Card inserted — Warehouse scanning enabled",
   "colonylink.redir.card_empty": "§8✘ Empty — insert a Warehouse Link Card",
+  "colonylink.redir.title": "Colony Link Redirector",
   "colonylink.jade.ae2_connected": "§aAE2: Connected",
   "colonylink.jade.ae2_disconnected": "§cAE2: Disconnected",
   "colonylink.jade.place_adjacent": "§7Place adjacent to an §fAE2 cable§7.",

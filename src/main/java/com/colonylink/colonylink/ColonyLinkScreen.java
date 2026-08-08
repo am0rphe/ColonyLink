@@ -1,5 +1,6 @@
 package com.colonylink.colonylink;
 
+import com.colonylink.colonylink.AeGuiBlits.AeBtnVis;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
@@ -40,31 +41,15 @@ public class ColonyLinkScreen extends Screen
     private static final int MAX_VISIBLE     = 8;
     private static final int SCROLLBAR_WIDTH = 6;
 
-    // ── AE theme — frame texture (layer 1) ────────────────────────────────────
-    // This texture belongs to AE2 (assets are CC BY-NC-SA) and is NEVER copied into
-    // this repo — we only reference it by ResourceLocation at runtime. AE2 is a
-    // required dependency so it is guaranteed present, but an internal asset path can
-    // change between AE2 versions; we probe once at init() and fall back silently to
-    // the procedural drawAeFrame rather than showing a magenta missing-texture.
-    private static final ResourceLocation AE_BACKGROUND =
-            ResourceLocation.fromNamespaceAndPath("ae2", "textures/guis/background.png");
-    private static final int AE_BG_BORDER = 4;    // nine-slice border, px
-    private static final int AE_BG_TEX    = 256;  // background.png is 256x256
-    private static final int AE_BG_TILE   = 248;  // source edge/center band = 256 - 2*4
+    // ── AE theme — frame + button assets (layers 1 & 4) ───────────────────────
+    // UI passe 1: the AE2 ResourceLocations, nine-slice constants and blit
+    // primitives moved to AeGuiBlits (shared with the Redirector screen). This
+    // class keeps thin private facades further down so NO call-site changed —
+    // zero visual change to the Clipboard. Same legal frame as before: AE2 assets
+    // (CC BY-NC-SA) referenced at runtime only, never copied; probed once at
+    // init() with a silent procedural fallback (drawAeFrame) — never magenta.
     private boolean aeBackgroundPresent = false;  // probed once in init(), not per frame
-
-    // ── AE theme — button + toggle sprites (layer 4) ──────────────────────────
-    // Buttons: AE2's nine-slice button atlas sprites (button.png 200x20, 3px border),
-    // blitted via g.blitSprite (honours the .mcmeta nine-slice) → any width/height
-    // stretches cleanly. Toggle halves: the tab sprites inside states.png, blitted
-    // (stretched) via our own tinted blit. AE2 assets (CC BY-NC-SA) are referenced by
-    // ResourceLocation at runtime only, never copied. Presence probed once at init()
-    // on the underlying PNG files (a clean proxy for the atlas sprites).
-    private static final ResourceLocation AE_BTN_NORMAL   = ResourceLocation.fromNamespaceAndPath("ae2", "button");
-    private static final ResourceLocation AE_BTN_HOVER    = ResourceLocation.fromNamespaceAndPath("ae2", "button_highlighted");
-    private static final ResourceLocation AE_BTN_DISABLED = ResourceLocation.fromNamespaceAndPath("ae2", "button_disabled");
-    private static final ResourceLocation AE_BTN_PROBE    = ResourceLocation.fromNamespaceAndPath("ae2", "textures/gui/sprites/button.png");
-    private boolean aeButtonPresent = false;  // probed once in init(), not per frame
+    private boolean aeButtonPresent = false;      // probed once in init(), not per frame
 
     // ── MineColonies theme — parchment background (layer 1) ───────────────────
     // colonist_paper.png is a MineColonies GPL-3.0 asset, referenced by
@@ -588,23 +573,16 @@ public class ColonyLinkScreen extends Screen
             this.citizenPackageCount = ColonyLinkWandLinkableHandler.getCitizenPackages(initWand);
         refreshSentCache();
 
-        // AE theme: probe the AE2 frame texture ONCE per screen open (never per frame).
-        // Silent procedural fallback (drawAeFrame) if the asset path is absent.
-        this.aeBackgroundPresent = this.minecraft != null
-                && this.minecraft.getResourceManager().getResource(AE_BACKGROUND).isPresent();
+        // Theme asset probes — ONCE per screen open (never per frame), silent
+        // procedural fallbacks if an internal asset path is absent (never magenta).
+        // UI passe 1: routed through AeGuiBlits.probeTexture (same semantics).
+        this.aeBackgroundPresent = AeGuiBlits.probeTexture(AeGuiBlits.AE_BACKGROUND);
         // Layer 4: probe the button-sprite PNG once (proxy for the atlas sprites).
-        this.aeButtonPresent = this.minecraft != null
-                && this.minecraft.getResourceManager().getResource(AE_BTN_PROBE).isPresent();
-        // MineColonies theme: probe the parchment texture ONCE per screen open.
-        // Silent procedural parchment fallback if the asset path is absent.
-        this.mcPaperPresent = this.minecraft != null
-                && this.minecraft.getResourceManager().getResource(MC_PAPER).isPresent();
-        // MineColonies buttons: single pivot probe (proxy for the whole builder-button set).
-        this.mcButtonPresent = this.minecraft != null
-                && this.minecraft.getResourceManager().getResource(MC_BTN_PROBE).isPresent();
-        // MineColonies side tabs: single pivot probe (proxy for tab_left_side{1,2,3}).
-        this.mcTabPresent = this.minecraft != null
-                && this.minecraft.getResourceManager().getResource(MC_TAB_PROBE).isPresent();
+        this.aeButtonPresent = AeGuiBlits.probeTexture(AeGuiBlits.AE_BTN_PROBE);
+        // MineColonies theme: parchment, buttons pivot, side-tabs pivot.
+        this.mcPaperPresent = AeGuiBlits.probeTexture(MC_PAPER);
+        this.mcButtonPresent = AeGuiBlits.probeTexture(MC_BTN_PROBE);
+        this.mcTabPresent = AeGuiBlits.probeTexture(MC_TAB_PROBE);
     }
 
     /**
@@ -1430,7 +1408,7 @@ public class ColonyLinkScreen extends Screen
     }
 
     // ── AE button rendering (layer 4) ─────────────────────────────────────────
-    private enum AeBtnVis { NORMAL, HOVER, DISABLED }
+    // AeBtnVis now lives in AeGuiBlits (imported) — call-sites unchanged.
 
     private static AeBtnVis aeBtnVis(boolean enabled, boolean hovered)
     { return !enabled ? AeBtnVis.DISABLED : (hovered ? AeBtnVis.HOVER : AeBtnVis.NORMAL); }
@@ -1443,17 +1421,9 @@ public class ColonyLinkScreen extends Screen
      */
     private void drawAeButtonBg(GuiGraphics g, int x, int y, int w, int h, AeBtnVis vis, float alpha)
     {
-        ResourceLocation sprite = switch (vis) {
-            case HOVER    -> AE_BTN_HOVER;
-            case DISABLED -> AE_BTN_DISABLED;
-            case NORMAL   -> AE_BTN_NORMAL;
-        };
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        g.setColor(1f, 1f, 1f, alpha);
-        g.blitSprite(sprite, x, y, w, h);
-        g.setColor(1f, 1f, 1f, 1f);
-        RenderSystem.disableBlend();
+        // UI passe 1: body moved verbatim to AeGuiBlits — facade kept so call-sites
+        // are untouched (zero visual change).
+        AeGuiBlits.drawAeButtonBg(g, x, y, w, h, vis, alpha);
     }
 
     /**
@@ -1789,48 +1759,9 @@ public class ColonyLinkScreen extends Screen
      */
     private static void drawAeNineSlice(GuiGraphics g, int x, int y, int w, int h, float alpha, boolean withCenter)
     {
-        // Degenerate: no room for a border ring on both sides — draw nothing.
-        if (w < AE_BG_BORDER * 2 || h < AE_BG_BORDER * 2) return;
-
-        final int b = AE_BG_BORDER;
-        final int innerW = w - b * 2;
-        final int innerH = h - b * 2;
-
-        // Layer 2 — light body: tile the texture centre (src 4,4,248,248) across the
-        // inner region, drawn first so the border ring below stays crisp at the seam.
-        if (withCenter)
-        {
-            for (int cy = 0; cy < innerH; cy += AE_BG_TILE)
-            {
-                int th = Math.min(AE_BG_TILE, innerH - cy);
-                for (int cx = 0; cx < innerW; cx += AE_BG_TILE)
-                {
-                    int tw = Math.min(AE_BG_TILE, innerW - cx);
-                    blitTinted(g, AE_BACKGROUND, x + b + cx, y + b + cy, b, b, tw, th, AE_BG_TEX, AE_BG_TEX, alpha);
-                }
-            }
-        }
-
-        // 4 corners, native 4x4.
-        blitTinted(g, AE_BACKGROUND, x,         y,         0,           0,           b, b, AE_BG_TEX, AE_BG_TEX, alpha);
-        blitTinted(g, AE_BACKGROUND, x + w - b, y,         AE_BG_TEX-b, 0,           b, b, AE_BG_TEX, AE_BG_TEX, alpha);
-        blitTinted(g, AE_BACKGROUND, x,         y + h - b, 0,           AE_BG_TEX-b, b, b, AE_BG_TEX, AE_BG_TEX, alpha);
-        blitTinted(g, AE_BACKGROUND, x + w - b, y + h - b, AE_BG_TEX-b, AE_BG_TEX-b, b, b, AE_BG_TEX, AE_BG_TEX, alpha);
-
-        // Top / bottom edges, tiled 1:1 (source band is AE_BG_TILE px wide).
-        for (int cx = 0; cx < innerW; cx += AE_BG_TILE)
-        {
-            int tw = Math.min(AE_BG_TILE, innerW - cx);
-            blitTinted(g, AE_BACKGROUND, x + b + cx, y,         b, 0,           tw, b, AE_BG_TEX, AE_BG_TEX, alpha);
-            blitTinted(g, AE_BACKGROUND, x + b + cx, y + h - b, b, AE_BG_TEX-b, tw, b, AE_BG_TEX, AE_BG_TEX, alpha);
-        }
-        // Left / right edges, tiled 1:1.
-        for (int cy = 0; cy < innerH; cy += AE_BG_TILE)
-        {
-            int th = Math.min(AE_BG_TILE, innerH - cy);
-            blitTinted(g, AE_BACKGROUND, x,         y + b + cy, 0,           b, b, th, AE_BG_TEX, AE_BG_TEX, alpha);
-            blitTinted(g, AE_BACKGROUND, x + w - b, y + b + cy, AE_BG_TEX-b, b, b, th, AE_BG_TEX, AE_BG_TEX, alpha);
-        }
+        // UI passe 1: body moved verbatim to AeGuiBlits — facade kept so call-sites
+        // are untouched (zero visual change).
+        AeGuiBlits.drawAeNineSlice(g, x, y, w, h, alpha, withCenter);
     }
 
     /**
@@ -1845,12 +1776,8 @@ public class ColonyLinkScreen extends Screen
     private static void blitTinted(GuiGraphics g, ResourceLocation tex, int x, int y,
                                    int u, int v, int w, int h, int texW, int texH, float alpha)
     {
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        g.setColor(1f, 1f, 1f, alpha);
-        g.blit(tex, x, y, u, v, w, h, texW, texH);
-        g.setColor(1f, 1f, 1f, 1f);
-        RenderSystem.disableBlend();
+        // UI passe 1: body moved verbatim to AeGuiBlits — facade kept (zero visual change).
+        AeGuiBlits.blitTinted(g, tex, x, y, u, v, w, h, texW, texH, alpha);
     }
 
     /**
@@ -1862,7 +1789,8 @@ public class ColonyLinkScreen extends Screen
                                             int w, int h, float u, float v, int sw, int sh,
                                             int texW, int texH, float alpha)
     {
-        blitTintedStretched(g, tex, x, y, w, h, u, v, sw, sh, texW, texH, 1f, alpha);
+        // UI passe 1: facade — body in AeGuiBlits (zero visual change).
+        AeGuiBlits.blitTintedStretched(g, tex, x, y, w, h, u, v, sw, sh, texW, texH, alpha);
     }
 
     /**
@@ -1874,12 +1802,8 @@ public class ColonyLinkScreen extends Screen
                                             int w, int h, float u, float v, int sw, int sh,
                                             int texW, int texH, float bright, float alpha)
     {
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        g.setColor(bright, bright, bright, alpha);
-        g.blit(tex, x, y, w, h, u, v, sw, sh, texW, texH);
-        g.setColor(1f, 1f, 1f, 1f);
-        RenderSystem.disableBlend();
+        // UI passe 1: body moved verbatim to AeGuiBlits — facade kept (zero visual change).
+        AeGuiBlits.blitTintedStretched(g, tex, x, y, w, h, u, v, sw, sh, texW, texH, bright, alpha);
     }
 
     // ── render() ──────────────────────────────────────────────────────────────
