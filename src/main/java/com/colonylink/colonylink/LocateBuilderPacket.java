@@ -49,6 +49,9 @@ public record LocateBuilderPacket(BlockPos builderPos) implements CustomPacketPa
             new java.util.concurrent.ConcurrentHashMap<>();
     private static final long COOLDOWN_MS = 10_000L; // 10 seconds
 
+    /** v1.7.1 — called from ColonyLinkServerTicker.onServerStopping to prevent leaks. */
+    public static void clearCooldowns() { COOLDOWNS.clear(); }
+
     @Override
     public CustomPacketPayload.Type<? extends CustomPacketPayload> type()
     {

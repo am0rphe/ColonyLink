@@ -66,6 +66,9 @@ public class WarehouseScanHandler
     /** Last scan tick per player UUID. */
     private static final Map<java.util.UUID, Long> lastScanTick = new HashMap<>();
 
+    /** v1.7.1 — called from ColonyLinkServerTicker.onServerStopping to prevent leaks. */
+    public static void clearScanHistory() { lastScanTick.clear(); }
+
     // Entry point
 
     public static void handleWarehouseCheck(ServerPlayer player, BlockPos builderPos)
@@ -414,6 +417,7 @@ public class WarehouseScanHandler
                 if (input == null) continue;
 
                 // Get the first item of the pattern input via getPossibleInputs()
+                // v1.7.1 — multiply by getMultiplier() for correctness with addon patterns.
                 ItemStack inputStack = null;
                 long inputNeeded = 1;
                 for (var possible : input.getPossibleInputs())
@@ -421,7 +425,7 @@ public class WarehouseScanHandler
                     if (possible.what() instanceof AEItemKey inputKey)
                     {
                         inputStack = inputKey.toStack(1);
-                        inputNeeded = possible.amount();
+                        inputNeeded = possible.amount() * input.getMultiplier();
                         break;
                     }
                 }

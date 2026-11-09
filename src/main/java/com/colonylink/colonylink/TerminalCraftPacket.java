@@ -44,13 +44,19 @@ public record TerminalCraftPacket(
                         buf.writeBlockPos(p.hostPos());
                         buf.writeByte(p.sideByte());
                     },
-                    buf -> new TerminalCraftPacket(
-                            Mode.values()[buf.readInt()],
+                    buf -> {
+                        int ordinal = buf.readInt();
+                        Mode[] modes = Mode.values();
+                        if (ordinal < 0 || ordinal >= modes.length)
+                            ordinal = 0;
+                        return new TerminalCraftPacket(
+                            modes[ordinal],
                             ItemStack.STREAM_CODEC.decode(buf),
                             buf.readInt(),
                             buf.readBlockPos(),
                             buf.readByte() & 0xFF
-                    )
+                        );
+                    }
             );
 
     @Override
@@ -83,11 +89,26 @@ public record TerminalCraftPacket(
         if (!player.getInventory().add(result.copy()))
             player.drop(result.copy(), false);
 
+        // v1.7.1 — handle craft remainders (buckets, bottles) like vanilla ResultSlot.onTake.
         var grid = menu.getCraftingGrid();
+        net.minecraft.world.item.crafting.CraftingInput craftInput = grid.asCraftInput();
+        var recipeOpt = player.level().getRecipeManager()
+                .getRecipeFor(net.minecraft.world.item.crafting.RecipeType.CRAFTING, craftInput, player.level());
+        net.minecraft.core.NonNullList<ItemStack> remainders = recipeOpt.isPresent()
+                ? recipeOpt.get().value().getRemainingItems(craftInput)
+                : net.minecraft.core.NonNullList.withSize(grid.getContainerSize(), ItemStack.EMPTY);
         for (int i = 0; i < grid.getContainerSize(); i++)
         {
             ItemStack s = grid.getItem(i);
             if (!s.isEmpty()) s.shrink(1);
+            ItemStack rem = remainders.get(i);
+            if (!rem.isEmpty())
+            {
+                if (grid.getItem(i).isEmpty())
+                    grid.setItem(i, rem);
+                else if (!player.getInventory().add(rem))
+                    player.drop(rem, false);
+            }
         }
         menu.getCraftResult().setItem(0, ItemStack.EMPTY);
 

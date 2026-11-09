@@ -137,6 +137,16 @@ public class ColonyLinkServerTicker
     {
         CitizenRequestMemory.clear();
         RedirectorRegistry.clear(); // 1.7.0-beta.4
+        // v1.7.1 — clear static collections to prevent leaks on integrated server world changes.
+        activeTerminalParts.clear();
+        allTerminalParts.clear();
+        activeViewers.clear();
+        tickCounter.set(0);
+        citizenMemoryPass = 0;
+        // v1.7.1 — clear static maps in other classes that register ServerStopping via this hub.
+        LocateBuilderPacket.clearCooldowns();
+        CitizensScanHandler.clearAll();
+        WarehouseScanHandler.clearScanHistory();
     }
 
     /**

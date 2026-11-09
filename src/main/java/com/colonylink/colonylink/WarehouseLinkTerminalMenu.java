@@ -458,10 +458,25 @@ public class WarehouseLinkTerminalMenu extends AbstractContainerMenu
                     if (result.isEmpty()) break;
                     ItemStack toMove = result.copy();
                     if (!moveItemStackTo(toMove, PLAYER_INV_START, invEnd, true)) break;
+                    // v1.7.1 — handle craft remainders (buckets, bottles).
+                    CraftingInput craftInput = craftingGrid.asCraftInput();
+                    var recipeOpt = p.level().getRecipeManager()
+                            .getRecipeFor(RecipeType.CRAFTING, craftInput, p.level());
+                    net.minecraft.core.NonNullList<ItemStack> remainders = recipeOpt.isPresent()
+                            ? recipeOpt.get().value().getRemainingItems(craftInput)
+                            : net.minecraft.core.NonNullList.withSize(craftingGrid.getContainerSize(), ItemStack.EMPTY);
                     for (int i = 0; i < craftingGrid.getContainerSize(); i++)
                     {
                         ItemStack ing = craftingGrid.getItem(i);
                         if (!ing.isEmpty()) ing.shrink(1);
+                        ItemStack rem = remainders.get(i);
+                        if (!rem.isEmpty())
+                        {
+                            if (craftingGrid.getItem(i).isEmpty())
+                                craftingGrid.setItem(i, rem);
+                            else if (!p.getInventory().add(rem))
+                                p.drop(rem, false);
+                        }
                     }
                     craftResult.setItem(0, ItemStack.EMPTY);
                     slotsChanged(craftingGrid);

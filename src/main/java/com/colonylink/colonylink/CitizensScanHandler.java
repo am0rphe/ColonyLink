@@ -352,6 +352,13 @@ public class CitizensScanHandler
         LAST_REQUEST_MS.remove(uuid);
     }
 
+    /** v1.7.1 — bulk clear on server stop (called from ColonyLinkServerTicker.onServerStopping). */
+    public static void clearAll()
+    {
+        LAST_SIG.clear();
+        LAST_REQUEST_MS.clear();
+    }
+
     /** FNV-1a fold over the visible Citizens content — same idea as computeWandSig. */
     private static long computeCitizensSig(java.util.List<CitizensPacket.CitizenRequestEntry> entries)
     {

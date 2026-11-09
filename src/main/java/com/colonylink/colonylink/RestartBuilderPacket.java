@@ -41,6 +41,24 @@ public record RestartBuilderPacket(BlockPos builderPos) implements CustomPacketP
             ServerLevel level = serverPlayer.serverLevel();
             BlockPos builderPos = packet.builderPos();
 
+            // v1.7.1 — validate builderPos against the player's wand (same guard as LocateBuilderPacket).
+            net.minecraft.world.item.ItemStack wandStack = ColonyLinkServerTicker.findWandInInventory(serverPlayer);
+            if (wandStack == null)
+            {
+                serverPlayer.sendSystemMessage(Component.translatable("colonylink.whc.clipboard_not_found"));
+                return;
+            }
+            boolean builderLinked = false;
+            for (BuilderEntry e : ColonyLinkWandLinkableHandler.getBuilderEntries(wandStack))
+            {
+                if (e.builderPos().equals(builderPos)) { builderLinked = true; break; }
+            }
+            if (!builderLinked)
+            {
+                serverPlayer.sendSystemMessage(Component.translatable("colonylink.stw.invalid_request"));
+                return;
+            }
+
             IColony colony = IColonyManager.getInstance().getClosestColony(level, builderPos);
             if (colony == null)
             {
