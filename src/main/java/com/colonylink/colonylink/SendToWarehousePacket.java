@@ -352,6 +352,9 @@ public record SendToWarehousePacket(ItemStack stack, BlockPos builderPos, int co
                     builderPos, stack.getItem(), baseline);
             ColonyLinkWandLinkableHandler.addSentRequestKey(wandStack, key);
 
+            // v1.8.0 — Stats: items actually inserted into the Warehouse.
+            ColonyLinkStats.recordItemsSent(colony, builderPos, totalInserted);
+
             player.sendSystemMessage(Component.translatable("colonylink.wh_pkt.sent",
                     totalInserted, displayName(stack)));
         }

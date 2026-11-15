@@ -1,0 +1,33 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "PQP",
+    "PCP",
+    "LLL"
+  ],
+  "key": {
+    "P": {
+      "item": "minecraft:paper"
+    },
+    "Q": {
+      "type": "neoforge:components",
+      "items": "minecraft:potion",
+      "strict": false,
+      "components": {
+        "minecraft:potion_contents": {
+          "potion": "minecraft:fire_resistance"
+        }
+      }
+    },
+    "C": {
+      "item": "minecraft:dragon_breath"
+    },
+    "L": {
+      "tag": "c:leathers"
+    }
+  },
+  "result": {
+    "id": "colonylink:tome_of_knowledge",
+    "count": 1
+  }
+}

@@ -2,14 +2,21 @@ package com.colonylink.colonylink;
 
 import mezz.jei.api.IModPlugin;
 import mezz.jei.api.JeiPlugin;
+import mezz.jei.api.constants.RecipeTypes;
+import mezz.jei.api.constants.VanillaTypes;
 import mezz.jei.api.gui.builder.IClickableIngredientFactory;
 import mezz.jei.api.gui.handlers.IGuiContainerHandler;
+import mezz.jei.api.recipe.RecipeType;
 import mezz.jei.api.registration.IGuiHandlerRegistration;
 import mezz.jei.api.runtime.IClickableIngredient;
+import mezz.jei.api.runtime.IJeiRuntime;
 import net.minecraft.client.renderer.Rect2i;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.crafting.CraftingRecipe;
+import net.minecraft.world.item.crafting.RecipeHolder;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -75,5 +82,51 @@ public class ColonyLinkJeiPlugin implements IModPlugin
                         return screen.getJeiExclusionAreas();
                     }
                 });
+    }
+
+    /**
+     * v1.8.0 — Skill Tomes visibility in JEI.
+     *
+     * When the server config {@code enable_skill_books} is false, the 11 tomes make
+     * no sense, so they are removed from the JEI ingredient list AND their crafting
+     * recipes are hidden. The SERVER config is synced to the client by NeoForge, and
+     * JEI rebuilds its runtime on world join, so the value read here reflects the
+     * connected server. A runtime change via {@code /colonylink config set} needs a
+     * JEI reload (F3+T) to re-evaluate.
+     *
+     * This runs only when JEI is present (whole class is a soft {@code @JeiPlugin}).
+     */
+    @Override
+    public void onRuntimeAvailable(IJeiRuntime runtime)
+    {
+        // Default to shown if the config is not loaded yet (e.g. main menu).
+        if (ColonyLinkConfig.safeGet(ColonyLinkConfig.ENABLE_SKILL_BOOKS, true))
+        {
+            return;
+        }
+
+        // 1) Remove the 11 tome items from the ingredient list.
+        final List<ItemStack> tomeStacks = new ArrayList<>();
+        for (final com.minecolonies.api.entity.citizen.Skill skill
+                : com.minecolonies.api.entity.citizen.Skill.values())
+        {
+            tomeStacks.add(new ItemStack(ColonyLink.SKILL_TOMES.get(skill).get()));
+        }
+        runtime.getIngredientManager()
+                .removeIngredientsAtRuntime(VanillaTypes.ITEM_STACK, tomeStacks);
+
+        // 2) Hide their shaped crafting recipes (ids colonylink:tome_of_*), so they
+        //    do not surface under the "uses" of paper/leather/potions either.
+        final RecipeType<RecipeHolder<CraftingRecipe>> crafting = RecipeTypes.CRAFTING;
+        final List<RecipeHolder<CraftingRecipe>> tomeRecipes = runtime.getRecipeManager()
+                .createRecipeLookup(crafting)
+                .get()
+                .filter(h -> h.id().getNamespace().equals(ColonyLink.MODID)
+                        && h.id().getPath().startsWith("tome_of_"))
+                .toList();
+        if (!tomeRecipes.isEmpty())
+        {
+            runtime.getRecipeManager().hideRecipes(crafting, tomeRecipes);
+        }
     }
 }

@@ -366,6 +366,16 @@ public class ColonyLinkRedirectorBlockEntity extends BlockEntity
                 (int) Math.max(1L, outputCount)
         ));
 
+        // v1.8.0 — Stats: Domum blocks produced for the linked builder's colony.
+        if (linkedBuilderPos != null)
+        {
+            com.minecolonies.api.colony.IColony _statCol =
+                    com.minecolonies.api.colony.IColonyManager.getInstance()
+                            .getClosestColony(level, linkedBuilderPos);
+            if (_statCol != null)
+                ColonyLinkStats.recordDomumCrafts(_statCol, linkedBuilderPos, (int) Math.max(1L, outputCount));
+        }
+
         // Persist the queue now (materials already pulled by AE2).
         setChanged();
         return true;

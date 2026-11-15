@@ -334,7 +334,14 @@ public class WarehouseCraftHandler
                 level.getServer().execute(() -> {
                     var result = craftingService.submitJob(plan, null, null, false, actionSource);
                     if (result.successful())
+                    {
+                        // v1.8.0 — Stats: one AE2 job submitted via the Warehouse craft path.
+                        com.minecolonies.api.colony.IColony _statCol =
+                                ColonyLinkStats.resolveColonyFromWand(player, level);
+                        if (_statCol != null)
+                            ColonyLinkStats.recordAe2Crafts(_statCol, null, 1);
                         player.sendSystemMessage(Component.translatable("colonylink.whc.craft_started", realCount, stack.getDisplayName()));
+                    }
                     else
                     {
                         player.sendSystemMessage(Component.translatable("colonylink.whc.craft_submission_failed"));

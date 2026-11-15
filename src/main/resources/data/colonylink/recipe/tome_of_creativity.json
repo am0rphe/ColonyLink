@@ -1,0 +1,33 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "PQP",
+    "PCP",
+    "LLL"
+  ],
+  "key": {
+    "P": {
+      "item": "minecraft:paper"
+    },
+    "Q": {
+      "type": "neoforge:components",
+      "items": "minecraft:potion",
+      "strict": false,
+      "components": {
+        "minecraft:potion_contents": {
+          "potion": "minecraft:invisibility"
+        }
+      }
+    },
+    "C": {
+      "item": "minecraft:amethyst_shard"
+    },
+    "L": {
+      "tag": "c:leathers"
+    }
+  },
+  "result": {
+    "id": "colonylink:tome_of_creativity",
+    "count": 1
+  }
+}

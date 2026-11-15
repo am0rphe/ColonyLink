@@ -53,6 +53,25 @@ public class ColonyLink
     public static final DeferredItem<Item> COLONY_LINK_PACKAGE = ITEMS.register("colonylink_package",
             () -> new ColonyLinkPackage());
 
+    // v1.8.0 — Skill Tomes: one item per MineColonies Skill (11 total).
+    // Registered by looping over Skill.values() so a skill add/remove upstream
+    // simply changes how many tomes exist. Stored by the Skill reference, never
+    // an ordinal. Stack size 16 (precious item).
+
+    public static final java.util.Map<com.minecolonies.api.entity.citizen.Skill, DeferredItem<SkillTomeItem>>
+            SKILL_TOMES = new java.util.EnumMap<>(com.minecolonies.api.entity.citizen.Skill.class);
+
+    static
+    {
+        for (final com.minecolonies.api.entity.citizen.Skill skill
+                : com.minecolonies.api.entity.citizen.Skill.values())
+        {
+            final String id = "tome_of_" + skill.name().toLowerCase(java.util.Locale.ROOT);
+            SKILL_TOMES.put(skill, ITEMS.register(id,
+                    () -> new SkillTomeItem(new Item.Properties().stacksTo(16), skill)));
+        }
+    }
+
     // Creative tab
 
     public static final DeferredHolder<CreativeModeTab, CreativeModeTab> COLONY_LINK_TAB =
@@ -69,6 +88,13 @@ public class ColonyLink
                                 output.accept(COLONY_LINK_PACKAGE.get());
                                 // v1.4.2 — DomumPatternItem in the creative tab
                                 output.accept(ColonyLinkRegistry.DOMUM_PATTERN_ITEM.get());
+                                // v1.8.0 — Skill Tomes, in a stable (enum) order.
+                                // Omitted when the server disabled the feature; the tab
+                                // is rebuilt on world join once the server config is synced.
+                                if (ColonyLinkConfig.safeGet(ColonyLinkConfig.ENABLE_SKILL_BOOKS, true))
+                                    for (final com.minecolonies.api.entity.citizen.Skill skill
+                                            : com.minecolonies.api.entity.citizen.Skill.values())
+                                        output.accept(SKILL_TOMES.get(skill).get());
                             }).build());
 
     // AE2 linkable handler
@@ -115,6 +141,9 @@ public class ColonyLink
 
         NeoForge.EVENT_BUS.register(ColonyLinkServerTicker.class);
         NeoForge.EVENT_BUS.register(ColonyLinkCommand.class);
+
+        // v1.8.0 — Skill Tome right-click interaction (common, server-safe)
+        NeoForge.EVENT_BUS.register(SkillTomeHandler.class);
 
         if (net.neoforged.fml.loading.FMLEnvironment.dist.isClient())
             NeoForge.EVENT_BUS.addListener(ColonyLinkClient::onKeyInput);
@@ -223,7 +252,8 @@ public class ColonyLink
         // must fail the handshake cleanly instead of corrupting codecs.
         // 1.7.0-beta.3 — bumped to "3": CitizensPacket entries gained the request UUID,
         // colony state, Warehouse stock and mark; PackageTokenPacket carries a request UUID.
-        PayloadRegistrar registrar = event.registrar("3");
+        // v1.8.0 — bumped to "4": added Stats tab packets (StatsRequestPacket / StatsPacket).
+        PayloadRegistrar registrar = event.registrar("4");
 
         registrar.playToClient(ColonyLinkPacket.TYPE, ColonyLinkPacket.STREAM_CODEC,
                 (p, c) -> ClientPacketHandler.handleColonyLink(p, c));
@@ -262,6 +292,11 @@ public class ColonyLink
                 WarehouseCraftPacket::handle);
         registrar.playToServer(CitizensRequestPacket.TYPE, CitizensRequestPacket.STREAM_CODEC,
                 CitizensRequestPacket::handle);
+        // v1.8.0 — Stats tab
+        registrar.playToServer(StatsRequestPacket.TYPE, StatsRequestPacket.STREAM_CODEC,
+                StatsRequestPacket::handle);
+        registrar.playToClient(StatsPacket.TYPE, StatsPacket.STREAM_CODEC,
+                (p, c) -> ClientPacketHandler.handleStats(p, c));
         registrar.playToServer(PackageTokenPacket.TYPE, PackageTokenPacket.STREAM_CODEC,
                 PackageTokenPacket::handle);
         registrar.playToServer(PackageLoadPacket.TYPE, PackageLoadPacket.STREAM_CODEC,

@@ -139,6 +139,8 @@ public class ColonyLinkScreen extends Screen
 
     // #12: special index for the Citizens tab
     private static final int CITIZENS_TAB_INDEX = Integer.MAX_VALUE;
+    // v1.8.0 — Stats tab: a second special tab (sentinel index), pinned below Citizens.
+    private static final int STATS_TAB_INDEX = Integer.MAX_VALUE - 1;
 
     // State
     private List<ColonyLinkPacket.BuilderTabMeta> tabMetas = new ArrayList<>();
@@ -161,6 +163,12 @@ public class ColonyLinkScreen extends Screen
     private final java.util.Map<java.util.UUID, Long> optimisticCitizenSentUntil = new java.util.HashMap<>();
     private final java.util.Map<java.util.UUID, Long> optimisticCitizenCraftUntil = new java.util.HashMap<>();
     private final java.util.Map<String, Long> pendingSentUntil = new java.util.HashMap<>();
+
+    // v1.8.0 — Stats tab data (loaded once on tab click, no polling)
+    private boolean statsLoading = false;
+    private boolean statsLoaded  = false;
+    private long statItemsSent, statAe2Crafts, statDomumCrafts, statTomesUsed;
+    private int  statCitizens, statMaxCitizens, statGuards, statBuilders, statHappiness, statAvgDistance = -1;
 
     private List<ColonyLinkPacket.ResourceEntry> entries = new ArrayList<>();
     private BlockPos builderPos      = BlockPos.ZERO;
@@ -329,7 +337,7 @@ public class ColonyLinkScreen extends Screen
         this.warehousePriority = packet.warehousePriority();
         this.tabMetas       = packet.tabMetas() != null ? packet.tabMetas() : new ArrayList<>();
         // #12: don't overwrite activeTabIndex while on the Citizens tab
-        if (this.activeTabIndex != CITIZENS_TAB_INDEX)
+        if (isBuilderTab())
             this.activeTabIndex = packet.activeTabIndex();
         this.rfStored       = packet.rfStored();
         this.rfMax          = packet.rfMax() > 0 ? packet.rfMax() : 1_600_000L;
@@ -394,6 +402,117 @@ public class ColonyLinkScreen extends Screen
         long now = System.currentTimeMillis();
         optimisticCitizenSentUntil.entrySet().removeIf(e -> marked.contains(e.getKey()) || e.getValue() <= now);
         optimisticCitizenCraftUntil.entrySet().removeIf(e -> marked.contains(e.getKey()) || e.getValue() <= now);
+    }
+
+    // v1.8.0 — Stats tab: receive the single reply to a StatsRequestPacket.
+    public void updateStats(StatsPacket packet)
+    {
+        this.statItemsSent    = packet.itemsSent();
+        this.statAe2Crafts    = packet.ae2Crafts();
+        this.statDomumCrafts  = packet.domumCrafts();
+        this.statTomesUsed    = packet.tomesUsed();
+        this.statCitizens     = packet.citizens();
+        this.statMaxCitizens  = packet.maxCitizens();
+        this.statGuards       = packet.guards();
+        this.statBuilders     = packet.builders();
+        this.statHappiness    = packet.happinessPercent();
+        this.statAvgDistance  = packet.avgBedToWork();
+        this.statsLoading     = false;
+        this.statsLoaded      = true;
+    }
+
+    /**
+     * v1.8.0 — Stats tab body: an "Activity" table (cumulative ColonyLink counters)
+     * and a live "Colony Overview". Themed via the same helpers as the rest of the
+     * screen (no textures), so it renders under Default / AE / MineColonies.
+     */
+    private void drawStatsContent(GuiGraphics g, int x, int y, int mx, int my)
+    {
+        ColonyLinkGuiConfig _c = ColonyLinkGuiConfig.get();
+        boolean light = _c.isLightBody();
+        int innerX  = x + 12;
+        int rightX  = x + GUI_WIDTH - 12;
+        int body    = _c.bodyText();
+        int muted   = light ? _c.mutedText() : 0xAAAAAA;
+        int faint   = light ? _c.mutedText() : 0x888888;
+
+        if (statsLoading && !statsLoaded)
+        {
+            g.drawCenteredString(this.font, Component.translatable("colonylink.stats.loading").getString(),
+                    x + GUI_WIDTH / 2, y + 60, muted);
+            return;
+        }
+
+        // ---- Section 1: ColonyLink Activity ----
+        drawStatsWell(g, _c, x, y + 22, y + 92);
+        g.drawString(this.font, Component.translatable("colonylink.stats.activity").getString(),
+                innerX, y + 28, body, false);
+
+        int rowY = y + 44;
+        drawStatRow(g, innerX, rightX, rowY,      Component.translatable("colonylink.stats.items_sent").getString(),  fmt(statItemsSent),   body, muted); rowY += 12;
+        drawStatRow(g, innerX, rightX, rowY,      Component.translatable("colonylink.stats.ae2_crafts").getString(),  fmt(statAe2Crafts),   body, muted); rowY += 12;
+        drawStatRow(g, innerX, rightX, rowY,      Component.translatable("colonylink.stats.domum_crafts").getString(),fmt(statDomumCrafts), body, muted); rowY += 12;
+        drawStatRow(g, innerX, rightX, rowY,      Component.translatable("colonylink.stats.tomes_used").getString(),  fmt(statTomesUsed),   body, muted);
+
+        // ---- Section 2: Colony Overview ----
+        drawStatsWell(g, _c, x, y + 100, y + 196);
+        g.drawString(this.font, Component.translatable("colonylink.stats.colony_overview").getString(),
+                innerX, y + 106, body, false);
+
+        // Citizens: cur / max
+        drawStatRow(g, innerX, rightX, y + 122,
+                Component.translatable("colonylink.stats.citizens").getString(),
+                statCitizens + " / " + statMaxCitizens, body, muted);
+        // Guards / Builders (indented sub-lines)
+        drawStatRow(g, innerX + 8, rightX, y + 134,
+                Component.translatable("colonylink.stats.guards").getString(),
+                String.valueOf(statGuards), faint, faint);
+        drawStatRow(g, innerX + 8, rightX, y + 146,
+                Component.translatable("colonylink.stats.builders").getString(),
+                String.valueOf(statBuilders), faint, faint);
+
+        // Happiness bar
+        g.drawString(this.font, Component.translatable("colonylink.stats.happiness").getString(),
+                innerX, y + 162, body, false);
+        int barX = innerX, barY = y + 172, barW = 120, barH = 6;
+        int trackCol = _c.applyOpacity(_c.isAe() ? 0xFF413F54 : 0xFF2A2A2A);
+        int fillCol  = light ? _c.semGreen() : 0xFF00E676;
+        int filled   = Math.max(0, Math.min(barW, barW * statHappiness / 100));
+        g.fill(barX, barY, barX + barW, barY + barH, trackCol);
+        if (filled > 0) g.fill(barX, barY, barX + filled, barY + barH, fillCol);
+        g.drawString(this.font, statHappiness + "%", barX + barW + 6, barY - 1, body, false);
+
+        // Avg bed-to-work
+        String dist = statAvgDistance < 0
+                ? "—"
+                : statAvgDistance + " " + Component.translatable("colonylink.stats.blocks").getString();
+        drawStatRow(g, innerX, rightX, y + 184,
+                Component.translatable("colonylink.stats.avg_distance").getString(), dist, body, muted);
+    }
+
+    /** One stats line: label at the left, right-aligned value. */
+    private void drawStatRow(GuiGraphics g, int leftX, int rightX, int rowY,
+                             String label, String value, int labelColor, int valueColor)
+    {
+        g.drawString(this.font, label, leftX, rowY, labelColor, false);
+        g.drawString(this.font, value, rightX - this.font.width(value), rowY, valueColor, false);
+    }
+
+    /** Opaque section well on dark/AE bodies; on MineColonies the parchment shows through. */
+    private void drawStatsWell(GuiGraphics g, ColonyLinkGuiConfig _c, int x, int top, int bottom)
+    {
+        if (_c.isMineColonies()) return;
+        g.fill(x + 6, top, x + GUI_WIDTH - 6, bottom, _c.applyOpacity(_c.wellBg()));
+        g.fill(x + 6, top, x + GUI_WIDTH - 6, top + 1, _c.applyOpacity(_c.wellLight()));
+        g.fill(x + 6, top, x + 7, bottom, _c.applyOpacity(_c.wellLight()));
+        g.fill(x + 6, bottom - 1, x + GUI_WIDTH - 6, bottom, _c.applyOpacity(_c.wellDark()));
+        g.fill(x + GUI_WIDTH - 7, top, x + GUI_WIDTH - 6, bottom, _c.applyOpacity(_c.wellDark()));
+    }
+
+    /** Thousands-separated formatting for the activity counters. */
+    private static String fmt(long v)
+    {
+        return String.format(java.util.Locale.ROOT, "%,d", v);
     }
 
     // 1.7.0-beta.3 — Citizens row button
@@ -595,7 +714,16 @@ public class ColonyLinkScreen extends Screen
 
     // #12: Citizens tab — same column as builders, at the bottom with a big gap
     private int getCitizenTabX()  { return getGuiX() - TAB_WIDTH + (activeTabIndex == CITIZENS_TAB_INDEX ? TAB_OVERLAP : 0); }
-    private int getCitizenTabY()  { return getGuiY() + GUI_HEIGHT - TAB_HEIGHT - 8; }
+    // v1.8.0 — Citizens moved up one slot; Stats takes the bottom-most pinned slot.
+    private int getCitizenTabY()  { return getGuiY() + GUI_HEIGHT - 2 * TAB_HEIGHT - TAB_SPACING - 8; }
+    private int getStatsTabX()    { return getGuiX() - TAB_WIDTH + (activeTabIndex == STATS_TAB_INDEX ? TAB_OVERLAP : 0); }
+    private int getStatsTabY()    { return getGuiY() + GUI_HEIGHT - TAB_HEIGHT - 8; }
+
+    // v1.8.0 — tab-class helpers. A "special" tab (Citizens or Stats) is not a builder
+    // tab, so builder-specific UI (info/request panels, locate/craft/ware buttons, the
+    // resource list) is suppressed for both.
+    private boolean isStatsTab()   { return activeTabIndex == STATS_TAB_INDEX; }
+    private boolean isBuilderTab() { return activeTabIndex != CITIZENS_TAB_INDEX && activeTabIndex != STATS_TAB_INDEX; }
 
     private int getWareCheckBtnX() { return getGuiX() + 8; }
     private int getWareCheckBtnY() { return getGuiY() + GUI_HEIGHT - 40; }
@@ -1228,6 +1356,64 @@ public class ColonyLinkScreen extends Screen
                     tip.add(Component.translatable("colonylink.screen.tip.requests_count", citizenEntries.size()));
             }
         }
+
+        // v1.8.0: Stats tab — same chrome as the other tabs, bottom-most slot.
+        {
+            int tx = getStatsTabX(), ty = getStatsTabY(), tw = TAB_WIDTH, th = TAB_HEIGHT;
+            boolean active = (activeTabIndex == STATS_TAB_INDEX);
+            boolean hov    = mx >= tx && mx <= tx + tw && my >= ty && my <= ty + th;
+
+            int drawTx = active ? tx + TAB_OVERLAP : tx;
+
+            ColonyLinkGuiConfig _tabCfg = ColonyLinkGuiConfig.get();
+            if (mcTabReady())
+            {
+                drawMcTab(g, drawTx, ty, tw, th, tabMetas.size() + 2, active, hov, false, false);
+            }
+            else
+            {
+                int bg, bl, bd;
+                if (active)
+                {
+                    bg = _tabCfg.tabActiveBg();
+                    bl = _tabCfg.border();
+                    bd = _tabCfg.borderShadow();
+                }
+                else
+                {
+                    bg = _tabCfg.tabInactiveBg(hov);
+                    bl = _tabCfg.tabInactiveLight();
+                    bd = _tabCfg.tabInactiveDark();
+                }
+                bg = _tabCfg.applyControl(bg); bl = _tabCfg.applyControl(bl); bd = _tabCfg.applyControl(bd);
+                g.fill(drawTx, ty, drawTx + tw, ty + th, bg);
+                g.fill(drawTx, ty, drawTx + tw, ty + 1, bl);
+                g.fill(drawTx, ty, drawTx + 1, ty + th, bl);
+                g.fill(drawTx, ty + th - 1, drawTx + tw, ty + th, bd);
+                if (!active) g.fill(drawTx + tw - 1, ty, drawTx + tw, ty + th, bd);
+            }
+
+            // Centered pixel-art "signal bars" icon — neutral, themed (same colour logic
+            // as the Citizens person icon). Four bars rising left→right.
+            int cx = drawTx + tw / 2 + (mcTabReady() ? MC_TAB_BLIT_DX : 0), cy = ty + th / 2 - 1;
+            int col = _tabCfg.applyControl(_tabCfg.isMineColonies()
+                    ? (active ? 0xFF000000 : (hov ? 0xFF3A3A3A : 0xFF5A5040))
+                    : _tabCfg.isAe()
+                    ? (active ? 0xFFF2F2F2 : (hov ? 0xFFCBCCD4 : 0xFF9A9FB4))
+                    : (active ? 0xFFEEEEEE : (hov ? 0xFFCCCCCC : 0xFFAAAAAA)));
+            int bx = cx - 5, baseY = cy + 5;
+            g.fill(bx,      baseY - 2, bx + 2,  baseY, col); // bar 1 (shortest)
+            g.fill(bx + 3,  baseY - 4, bx + 5,  baseY, col); // bar 2
+            g.fill(bx + 6,  baseY - 6, bx + 8,  baseY, col); // bar 3
+            g.fill(bx + 9,  baseY - 8, bx + 11, baseY, col); // bar 4 (tallest)
+
+            if (hov)
+            {
+                tip.clear();
+                tip.add(Component.translatable("colonylink.tab.stats"));
+                tip.add(Component.translatable("colonylink.stats.tab_desc"));
+            }
+        }
     }
 
     /** Lightens an ARGB colour by a factor (e.g. 1.3f). */
@@ -1366,8 +1552,8 @@ public class ColonyLinkScreen extends Screen
         {
             drawInfoLine(g, x + 10, y + 26, Component.translatable("colonylink.screen.info.builder", builderName).getString());
 
-            // Locate button — right of the Builder line, hidden on the Citizens tab
-            if (activeTabIndex != CITIZENS_TAB_INDEX)
+            // Locate button — right of the Builder line, hidden on the Citizens/Stats tabs
+            if (isBuilderTab())
             {
                 int lbX = x + GUI_WIDTH - 6 - LOCATE_BTN_W - 4;
                 int lbY = y + 22;
@@ -2113,6 +2299,10 @@ public class ColonyLinkScreen extends Screen
                     tip.add(net.minecraft.network.chat.Component.translatable("colonylink.screen.pkg.full"));
             }
         }
+        else if (activeTabIndex == STATS_TAB_INDEX)
+        {
+            drawStatsContent(g, x, y, mx, my);
+        }
         else
         {
             drawInfoPanel(g, x, y, mx, my);
@@ -2124,7 +2314,8 @@ public class ColonyLinkScreen extends Screen
         ColonyLinkGuiConfig _cl = ColonyLinkGuiConfig.get();
         int listW = GUI_WIDTH - 26, listY = getListStartY();
         // MineColonies: no opaque list well — rows sit directly on the parchment.
-        if (!_cl.isMineColonies())
+        // v1.8.0 — the Stats tab draws its own full-body content; no list well.
+        if (!_cl.isMineColonies() && !isStatsTab())
         {
             g.fill(x + 6, listY - 1, x + GUI_WIDTH - 18, listY - 1 + MAX_VISIBLE * ENTRY_HEIGHT + 1, _cl.applyOpacity(_cl.listBg()));
             g.fill(x + 6, listY - 1, x + GUI_WIDTH - 18, listY, _cl.applyOpacity(_cl.wellLight()));
@@ -2250,6 +2441,10 @@ public class ColonyLinkScreen extends Screen
                     g.fill(sbX + 1, thumbY, sbX + SCROLLBAR_WIDTH - 1, thumbY + thumbH, _cl.applyOpacity(_cl.scrollThumb()));
                 }
             }
+        }
+        else if (activeTabIndex == STATS_TAB_INDEX)
+        {
+            // Stats tab: the body was fully drawn by drawStatsContent(); no list here.
         }
         else if (isOutOfPower())
         {
@@ -2418,15 +2613,15 @@ public class ColonyLinkScreen extends Screen
         }
 
         g.fill(x + 6, y + GUI_HEIGHT - 44, x + GUI_WIDTH - 6, y + GUI_HEIGHT - 43, ColonyLinkGuiConfig.get().applyOpacity(ColonyLinkGuiConfig.get().separator()));
-        // #12: WareCheck, Priority and buttons hidden on the Citizens tab
-        if (activeTabIndex != CITIZENS_TAB_INDEX)
+        // #12: WareCheck, Priority and buttons hidden on the Citizens/Stats tabs
+        if (isBuilderTab())
         {
             drawWareCheckButton(g, mx, my);
             drawPrioritySwitch(g, mx, my);
         }
         g.fill(x + 6, y + GUI_HEIGHT - 26, x + GUI_WIDTH - 6, y + GUI_HEIGHT - 25, ColonyLinkGuiConfig.get().applyOpacity(ColonyLinkGuiConfig.get().separator()));
 
-        if (activeTabIndex != CITIZENS_TAB_INDEX)
+        if (isBuilderTab())
         {
             ColonyLinkGuiConfig _cBtn = ColonyLinkGuiConfig.get();
             int caX = getCraftAllBtnX(), caY = getCraftAllBtnY(), caW = getCraftAllBtnW(), caH = getCraftAllBtnH();
@@ -2553,7 +2748,7 @@ public class ColonyLinkScreen extends Screen
         }
 
         // Locate button tooltip (in the info panel)
-        if (activeTabIndex != CITIZENS_TAB_INDEX && !isOutOfPower())
+        if (isBuilderTab() && !isOutOfPower())
         {
             int lbXT = x + GUI_WIDTH - 6 - LOCATE_BTN_W - 4;
             int lbYT = y + 22;
@@ -2670,6 +2865,25 @@ public class ColonyLinkScreen extends Screen
             }
         }
 
+        // v1.8.0: click on the Stats tab (bottom-most). Mirrors the Citizens tab:
+        // switch to the special tab and request its data once (no polling).
+        {
+            int tx = getStatsTabX(), ty = getStatsTabY();
+            if (mx >= tx && mx <= tx + TAB_WIDTH && my >= ty && my <= ty + TAB_HEIGHT)
+            {
+                if (activeTabIndex != STATS_TAB_INDEX)
+                {
+                    lastReadEntryCount.put(activeTabIndex, entries.size());
+                    activeTabIndex = STATS_TAB_INDEX;
+                    scrollOffset   = 0;
+                    statsLoading   = true;
+                    statsLoaded    = false;
+                    PacketDistributor.sendToServer(new StatsRequestPacket());
+                }
+                return true;
+            }
+        }
+
         if (tabMetas.size() < ColonyLinkWandLinkableHandler.getMaxBuilders())
         {
             int tx = getGuiX() - TAB_WIDTH, ty = getAddTabY();
@@ -2695,8 +2909,8 @@ public class ColonyLinkScreen extends Screen
             return true;
         }
 
-        // Locate button — in the info panel, only outside the Citizens tab
-        if (activeTabIndex != CITIZENS_TAB_INDEX && !isOutOfPower())
+        // Locate button — in the info panel, only on builder tabs
+        if (isBuilderTab() && !isOutOfPower())
         {
             int lbX = getGuiX() + GUI_WIDTH - 6 - LOCATE_BTN_W - 4;
             int lbY = getGuiY() + 22;
@@ -3114,7 +3328,8 @@ public class ColonyLinkScreen extends Screen
     public boolean mouseScrolled(double rawMx, double rawMy, double sx, double sy)
     {
         // #12: scroll adapted to the active tab
-        int listSize = (activeTabIndex == CITIZENS_TAB_INDEX) ? citizenEntries.size() : entries.size();
+        int listSize = isStatsTab() ? 0
+                : (activeTabIndex == CITIZENS_TAB_INDEX) ? citizenEntries.size() : entries.size();
         int max = listSize - MAX_VISIBLE;
         if (sy < 0 && scrollOffset < max) scrollOffset++;
         else if (sy > 0 && scrollOffset > 0) scrollOffset--;

@@ -154,6 +154,15 @@ public class CraftHandler
             final int finalRealCount = realCounts.get(0);
 
             level.getServer().execute(() -> {
+                // v1.8.0 — Stats: count the AE2 jobs actually submitted (colony resolved
+                // from the wand; no single-builder attribution for this path).
+                if (finalSuccess > 0)
+                {
+                    com.minecolonies.api.colony.IColony _statCol =
+                            ColonyLinkStats.resolveColonyFromWand(player, level);
+                    if (_statCol != null)
+                        ColonyLinkStats.recordAe2Crafts(_statCol, null, finalSuccess);
+                }
                 if (totalRequested == 1)
                 {
                     if (finalSuccess > 0)

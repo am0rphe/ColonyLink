@@ -68,6 +68,16 @@ public class ClientPacketHandler
         });
     }
 
+    public static void handleStats(StatsPacket packet, IPayloadContext ctx)
+    {
+        ctx.enqueueWork(() ->
+        {
+            var screen = Minecraft.getInstance().screen;
+            if (screen instanceof ColonyLinkScreen cls)
+                cls.updateStats(packet);
+        });
+    }
+
     public static void handlePackageTokenSync(PackageTokenSyncPacket packet, IPayloadContext ctx)
     {
         ctx.enqueueWork(() ->

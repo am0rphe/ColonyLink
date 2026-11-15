@@ -84,6 +84,9 @@ public class ColonyLinkConfig
     // [network]
     public static final ModConfigSpec.IntValue REDIRECTOR_CRAFT_QUEUE_MAX;
 
+    // [skills]
+    public static final ModConfigSpec.BooleanValue ENABLE_SKILL_BOOKS;
+
     // [loot]
     public static final ModConfigSpec.BooleanValue PACKAGE_IN_CHESTS;
     public static final ModConfigSpec.DoubleValue  PACKAGE_CHEST_CHANCE;
@@ -303,6 +306,23 @@ public class ColonyLinkConfig
                         "Higher = more Domum crafts buffered, but more state saved per Redirector.",
                         "Default: 64")
                 .defineInRange("redirector_craft_queue_max", 64, 1, 1024);
+
+        builder.pop();
+
+        // [skills]
+        builder.comment(
+                "Skill Tomes (v1.8.0).",
+                "Craftable books that grant +1 level in a MineColonies skill when",
+                "right-clicked on a colony citizen (the book is consumed)."
+        ).push("skills");
+
+        ENABLE_SKILL_BOOKS = builder
+                .comment("Enable or disable Skill Tomes.",
+                        "When false, right-clicking a citizen with a tome does nothing special:",
+                        "the click falls back to the normal MineColonies behaviour (opens the",
+                        "citizen GUI), and the tome is never consumed.",
+                        "Default: true")
+                .define("enable_skill_books", true);
 
         builder.pop();
 
